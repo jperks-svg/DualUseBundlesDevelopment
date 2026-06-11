@@ -4,6 +4,7 @@ import { fieldMatrix } from '../data/fields';
 import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { enrichments as enrichmentDataAll } from '../data/enrichments';
+import DashboardDeployModal from '../components/DashboardDeployModal';
 
 const tag = (bg: string, color: string): React.CSSProperties => ({
   display: 'inline-block', padding: '2px 8px', borderRadius: 'var(--cds-radius-sm)',
@@ -75,7 +76,10 @@ export default function DetectionLibraryPage() {
   const [deployStatus, setDeployStatus] = useState<string[]>([]);
   const [deploying, setDeploying] = useState(false);
   const [deployDataset, setDeployDataset] = useState('');
+  const [showDashboardModal, setShowDashboardModal] = useState(false);
 
+  const selectedSourceObj = sources.find((s: any) => s.id === selectedSource);
+  const selectedSourceName = selectedSourceObj?.name || selectedSource;
   const securityDetections: any[] = (secDetData as any)[selectedSource] || [];
   const obsDetections: any[] = (obsDetData as any)[selectedSource] || [];
   const allFields: any[] = (fieldMatrix as any)[selectedSource] || [];
@@ -301,6 +305,7 @@ export default function DetectionLibraryPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button style={btnSecondary} onClick={() => setShowExportModal(true)}>Export Packs</button>
               <button style={{ ...btnPrimary, background: 'var(--cds-color-primary)' }} onClick={() => setShowDeployModal(true)}>Deploy to Cribl Search</button>
+              <button style={{ ...btnPrimary, background: '#6366f1' }} onClick={() => setShowDashboardModal(true)}>Deploy Dashboards</button>
             </div>
           </div>
         )}
@@ -419,6 +424,19 @@ export default function DetectionLibraryPage() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Dashboard Deploy Modal */}
+        {showDashboardModal && (
+          <DashboardDeployModal
+            sourceName={selectedSourceName}
+            sourceId={selectedSource}
+            secDetections={securityDetections}
+            obsDetections={obsDetections}
+            enabledSecIds={enabledSecDetections}
+            enabledObsIds={enabledObsDetections}
+            onClose={() => setShowDashboardModal(false)}
+          />
         )}
 
         {/* Tabs */}

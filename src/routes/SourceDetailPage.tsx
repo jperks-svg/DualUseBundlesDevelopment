@@ -6,6 +6,7 @@ import { routingBlueprints } from '../data/routing';
 import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { enrichments as enrichmentData } from '../data/enrichments';
+import DashboardDeployModal from '../components/DashboardDeployModal';
 
 
 const tag = (bg: string, color: string): React.CSSProperties => ({
@@ -73,6 +74,7 @@ export default function SourceDetailPage() {
   const [deployStatus, setDeployStatus] = useState<string[]>([]);
   const [deploying, setDeploying] = useState(false);
   const [deployDataset, setDeployDataset] = useState('');
+  const [showDashboardModal, setShowDashboardModal] = useState(false);
 
   // Find source across all categories
   const source = dataSources.flatMap((c: any) => c.sources).find((s: any) => s.id === sourceId);
@@ -274,6 +276,7 @@ export default function SourceDetailPage() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={btnSecondary} onClick={() => setShowExportModal(true)}>Export Packs</button>
             <button style={{ ...btnPrimary, background: 'var(--cds-color-primary)' }} onClick={() => setShowDeployModal(true)}>Deploy to Cribl Search</button>
+            <button style={{ ...btnPrimary, background: '#6366f1' }} onClick={() => setShowDashboardModal(true)}>Deploy Dashboards</button>
           </div>
         </div>
       )}
@@ -397,6 +400,19 @@ export default function SourceDetailPage() {
             {exportStatus && <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-brand-teal)', marginTop: 16, textAlign: 'center' }}>{exportStatus}</p>}
           </div>
         </div>
+      )}
+
+      {/* Dashboard Deploy Modal */}
+      {showDashboardModal && (
+        <DashboardDeployModal
+          sourceName={source.name}
+          sourceId={sourceId!}
+          secDetections={secDetections}
+          obsDetections={obsDetections}
+          enabledSecIds={enabledSecDetections}
+          enabledObsIds={enabledObsDetections}
+          onClose={() => setShowDashboardModal(false)}
+        />
       )}
 
       {/* Tabs */}
