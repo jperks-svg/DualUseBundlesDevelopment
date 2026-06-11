@@ -202,17 +202,17 @@ export const securityDetections = {
         {
           name: 'Traffic hitting broad/risky rule names',
           description: 'Find sessions matched by overly permissive rules',
-          query: 'dataset="$DATASET" action="allow" earliest=-24h\n| where rule_name matches regex "(?i)(any|allow.all|temp|test|default|legacy|old)"\n| summarize Sessions=count(), TotalBytes=sum(bytes), UniqueApps=dcount(application) by rule_name, source_zone, destination_zone\n| order by Sessions desc'
+          query: 'dataset="$DATASET" action="allow" earliest=-24h\n| where tolower(rule_name) matches regex "(any|allow.all|temp|test|default|legacy|old)"\n| summarize Sessions=count(), TotalBytes=sum(bytes), UniqueApps=dcount(application) by rule_name, source_zone, destination_zone\n| order by Sessions desc'
         },
         {
           name: 'Cross-zone traffic through catch-all rules',
           description: 'Identify sensitive zone-crossing traffic allowed by broad policies',
-          query: 'dataset="$DATASET" action="allow" earliest=-24h\n| where rule_name matches regex "(?i)(any|allow.all|temp|test|default)"\n| where source_zone != destination_zone\n| summarize count() by rule_name, source_ip, destination_ip, destination_port, application\n| order by count_ desc\n| limit 50'
+          query: 'dataset="$DATASET" action="allow" earliest=-24h\n| where tolower(rule_name) matches regex "(any|allow.all|temp|test|default)"\n| where source_zone != destination_zone\n| summarize count() by rule_name, source_ip, destination_ip, destination_port, application\n| order by count_ desc\n| limit 50'
         },
         {
           name: 'Volume trend on broad rules',
           description: 'Track how much traffic is hitting permissive rules over time',
-          query: 'dataset="$DATASET" action="allow" earliest=-7d\n| where rule_name matches regex "(?i)(any|allow.all|temp|test|default|legacy)"\n| timestats span=1h Sessions=count(), Bytes=sum(bytes) by rule_name'
+          query: 'dataset="$DATASET" action="allow" earliest=-7d\n| where tolower(rule_name) matches regex "(any|allow.all|temp|test|default|legacy)"\n| timestats span=1h Sessions=count(), Bytes=sum(bytes) by rule_name'
         }
       ]
     }
@@ -708,22 +708,22 @@ export const securityDetections = {
         {
           name: 'LOLBin execution with suspicious arguments',
           description: 'Find LOLBin processes with download, decode, or remote execution indicators',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| where CommandLine matches regex "(?i)(http[s]?://|-urlcache|-decode|-encode|/i\\s+http|/s\\s+/n|scrobj|javascript|vbscript)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| where tolower(CommandLine) matches regex "(http[s]?://|-urlcache|-decode|-encode|/i\\s+http|/s\\s+/n|scrobj|javascript|vbscript)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'LOLBin execution from suspicious parents',
           description: 'Find LOLBins spawned by unusual parent processes (Office apps, script hosts)',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| where ParentBaseFileName matches regex "(?i)(winword|excel|powerpnt|outlook|wscript|cscript|cmd)\\.exe$"\n| summarize count() by ComputerName, ParentBaseFileName, ParentCommandLine, ImageFileName, CommandLine, UserName'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| where tolower(ParentBaseFileName) matches regex "(winword|excel|powerpnt|outlook|wscript|cscript|cmd)\\.exe$"\n| summarize count() by ComputerName, ParentBaseFileName, ParentCommandLine, ImageFileName, CommandLine, UserName'
         },
         {
           name: 'LOLBin activity timeline for host',
           description: 'Show all LOLBin executions on a specific host over time',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" ComputerName="$ENDPOINT" earliest=-48h\n| where ImageFileName matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| timestats span=1h count() by ImageFileName'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" ComputerName="$ENDPOINT" earliest=-48h\n| where tolower(ImageFileName) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| timestats span=1h count() by ImageFileName'
         },
         {
           name: 'Network connections from LOLBins',
           description: 'Find outbound network connections initiated by LOLBin processes',
-          query: 'dataset="$DATASET" event_simpleName="NetworkConnectIP4" earliest=-24h\n| where ImageFileName matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| summarize ConnectionCount=count() by ComputerName, ImageFileName, RemoteAddressIP4, RemotePort, UserName\n| order by ConnectionCount desc'
+          query: 'dataset="$DATASET" event_simpleName="NetworkConnectIP4" earliest=-24h\n| where tolower(ImageFileName) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| summarize ConnectionCount=count() by ComputerName, ImageFileName, RemoteAddressIP4, RemotePort, UserName\n| order by ConnectionCount desc'
         }
       ]
     },
@@ -743,17 +743,17 @@ export const securityDetections = {
         {
           name: 'Office applications spawning suspicious children',
           description: 'Find Office apps launching command interpreters or scripting engines',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ParentBaseFileName matches regex "(?i)(winword|excel|powerpnt|outlook|msaccess)\\.exe$"\n| where ImageFileName matches regex "(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|certutil|rundll32)\\.exe$"\n| summarize count() by ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ParentBaseFileName) matches regex "(winword|excel|powerpnt|outlook|msaccess)\\.exe$"\n| where tolower(ImageFileName) matches regex "(cmd|powershell|pwsh|wscript|cscript|mshta|certutil|rundll32)\\.exe$"\n| summarize count() by ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine\n| order by count_ desc'
         },
         {
           name: 'Svchost spawning unexpected processes',
           description: 'Find svchost launching processes outside normal system operations',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ParentBaseFileName matches regex "(?i)svchost\\.exe$"\n| where ImageFileName matches regex "(?i)(powershell|pwsh|cmd|wscript|cscript|mshta|certutil|bitsadmin)\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ParentBaseFileName) matches regex "svchost\\.exe$"\n| where tolower(ImageFileName) matches regex "(powershell|pwsh|cmd|wscript|cscript|mshta|certutil|bitsadmin)\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine\n| order by count_ desc'
         },
         {
           name: 'LSASS spawning child processes',
           description: 'LSASS should rarely spawn children — any child process is highly suspicious',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-7d\n| where ParentBaseFileName matches regex "(?i)lsass\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, aid\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-7d\n| where tolower(ParentBaseFileName) matches regex "lsass\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, aid\n| order by count_ desc'
         },
         {
           name: 'Full process tree for suspicious lineage',
@@ -778,7 +778,7 @@ export const securityDetections = {
         {
           name: 'PsExec and remote service execution indicators',
           description: 'Find PsExec service creation and remote execution patterns',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)(psexesvc|wsmprovhost|wmiprvse)\\.exe$"\n| summarize count() by ComputerName, ImageFileName, CommandLine, ParentBaseFileName, UserName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "(psexesvc|wsmprovhost|wmiprvse)\\.exe$"\n| summarize count() by ComputerName, ImageFileName, CommandLine, ParentBaseFileName, UserName\n| order by count_ desc'
         },
         {
           name: 'Outbound connections to remote management ports',
@@ -788,7 +788,7 @@ export const securityDetections = {
         {
           name: 'WinRM/WMI child process execution on targets',
           description: 'Find processes spawned by WinRM or WMI provider on remote targets',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ParentBaseFileName matches regex "(?i)(wsmprovhost|wmiprvse)\\.exe$"\n| where ImageFileName matches regex "(?i)(cmd|powershell|pwsh|wscript|cscript)\\.exe$"\n| summarize count() by ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ParentBaseFileName) matches regex "(wsmprovhost|wmiprvse)\\.exe$"\n| where tolower(ImageFileName) matches regex "(cmd|powershell|pwsh|wscript|cscript)\\.exe$"\n| summarize count() by ComputerName, UserName, ParentBaseFileName, ImageFileName, CommandLine\n| order by count_ desc'
         },
         {
           name: 'Lateral movement timeline from source host',
@@ -813,22 +813,22 @@ export const securityDetections = {
         {
           name: 'LSASS access and credential dumping commands',
           description: 'Find processes with credential dumping indicators in command line',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where CommandLine matches regex "(?i)(sekurlsa|logonpasswords|lsadump|mimikatz|kerberos::list|crypto::certificates|privilege::debug|token::elevate)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(CommandLine) matches regex "(sekurlsa|logonpasswords|lsadump|mimikatz|kerberos::list|crypto::certificates|privilege::debug|token::elevate)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'Registry hive export operations',
           description: 'Find SAM, SECURITY, and SYSTEM hive save/export operations',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)reg\\.exe$"\n| where CommandLine matches regex "(?i)(save|export).*(sam|security|system|ntds)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "reg\\.exe$"\n| where tolower(CommandLine) matches regex "(save|export).*(sam|security|system|ntds)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'Procdump and comsvcs LSASS dumping',
           description: 'Find attempts to dump LSASS via procdump or comsvcs.dll MiniDump',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where CommandLine matches regex "(?i)(procdump.*lsass|comsvcs\\.dll.*MiniDump|Out-Minidump|createdump.*lsass)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(CommandLine) matches regex "(procdump.*lsass|comsvcs\\.dll.*minidump|out-minidump|createdump.*lsass)"\n| summarize count() by ComputerName, UserName, ImageFileName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'Credential access activity on specific host',
           description: 'Full credential-related activity timeline for a compromised endpoint',
-          query: 'dataset="$DATASET" ComputerName="$ENDPOINT" earliest=-48h\n| where CommandLine matches regex "(?i)(sekurlsa|lsadump|mimikatz|reg.*save.*(sam|security|system)|procdump.*lsass|comsvcs.*MiniDump|ntdsutil)"\n| summarize count() by timestamp, ImageFileName, CommandLine, UserName\n| order by timestamp asc'
+          query: 'dataset="$DATASET" ComputerName="$ENDPOINT" earliest=-48h\n| where tolower(CommandLine) matches regex "(sekurlsa|lsadump|mimikatz|reg.*save.*(sam|security|system)|procdump.*lsass|comsvcs.*minidump|ntdsutil)"\n| summarize count() by timestamp, ImageFileName, CommandLine, UserName\n| order by timestamp asc'
         }
       ]
     },
@@ -848,22 +848,22 @@ export const securityDetections = {
         {
           name: 'Scheduled task creation with suspicious targets',
           description: 'Find schtasks creating tasks that execute scripts, PowerShell, or temp-path binaries',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)schtasks\\.exe$"\n| where CommandLine matches regex "(?i)(/create|/change)"\n| where CommandLine matches regex "(?i)(powershell|cmd|wscript|cscript|\\\\temp\\\\|\\\\appdata\\\\|\\\\programdata\\\\|http)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "schtasks\\.exe$"\n| where tolower(CommandLine) matches regex "(/create|/change)"\n| where tolower(CommandLine) matches regex "(powershell|cmd|wscript|cscript|\\\\temp\\\\|\\\\appdata\\\\|\\\\programdata\\\\|http)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'Service creation pointing to unusual paths',
           description: 'Find new services created with binaries in non-standard locations',
-          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where ImageFileName matches regex "(?i)sc\\.exe$"\n| where CommandLine matches regex "(?i)(create|config).*binpath"\n| where CommandLine matches regex "(?i)(\\\\temp\\\\|\\\\appdata\\\\|\\\\programdata\\\\|\\\\users\\\\|cmd\\.exe|powershell)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="ProcessRollup2" earliest=-24h\n| where tolower(ImageFileName) matches regex "sc\\.exe$"\n| where tolower(CommandLine) matches regex "(create|config).*binpath"\n| where tolower(CommandLine) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\programdata\\\\|\\\\users\\\\|cmd\\.exe|powershell)"\n| summarize count() by ComputerName, UserName, CommandLine, ParentBaseFileName\n| order by count_ desc'
         },
         {
           name: 'Startup folder file writes',
           description: 'Find files written to user or system Startup folders',
-          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where TargetFileName matches regex "(?i)(startup|start menu.*programs.*startup)"\n| summarize count() by ComputerName, UserName, TargetFileName, ImageFileName\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where tolower(TargetFileName) matches regex "(startup|start menu.*programs.*startup)"\n| summarize count() by ComputerName, UserName, TargetFileName, ImageFileName\n| order by count_ desc'
         },
         {
           name: 'Persistence creation timeline for endpoint',
           description: 'Show all persistence-related activity on a specific host',
-          query: 'dataset="$DATASET" ComputerName="$ENDPOINT" earliest=-48h\n| where (ImageFileName matches regex "(?i)(schtasks|sc|reg)\\.exe$" and CommandLine matches regex "(?i)(create|add|/create|binpath)") or (event_simpleName="NewExecutableWritten" and TargetFileName matches regex "(?i)startup")\n| summarize count() by timestamp, ImageFileName, CommandLine, TargetFileName, UserName\n| order by timestamp asc'
+          query: 'dataset="$DATASET" ComputerName="$ENDPOINT" earliest=-48h\n| where (tolower(ImageFileName) matches regex "(schtasks|sc|reg)\\.exe$" and tolower(CommandLine) matches regex "(create|add|/create|binpath)") or (event_simpleName="NewExecutableWritten" and tolower(TargetFileName) matches regex "startup")\n| summarize count() by timestamp, ImageFileName, CommandLine, TargetFileName, UserName\n| order by timestamp asc'
         }
       ]
     },
@@ -883,7 +883,7 @@ export const securityDetections = {
         {
           name: 'LOLBin network connections',
           description: 'Find network connections initiated by LOLBins (high-confidence malicious)',
-          query: 'dataset="$DATASET" event_simpleName="NetworkConnectIP4" ConnectionDirection="1" earliest=-24h\n| where ImageFileName matches regex "(?i)(rundll32|regsvr32|mshta|certutil|bitsadmin|msiexec)\\.exe$"\n| summarize ConnectionCount=count(), UniqueDestinations=dcount(RemoteAddressIP4) by ComputerName, ImageFileName, RemoteAddressIP4, RemotePort, UserName\n| order by ConnectionCount desc'
+          query: 'dataset="$DATASET" event_simpleName="NetworkConnectIP4" ConnectionDirection="1" earliest=-24h\n| where tolower(ImageFileName) matches regex "(rundll32|regsvr32|mshta|certutil|bitsadmin|msiexec)\\.exe$"\n| summarize ConnectionCount=count(), UniqueDestinations=dcount(RemoteAddressIP4) by ComputerName, ImageFileName, RemoteAddressIP4, RemotePort, UserName\n| order by ConnectionCount desc'
         },
         {
           name: 'Non-standard port outbound connections',
@@ -918,22 +918,22 @@ export const securityDetections = {
         {
           name: 'Executables written to suspicious paths',
           description: 'Find new executables dropped in temp, AppData, or ProgramData',
-          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where TargetFileName matches regex "(?i)(\\\\temp\\\\|\\\\appdata\\\\local\\\\temp|\\\\programdata\\\\|\\\\public\\\\|\\\\downloads\\\\)"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where tolower(TargetFileName) matches regex "(\\\\temp\\\\|\\\\appdata\\\\local\\\\temp|\\\\programdata\\\\|\\\\public\\\\|\\\\downloads\\\\)"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
         },
         {
           name: 'Double extension files',
           description: 'Find files with multiple extensions that may trick users into execution',
-          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where TargetFileName matches regex "(?i)\\.(pdf|doc|docx|xls|xlsx|jpg|png|txt)\\.(exe|scr|bat|cmd|vbs|js|ps1|dll)$"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where tolower(TargetFileName) matches regex "\\.(pdf|doc|docx|xls|xlsx|jpg|png|txt)\\.(exe|scr|bat|cmd|vbs|js|ps1|dll)$"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
         },
         {
           name: 'Executables written by Office or browser processes',
           description: 'Find executable drops from applications that receive external content',
-          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where ImageFileName matches regex "(?i)(winword|excel|powerpnt|outlook|chrome|firefox|msedge|iexplore)\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_simpleName="NewExecutableWritten" earliest=-24h\n| where tolower(ImageFileName) matches regex "(winword|excel|powerpnt|outlook|chrome|firefox|msedge|iexplore)\\.exe$"\n| summarize count() by ComputerName, UserName, ImageFileName, TargetFileName, SHA256HashData\n| order by count_ desc'
         },
         {
           name: 'File write and immediate execution correlation',
           description: 'Find files that were written and then executed within a short timeframe',
-          query: 'dataset="$DATASET" event_simpleName in ("NewExecutableWritten", "ProcessRollup2") ComputerName="$ENDPOINT" earliest=-24h\n| where TargetFileName matches regex "(?i)(\\\\temp\\\\|\\\\appdata\\\\)" or ImageFileName matches regex "(?i)(\\\\temp\\\\|\\\\appdata\\\\)"\n| summarize Events=count(), EventTypes=dcount(event_simpleName) by ComputerName, TargetFileName, SHA256HashData\n| where EventTypes > 1\n| order by Events desc'
+          query: 'dataset="$DATASET" event_simpleName in ("NewExecutableWritten", "ProcessRollup2") ComputerName="$ENDPOINT" earliest=-24h\n| where tolower(TargetFileName) matches regex "(\\\\temp\\\\|\\\\appdata\\\\)" or tolower(ImageFileName) matches regex "(\\\\temp\\\\|\\\\appdata\\\\)"\n| summarize Events=count(), EventTypes=dcount(event_simpleName) by ComputerName, TargetFileName, SHA256HashData\n| where EventTypes > 1\n| order by Events desc'
         }
       ]
     }
@@ -955,12 +955,12 @@ export const securityDetections = {
         {
           name: 'SQL injection patterns in requests',
           description: 'Find requests containing common SQL injection signatures',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|insert\\s+into|concat\\(|sleep\\(|benchmark\\(|\\x27|%27|--\\s|/\\*)" or args matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|insert\\s+into|concat\\(|sleep\\(|benchmark\\()"\n| summarize AttackCount=count(), UniquePayloads=dcount(request_uri) by remote_addr, status, http_host\n| order by AttackCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|insert\\s+into|concat\\(|sleep\\(|benchmark\\(|\\x27|%27|--\\s|/\\*)" or tolower(args) matches regex "(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|insert\\s+into|concat\\(|sleep\\(|benchmark\\()"\n| summarize AttackCount=count(), UniquePayloads=dcount(request_uri) by remote_addr, status, http_host\n| order by AttackCount desc'
         },
         {
           name: 'Successful SQL injection (200 responses)',
           description: 'Find injection attempts that received a 200 response — potential data breach',
-          query: 'dataset="$DATASET" status=200 earliest=-24h\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|concat\\(|sleep\\(|group_concat|information_schema)" or args matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|concat\\(|information_schema)"\n| summarize count(), AvgResponseSize=avg(body_bytes_sent) by remote_addr, request_uri, http_host\n| order by AvgResponseSize desc'
+          query: 'dataset="$DATASET" status=200 earliest=-24h\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|concat\\(|sleep\\(|group_concat|information_schema)" or tolower(args) matches regex "(union.*select|or\\s+1\\s*=\\s*1|concat\\(|information_schema)"\n| summarize count(), AvgResponseSize=avg(body_bytes_sent) by remote_addr, request_uri, http_host\n| order by AvgResponseSize desc'
         },
         {
           name: 'SQL injection source analysis',
@@ -970,7 +970,7 @@ export const securityDetections = {
         {
           name: 'SQL injection timeline',
           description: 'Track injection attempts over time to identify attack windows',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|sleep\\(|benchmark\\()" or args matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|sleep\\()"\n| timestats span=15m count() by remote_addr'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|drop\\s+table|sleep\\(|benchmark\\()" or tolower(args) matches regex "(union.*select|or\\s+1\\s*=\\s*1|sleep\\()"\n| timestats span=15m count() by remote_addr'
         }
       ]
     },
@@ -990,22 +990,22 @@ export const securityDetections = {
         {
           name: 'Authentication failure spikes by source',
           description: 'Find sources generating high volumes of 401/403 on login endpoints',
-          query: 'dataset="$DATASET" status in (401, 403) earliest=-24h\n| where request_uri matches regex "(?i)(/login|/auth|/signin|/api/login|/oauth/token|/api/v[0-9]+/auth)"\n| summarize FailureCount=count(), UniqueEndpoints=dcount(request_uri) by remote_addr, http_user_agent, http_host\n| where FailureCount > 20\n| order by FailureCount desc'
+          query: 'dataset="$DATASET" status in (401, 403) earliest=-24h\n| where tolower(request_uri) matches regex "(/login|/auth|/signin|/api/login|/oauth/token|/api/v[0-9]+/auth)"\n| summarize FailureCount=count(), UniqueEndpoints=dcount(request_uri) by remote_addr, http_user_agent, http_host\n| where FailureCount > 20\n| order by FailureCount desc'
         },
         {
           name: 'Brute force with eventual success',
           description: 'Find sources that had many failures followed by a success (compromised account)',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(/login|/auth|/signin|/api/login|/oauth/token)"\n| summarize Failures=countif(status in (401, 403)), Successes=countif(status in (200, 302)), TotalRequests=count() by remote_addr, http_host\n| where Failures > 10 and Successes > 0\n| order by Failures desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(/login|/auth|/signin|/api/login|/oauth/token)"\n| summarize Failures=countif(status in (401, 403)), Successes=countif(status in (200, 302)), TotalRequests=count() by remote_addr, http_host\n| where Failures > 10 and Successes > 0\n| order by Failures desc'
         },
         {
           name: 'Authentication attempt timeline for source',
           description: 'Trend login attempts from a specific IP to identify attack patterns',
-          query: 'dataset="$DATASET" remote_addr="$SOURCE_IP" earliest=-24h\n| where request_uri matches regex "(?i)(/login|/auth|/signin|/api/login|/oauth/token)"\n| timestats span=5m Failures=countif(status in (401, 403)), Successes=countif(status in (200, 302))'
+          query: 'dataset="$DATASET" remote_addr="$SOURCE_IP" earliest=-24h\n| where tolower(request_uri) matches regex "(/login|/auth|/signin|/api/login|/oauth/token)"\n| timestats span=5m Failures=countif(status in (401, 403)), Successes=countif(status in (200, 302))'
         },
         {
           name: 'Distributed brute force detection',
           description: 'Find multiple IPs targeting the same auth endpoint (distributed attack)',
-          query: 'dataset="$DATASET" status in (401, 403) earliest=-1h\n| where request_uri matches regex "(?i)(/login|/auth|/signin|/api/login|/oauth/token)"\n| summarize FailureCount=count(), UniqueSources=dcount(remote_addr) by request_uri, http_host\n| where UniqueSources > 10 and FailureCount > 100\n| order by FailureCount desc'
+          query: 'dataset="$DATASET" status in (401, 403) earliest=-1h\n| where tolower(request_uri) matches regex "(/login|/auth|/signin|/api/login|/oauth/token)"\n| summarize FailureCount=count(), UniqueSources=dcount(remote_addr) by request_uri, http_host\n| where UniqueSources > 10 and FailureCount > 100\n| order by FailureCount desc'
         }
       ]
     },
@@ -1025,12 +1025,12 @@ export const securityDetections = {
         {
           name: 'Known scanner user agents',
           description: 'Find requests from known scanning tools by user agent',
-          query: 'dataset="$DATASET" earliest=-24h\n| where http_user_agent matches regex "(?i)(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|masscan|nmap|burp|zaproxy|acunetix|nessus|openvas|qualys|w3af|arachni|skipfish)"\n| summarize RequestCount=count(), UniqueURIs=dcount(request_uri), UniqueHosts=dcount(http_host) by remote_addr, http_user_agent\n| order by RequestCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(http_user_agent) matches regex "(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|masscan|nmap|burp|zaproxy|acunetix|nessus|openvas|qualys|w3af|arachni|skipfish)"\n| summarize RequestCount=count(), UniqueURIs=dcount(request_uri), UniqueHosts=dcount(http_host) by remote_addr, http_user_agent\n| order by RequestCount desc'
         },
         {
           name: 'Scanner activity by target endpoint',
           description: 'Show which endpoints scanners are targeting most',
-          query: 'dataset="$DATASET" earliest=-24h\n| where http_user_agent matches regex "(?i)(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|nmap|burp|zaproxy)"\n| summarize HitCount=count(), UniqueScanners=dcount(remote_addr) by request_uri, status, http_host\n| order by HitCount desc\n| limit 50'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(http_user_agent) matches regex "(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|nmap|burp|zaproxy)"\n| summarize HitCount=count(), UniqueScanners=dcount(remote_addr) by request_uri, status, http_host\n| order by HitCount desc\n| limit 50'
         },
         {
           name: 'Empty or suspicious user agents with high volume',
@@ -1040,7 +1040,7 @@ export const securityDetections = {
         {
           name: 'Scanner timeline and coverage',
           description: 'Track scanning activity over time to identify assessment windows',
-          query: 'dataset="$DATASET" earliest=-7d\n| where http_user_agent matches regex "(?i)(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|nmap|burp|zaproxy)"\n| timestats span=1h count() by remote_addr, http_user_agent'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(http_user_agent) matches regex "(nikto|sqlmap|dirbuster|gobuster|nuclei|wpscan|zgrab|nmap|burp|zaproxy)"\n| timestats span=1h count() by remote_addr, http_user_agent'
         }
       ]
     },
@@ -1095,17 +1095,17 @@ export const securityDetections = {
         {
           name: 'Path traversal patterns in requests',
           description: 'Find requests containing directory traversal sequences',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(\\.\\./|\\.\\.\\\\/|%2e%2e%2f|%2e%2e/|\\.\\.%2f|%252e%252e)" or args matches regex "(?i)(\\.\\./|\\.\\.\\\\/|%2e%2e%2f|%2e%2e/)"\n| summarize AttackCount=count(), UniquePayloads=dcount(request_uri) by remote_addr, status, http_host\n| order by AttackCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(\\.\\./|\\.\\.\\\\/|%2e%2e%2f|%2e%2e/|\\.\\.%2f|%252e%252e)" or tolower(args) matches regex "(\\.\\./|\\.\\.\\\\/|%2e%2e%2f|%2e%2e/)"\n| summarize AttackCount=count(), UniquePayloads=dcount(request_uri) by remote_addr, status, http_host\n| order by AttackCount desc'
         },
         {
           name: 'Sensitive file access attempts',
           description: 'Find direct requests for known sensitive system files',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(/etc/passwd|/etc/shadow|/proc/self|/windows/system32|web\\.config|\\.htaccess|\\.env|wp-config\\.php|/boot\\.ini)"\n| summarize count() by remote_addr, request_uri, status, body_bytes_sent, http_host\n| order by count_ desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(/etc/passwd|/etc/shadow|/proc/self|/windows/system32|web\\.config|\\.htaccess|\\.env|wp-config\\.php|/boot\\.ini)"\n| summarize count() by remote_addr, request_uri, status, body_bytes_sent, http_host\n| order by count_ desc'
         },
         {
           name: 'Successful path traversal (200 responses)',
           description: 'Critical — find traversal attempts that got 200 responses (data breach)',
-          query: 'dataset="$DATASET" status=200 earliest=-24h\n| where request_uri matches regex "(?i)(\\.\\./|%2e%2e%2f|/etc/passwd|/proc/self|/etc/shadow)" or args matches regex "(?i)(\\.\\./|%2e%2e)"\n| summarize count(), AvgBytes=avg(body_bytes_sent) by remote_addr, request_uri, http_host\n| where AvgBytes > 100\n| order by AvgBytes desc'
+          query: 'dataset="$DATASET" status=200 earliest=-24h\n| where tolower(request_uri) matches regex "(\\.\\./|%2e%2e%2f|/etc/passwd|/proc/self|/etc/shadow)" or tolower(args) matches regex "(\\.\\./|%2e%2e)"\n| summarize count(), AvgBytes=avg(body_bytes_sent) by remote_addr, request_uri, http_host\n| where AvgBytes > 100\n| order by AvgBytes desc'
         },
         {
           name: 'Path traversal source profiling',
@@ -1145,7 +1145,7 @@ export const securityDetections = {
         {
           name: 'Successful PUT/DELETE to non-API paths',
           description: 'Find successful write/delete operations on paths not expected to accept them',
-          query: 'dataset="$DATASET" request_method in ("PUT", "DELETE") status in (200, 201, 204) earliest=-24h\n| where not(request_uri matches regex "(?i)^/api/")\n| summarize count(), TotalBytes=sum(body_bytes_sent) by remote_addr, request_method, request_uri, http_host\n| order by count_ desc'
+          query: 'dataset="$DATASET" request_method in ("PUT", "DELETE") status in (200, 201, 204) earliest=-24h\n| where not(tolower(request_uri) matches regex "^/api/")\n| summarize count(), TotalBytes=sum(body_bytes_sent) by remote_addr, request_method, request_uri, http_host\n| order by count_ desc'
         }
       ]
     },
@@ -1170,7 +1170,7 @@ export const securityDetections = {
         {
           name: 'Weak cipher suite usage',
           description: 'Find connections negotiating known-weak cipher suites',
-          query: 'dataset="$DATASET" earliest=-24h\n| where ssl_cipher matches regex "(?i)(RC4|DES|3DES|EXPORT|NULL|anon|MD5)"\n| summarize ConnectionCount=count(), UniqueClients=dcount(remote_addr) by ssl_cipher, ssl_protocol, server_name\n| order by ConnectionCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(ssl_cipher) matches regex "(rc4|des|3des|export|null|anon|md5)"\n| summarize ConnectionCount=count(), UniqueClients=dcount(remote_addr) by ssl_cipher, ssl_protocol, server_name\n| order by ConnectionCount desc'
         },
         {
           name: 'TLS version distribution by client',
@@ -1242,7 +1242,7 @@ export const securityDetections = {
         {
           name: 'Sensitive secret access patterns',
           description: 'Focus on secrets with names indicating high-value credentials',
-          query: 'dataset="$DATASET" stage="ResponseComplete" objectRef.resource=="secrets" earliest=-24h\n| where verb in ("get", "list", "watch")\n| where objectRef.name matches regex "(?i)(token|password|key|credential|tls|cert|kubeconfig|aws|gcp|azure)"\n| where responseStatus.code >= 200 AND responseStatus.code < 300\n| summarize count() by user.username, objectRef.namespace, objectRef.name, verb, sourceIPs[0]\n| order by count_ desc'
+          query: 'dataset="$DATASET" stage="ResponseComplete" objectRef.resource=="secrets" earliest=-24h\n| where verb in ("get", "list", "watch")\n| where objectRef.tolower(name) matches regex "(token|password|key|credential|tls|cert|kubeconfig|aws|gcp|azure)"\n| where responseStatus.code >= 200 AND responseStatus.code < 300\n| summarize count() by user.username, objectRef.namespace, objectRef.name, verb, sourceIPs[0]\n| order by count_ desc'
         },
         {
           name: 'Secret access by namespace over time',
@@ -1599,7 +1599,7 @@ export const securityDetections = {
         {
           name: 'Privileged group membership changes',
           description: 'Find users added to admin or privileged groups',
-          query: 'dataset="$DATASET" eventType=="group.user_membership.add" outcome.result=="SUCCESS" earliest=-7d\n| where target[0].alternateId matches regex "(?i)(admin|super|privileged|global|org-admin|security)"\n| summarize count() by actor.alternateId, target[0].alternateId, client.ipAddress\n| order by count_ desc'
+          query: 'dataset="$DATASET" eventType=="group.user_membership.add" outcome.result=="SUCCESS" earliest=-7d\n| where target[0].tolower(alternateId) matches regex "(admin|super|privileged|global|org-admin|security)"\n| summarize count() by actor.alternateId, target[0].alternateId, client.ipAddress\n| order by count_ desc'
         },
         {
           name: 'Privilege escalation timeline for actor',
@@ -1629,7 +1629,7 @@ export const securityDetections = {
         {
           name: 'Impersonation of executive or privileged accounts',
           description: 'Find impersonation sessions targeting high-value accounts',
-          query: 'dataset="$DATASET" eventType=="user.session.impersonation" outcome.result=="SUCCESS" earliest=-30d\n| where target[0].alternateId matches regex "(?i)(ceo|cfo|cto|ciso|vp-|director|exec|admin)"\n| summarize count() by actor.alternateId, target[0].alternateId, client.ipAddress, client.geographicalContext.city\n| order by count_ desc'
+          query: 'dataset="$DATASET" eventType=="user.session.impersonation" outcome.result=="SUCCESS" earliest=-30d\n| where target[0].tolower(alternateId) matches regex "(ceo|cfo|cto|ciso|vp-|director|exec|admin)"\n| summarize count() by actor.alternateId, target[0].alternateId, client.ipAddress, client.geographicalContext.city\n| order by count_ desc'
         },
         {
           name: 'Impersonation outside business hours',
@@ -3488,17 +3488,17 @@ export const securityDetections = {
         {
           name: 'Bot traffic to authentication endpoints',
           description: 'Find high-bot-score traffic targeting login/auth paths',
-          query: 'dataset="$DATASET" bot_score > 70 method="POST" earliest=-4h\n| where path matches regex "(?i)(login|auth|signin|oauth|token)"\n| summarize Requests=count(), UniqueUAs=dcount(user_agent), StatusCodes=makeset(status) by client_ip, host, path, bot_category\n| where Requests > 50\n| order by Requests desc'
+          query: 'dataset="$DATASET" bot_score > 70 method="POST" earliest=-4h\n| where tolower(path) matches regex "(login|auth|signin|oauth|token)"\n| summarize Requests=count(), UniqueUAs=dcount(user_agent), StatusCodes=makeset(status) by client_ip, host, path, bot_category\n| where Requests > 50\n| order by Requests desc'
         },
         {
           name: 'Credential stuffing velocity analysis',
           description: 'Track request rate over time for suspected credential stuffing sources',
-          query: 'dataset="$DATASET" bot_score > 70 method="POST" earliest=-2h\n| where path matches regex "(?i)(login|auth|signin)"\n| timestats span=1m count() by client_ip'
+          query: 'dataset="$DATASET" bot_score > 70 method="POST" earliest=-2h\n| where tolower(path) matches regex "(login|auth|signin)"\n| timestats span=1m count() by client_ip'
         },
         {
           name: 'Successful logins from bot traffic',
           description: 'Identify potential account compromises where bot traffic got 200 responses',
-          query: 'dataset="$DATASET" bot_score > 70 method="POST" status=200 earliest=-24h\n| where path matches regex "(?i)(login|auth|signin)"\n| summarize SuccessCount=count() by client_ip, host, path, country, user_agent\n| order by SuccessCount desc'
+          query: 'dataset="$DATASET" bot_score > 70 method="POST" status=200 earliest=-24h\n| where tolower(path) matches regex "(login|auth|signin)"\n| summarize SuccessCount=count() by client_ip, host, path, country, user_agent\n| order by SuccessCount desc'
         }
       ]
     },
@@ -3518,7 +3518,7 @@ export const securityDetections = {
         {
           name: 'API requests by ASN (high volume)',
           description: 'Find ASNs sending disproportionate traffic to API endpoints',
-          query: 'dataset="$DATASET" earliest=-1h\n| where path matches regex "(?i)(/api/|/v[0-9]+/)"\n| summarize Requests=count(), UniqueIPs=dcount(client_ip), Paths=dcount(path) by asn, host\n| where Requests > 1000 and UniqueIPs > 5\n| order by Requests desc'
+          query: 'dataset="$DATASET" earliest=-1h\n| where tolower(path) matches regex "(/api/|/v[0-9]+/)"\n| summarize Requests=count(), UniqueIPs=dcount(client_ip), Paths=dcount(path) by asn, host\n| where Requests > 1000 and UniqueIPs > 5\n| order by Requests desc'
         },
         {
           name: 'Rate limit response distribution by source',
@@ -3528,7 +3528,7 @@ export const securityDetections = {
         {
           name: 'Distributed request pattern detection',
           description: 'Find clusters of IPs from same ASN hitting same endpoint in coordinated fashion',
-          query: 'dataset="$DATASET" earliest=-30m\n| where path matches regex "(?i)(/api/|/v[0-9]+/)"\n| summarize Requests=count(), ip_count=dcount(client_ip) by asn, path, bin(timestamp, 1m)\n| where Requests > 100\n| where ip_count > 3\n| order by Requests desc'
+          query: 'dataset="$DATASET" earliest=-30m\n| where tolower(path) matches regex "(/api/|/v[0-9]+/)"\n| summarize Requests=count(), ip_count=dcount(client_ip) by asn, path, bin(timestamp, 1m)\n| where Requests > 100\n| where ip_count > 3\n| order by Requests desc'
         }
       ]
     },
@@ -3675,7 +3675,7 @@ export const securityDetections = {
         {
           name: 'Suspicious inbox rules (delete or forward)',
           description: 'Identify rules that delete messages or forward externally — BEC indicators',
-          query: 'dataset="$DATASET" operation in ("New-InboxRule", "Set-InboxRule") earliest=-30d\n| where parameters matches regex "(?i)(DeleteMessage|ForwardTo|RedirectTo|MoveToFolder.*Deleted)"\n| summarize count() by user_id, parameters, client_ip\n| order by count_ desc'
+          query: 'dataset="$DATASET" operation in ("New-InboxRule", "Set-InboxRule") earliest=-30d\n| where tolower(parameters) matches regex "(deletemessage|forwardto|redirectto|movetofolder.*deleted)"\n| summarize count() by user_id, parameters, client_ip\n| order by count_ desc'
         },
         {
           name: 'User activity timeline around rule creation',
@@ -3685,7 +3685,7 @@ export const securityDetections = {
         {
           name: 'External forwarding rules across organization',
           description: 'Find all rules that forward email to external addresses',
-          query: 'dataset="$DATASET" operation in ("New-InboxRule", "Set-InboxRule", "New-TransportRule") earliest=-30d\n| where parameters matches regex "(?i)(ForwardTo|RedirectTo|SmtpAddress)"\n| where parameters matches regex "(?i)(@(?!company\\.com))"\n| summarize count() by user_id, parameters\n| order by count_ desc'
+          query: 'dataset="$DATASET" operation in ("New-InboxRule", "Set-InboxRule", "New-TransportRule") earliest=-30d\n| where tolower(parameters) matches regex "(forwardto|redirectto|smtpaddress)"\n| where tolower(parameters) matches regex "(@(?!company\\.com))"\n| summarize count() by user_id, parameters\n| order by count_ desc'
         }
       ]
     },
@@ -3715,7 +3715,7 @@ export const securityDetections = {
         {
           name: 'Sensitive site downloads',
           description: 'Focus on downloads from high-value SharePoint sites',
-          query: 'dataset="$DATASET" operation in ("FileDownloaded", "FileSyncDownloadedFull") earliest=-7d\n| where site_url matches regex "(?i)(finance|hr|executive|legal|confidential)"\n| summarize Downloads=count(), Files=makeset(source_file_name) by user_id, site_url\n| order by Downloads desc'
+          query: 'dataset="$DATASET" operation in ("FileDownloaded", "FileSyncDownloadedFull") earliest=-7d\n| where tolower(site_url) matches regex "(finance|hr|executive|legal|confidential)"\n| summarize Downloads=count(), Files=makeset(source_file_name) by user_id, site_url\n| order by Downloads desc'
         },
         {
           name: 'Download by file type analysis',
@@ -3745,7 +3745,7 @@ export const securityDetections = {
         {
           name: 'High-privilege consent grants',
           description: 'Identify consent grants with dangerous permission scopes',
-          query: 'dataset="$DATASET" operation in ("Consent to application", "Add OAuth2PermissionGrant") earliest=-30d\n| where modified_properties matches regex "(?i)(Mail\\.|Files\\.ReadWrite|Directory\\.ReadWrite|full_access)"\n| summarize count() by user_id, application_id, modified_properties\n| order by count_ desc'
+          query: 'dataset="$DATASET" operation in ("Consent to application", "Add OAuth2PermissionGrant") earliest=-30d\n| where tolower(modified_properties) matches regex "(mail\\.|files\\.readwrite|directory\\.readwrite|full_access)"\n| summarize count() by user_id, application_id, modified_properties\n| order by count_ desc'
         },
         {
           name: 'Unknown application consent (not in approved list)',
@@ -3770,12 +3770,12 @@ export const securityDetections = {
         {
           name: 'Mailbox delegation changes (last 7 days)',
           description: 'Find all mailbox permission additions',
-          query: 'dataset="$DATASET" operation in ("Add-MailboxPermission", "Add-RecipientPermission", "Set-Mailbox") earliest=-7d\n| where parameters matches regex "(?i)(FullAccess|SendAs|SendOnBehalf)"\n| project creation_time, user_id, operation, object_id, parameters, client_ip\n| order by creation_time desc'
+          query: 'dataset="$DATASET" operation in ("Add-MailboxPermission", "Add-RecipientPermission", "Set-Mailbox") earliest=-7d\n| where tolower(parameters) matches regex "(fullaccess|sendas|sendonbehalf)"\n| project creation_time, user_id, operation, object_id, parameters, client_ip\n| order by creation_time desc'
         },
         {
           name: 'FullAccess delegation grants',
           description: 'Focus on the highest-risk delegation type — full mailbox access',
-          query: 'dataset="$DATASET" operation=="Add-MailboxPermission" earliest=-30d\n| where parameters matches regex "(?i)FullAccess"\n| summarize count() by user_id, object_id, parameters, client_ip\n| order by count_ desc'
+          query: 'dataset="$DATASET" operation=="Add-MailboxPermission" earliest=-30d\n| where tolower(parameters) matches regex "fullaccess"\n| summarize count() by user_id, object_id, parameters, client_ip\n| order by count_ desc'
         },
         {
           name: 'Delegation activity by admin accounts',
@@ -3830,12 +3830,12 @@ export const securityDetections = {
         {
           name: 'All eDiscovery operations (last 30 days)',
           description: 'Comprehensive view of eDiscovery activity across the organization',
-          query: 'dataset="$DATASET" operation matches regex "(?i)(ediscovery|SearchStarted|SearchCreated|CaseAdded|CaseViewed|SearchExported)" earliest=-30d\n| project creation_time, user_id, operation, object_id, parameters, result_status\n| order by creation_time desc'
+          query: 'dataset="$DATASET" tolower(operation) matches regex "(ediscovery|searchstarted|searchcreated|caseadded|caseviewed|searchexported)" earliest=-30d\n| project creation_time, user_id, operation, object_id, parameters, result_status\n| order by creation_time desc'
         },
         {
           name: 'eDiscovery by non-legal users',
           description: 'Identify eDiscovery operations from users outside the legal team',
-          query: 'dataset="$DATASET" operation matches regex "(?i)(ediscovery|SearchStarted|SearchCreated|CaseAdded)" earliest=-30d\n| where not(user_id in ("legal@company.com", "compliance@company.com"))\n| summarize Actions=count(), Operations=makeset(operation) by user_id\n| order by Actions desc'
+          query: 'dataset="$DATASET" tolower(operation) matches regex "(ediscovery|searchstarted|searchcreated|caseadded)" earliest=-30d\n| where not(user_id in ("legal@company.com", "compliance@company.com"))\n| summarize Actions=count(), Operations=makeset(operation) by user_id\n| order by Actions desc'
         },
         {
           name: 'eDiscovery search scope analysis',
@@ -3865,7 +3865,7 @@ export const securityDetections = {
         {
           name: 'High-privilege role assignments',
           description: 'Focus on assignments to dangerous admin roles',
-          query: 'dataset="$DATASET" operation in ("Add member to role", "Add eligible member to role") earliest=-30d\n| where modified_properties matches regex "(?i)(Global Admin|Exchange Admin|Security Admin|SharePoint Admin|Privileged Role)"\n| summarize count() by user_id, target_user_or_group, modified_properties\n| order by count_ desc'
+          query: 'dataset="$DATASET" operation in ("Add member to role", "Add eligible member to role") earliest=-30d\n| where tolower(modified_properties) matches regex "(global admin|exchange admin|security admin|sharepoint admin|privileged role)"\n| summarize count() by user_id, target_user_or_group, modified_properties\n| order by count_ desc'
         },
         {
           name: 'Self-elevation detection',
@@ -4391,22 +4391,22 @@ export const securityDetections = {
         {
           name: 'SQL injection patterns in requests',
           description: 'Detect common SQL injection patterns in request URIs and query strings',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|information_schema|waitfor\\s+delay|benchmark\\(|\\x27|\\-\\-\\s)" or query_string matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|information_schema)"\n| summarize AttackCount=count() by client_ip, vhost\n| order by AttackCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|information_schema|waitfor\\s+delay|benchmark\\(|\\x27|\\-\\-\\s)" or tolower(query_string) matches regex "(union.*select|or\\s+1\\s*=\\s*1|information_schema)"\n| summarize AttackCount=count() by client_ip, vhost\n| order by AttackCount desc'
         },
         {
           name: 'Successful responses to injection attempts',
           description: 'High-priority: find injection attempts that received 200 OK responses',
-          query: 'dataset="$DATASET" status_code==200 earliest=-24h\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|information_schema|\\x27\\s*(or|and|union))"\n| summarize count() by client_ip, request_uri, vhost, user_agent\n| order by count_ desc'
+          query: 'dataset="$DATASET" status_code==200 earliest=-24h\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|information_schema|\\x27\\s*(or|and|union))"\n| summarize count() by client_ip, request_uri, vhost, user_agent\n| order by count_ desc'
         },
         {
           name: 'SQL injection source analysis',
           description: 'Analyze source IPs conducting SQL injection attempts for campaign identification',
-          query: 'dataset="$DATASET" earliest=-7d\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|information_schema|waitfor|benchmark)"\n| summarize AttackCount=count(), TargetHosts=dcount(vhost), UserAgents=values(user_agent), FirstSeen=min(timestamp), LastSeen=max(timestamp) by client_ip\n| order by AttackCount desc'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|information_schema|waitfor|benchmark)"\n| summarize AttackCount=count(), TargetHosts=dcount(vhost), UserAgents=values(user_agent), FirstSeen=min(timestamp), LastSeen=max(timestamp) by client_ip\n| order by AttackCount desc'
         },
         {
           name: 'Injection attempt timeline',
           description: 'Visualize SQL injection attempts over time to identify campaigns',
-          query: 'dataset="$DATASET" earliest=-7d\n| where request_uri matches regex "(?i)(union.*select|or\\s+1\\s*=\\s*1|information_schema)"\n| timestats span=1h count() by client_ip'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(request_uri) matches regex "(union.*select|or\\s+1\\s*=\\s*1|information_schema)"\n| timestats span=1h count() by client_ip'
         }
       ]
     },
@@ -4461,22 +4461,22 @@ export const securityDetections = {
         {
           name: 'Known web shell filename access',
           description: 'Detect access to files matching known web shell names',
-          query: 'dataset="$DATASET" earliest=-24h\n| where request_uri matches regex "(?i)(c99|r57|b374k|wso|webshell|shell|backdoor|cmd)\\.(php|asp|aspx|jsp)"\n| summarize count(), StatusCodes=values(status_code) by client_ip, request_uri, request_method, vhost\n| order by count_ desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(request_uri) matches regex "(c99|r57|b374k|wso|webshell|shell|backdoor|cmd)\\.(php|asp|aspx|jsp)"\n| summarize count(), StatusCodes=values(status_code) by client_ip, request_uri, request_method, vhost\n| order by count_ desc'
         },
         {
           name: 'Command execution via web parameters',
           description: 'Find requests with command execution parameters typical of web shells',
-          query: 'dataset="$DATASET" request_method=="POST" earliest=-24h\n| where query_string matches regex "(?i)(cmd|exec|command|shell|eval)=" or request_uri matches regex "(?i)(cmd|exec|command|shell|eval)="\n| summarize count() by client_ip, request_uri, query_string, status_code, vhost\n| order by count_ desc'
+          query: 'dataset="$DATASET" request_method=="POST" earliest=-24h\n| where tolower(query_string) matches regex "(cmd|exec|command|shell|eval)=" or tolower(request_uri) matches regex "(cmd|exec|command|shell|eval)="\n| summarize count() by client_ip, request_uri, query_string, status_code, vhost\n| order by count_ desc'
         },
         {
           name: 'Suspicious file access in upload directories',
           description: 'Monitor script file access in directories commonly used for uploads',
-          query: 'dataset="$DATASET" status_code==200 earliest=-7d\n| where request_uri matches regex "(?i)(upload|uploads|tmp|temp|cache|images)/.*\\.(php|asp|aspx|jsp|cgi)"\n| summarize count(), IPs=values(client_ip) by request_uri, vhost\n| order by count_ desc'
+          query: 'dataset="$DATASET" status_code==200 earliest=-7d\n| where tolower(request_uri) matches regex "(upload|uploads|tmp|temp|cache|images)/.*\\.(php|asp|aspx|jsp|cgi)"\n| summarize count(), IPs=values(client_ip) by request_uri, vhost\n| order by count_ desc'
         },
         {
           name: 'Web shell activity timeline',
           description: 'Track access patterns to suspected web shell paths over time',
-          query: 'dataset="$DATASET" earliest=-7d\n| where request_uri matches regex "(?i)(c99|r57|b374k|wso|shell|backdoor|cmd)\\.(php|asp|aspx|jsp)" or (query_string matches regex "(?i)(cmd|exec|command)=" and status_code == 200)\n| timestats span=1h count() by client_ip'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(request_uri) matches regex "(c99|r57|b374k|wso|shell|backdoor|cmd)\\.(php|asp|aspx|jsp)" or (tolower(query_string) matches regex "(cmd|exec|command)=" and status_code == 200)\n| timestats span=1h count() by client_ip'
         }
       ]
     },
@@ -4496,22 +4496,22 @@ export const securityDetections = {
         {
           name: 'Authentication endpoint failures by IP',
           description: 'Find IPs generating excessive 401 responses on login endpoints',
-          query: 'dataset="$DATASET" status_code==401 earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin|wp-login|admin)"\n| summarize FailCount=count(), URIs=values(request_uri) by client_ip, vhost, user_agent\n| where FailCount > 10\n| order by FailCount desc'
+          query: 'dataset="$DATASET" status_code==401 earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin|wp-login|admin)"\n| summarize FailCount=count(), URIs=values(request_uri) by client_ip, vhost, user_agent\n| where FailCount > 10\n| order by FailCount desc'
         },
         {
           name: 'Brute force success detection (401 then 200)',
           description: 'Critical: detect IPs that had many 401s followed by a 200 OK',
-          query: 'dataset="$DATASET" earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin|wp-login)"\n| summarize Failures=countif(status_code==401), Successes=countif(status_code==200), LastStatus=last(status_code) by client_ip, request_uri, vhost\n| where Failures > 5 and Successes > 0\n| order by Failures desc'
+          query: 'dataset="$DATASET" earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin|wp-login)"\n| summarize Failures=countif(status_code==401), Successes=countif(status_code==200), LastStatus=last(status_code) by client_ip, request_uri, vhost\n| where Failures > 5 and Successes > 0\n| order by Failures desc'
         },
         {
           name: 'Login brute force timeline',
           description: 'Visualize brute force attempts over time per source IP',
-          query: 'dataset="$DATASET" status_code==401 earliest=-24h\n| where request_uri matches regex "(?i)(login|auth|signin|wp-login)"\n| timestats span=5m count() by client_ip'
+          query: 'dataset="$DATASET" status_code==401 earliest=-24h\n| where tolower(request_uri) matches regex "(login|auth|signin|wp-login)"\n| timestats span=5m count() by client_ip'
         },
         {
           name: 'Distributed login attacks',
           description: 'Detect multiple IPs targeting the same login endpoint in a short window',
-          query: 'dataset="$DATASET" status_code==401 earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin|wp-login)"\n| summarize SourceIPs=dcount(client_ip), TotalAttempts=count(), IPList=values(client_ip) by request_uri, vhost\n| where SourceIPs > 5\n| order by TotalAttempts desc'
+          query: 'dataset="$DATASET" status_code==401 earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin|wp-login)"\n| summarize SourceIPs=dcount(client_ip), TotalAttempts=count(), IPList=values(client_ip) by request_uri, vhost\n| where SourceIPs > 5\n| order by TotalAttempts desc'
         }
       ]
     },
@@ -4536,7 +4536,7 @@ export const securityDetections = {
         {
           name: 'Known scanner user agents',
           description: 'Detect requests from known vulnerability scanning tools',
-          query: 'dataset="$DATASET" earliest=-24h\n| where user_agent matches regex "(?i)(nikto|sqlmap|dirbuster|gobuster|nmap|masscan|wpscan|burp|zap|acunetix|nessus)"\n| summarize RequestCount=count(), UniquePaths=dcount(request_uri), Hosts=values(vhost) by client_ip, user_agent\n| order by RequestCount desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(user_agent) matches regex "(nikto|sqlmap|dirbuster|gobuster|nmap|masscan|wpscan|burp|zap|acunetix|nessus)"\n| summarize RequestCount=count(), UniquePaths=dcount(request_uri), Hosts=values(vhost) by client_ip, user_agent\n| order by RequestCount desc'
         },
         {
           name: 'Scanner discovery of valid paths',
@@ -4601,22 +4601,22 @@ export const securityDetections = {
         {
           name: 'Login endpoint traffic analysis',
           description: 'Analyze POST traffic to login endpoints for stuffing patterns',
-          query: 'dataset="$DATASET" request_method=="POST" earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin|authenticate)"\n| summarize TotalAttempts=count(), UniqueIPs=dcount(client_ip), Successes=countif(status_code==200), Failures=countif(status_code==401 or status_code==403) by request_uri, vhost\n| extend SuccessRate=round(Successes * 100.0 / TotalAttempts, 2)\n| where TotalAttempts > 50\n| order by TotalAttempts desc'
+          query: 'dataset="$DATASET" request_method=="POST" earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin|authenticate)"\n| summarize TotalAttempts=count(), UniqueIPs=dcount(client_ip), Successes=countif(status_code==200), Failures=countif(status_code==401 or status_code==403) by request_uri, vhost\n| extend SuccessRate=round(Successes * 100.0 / TotalAttempts, 2)\n| where TotalAttempts > 50\n| order by TotalAttempts desc'
         },
         {
           name: 'Distributed login source analysis',
           description: 'Identify coordinated login attempts from many IPs (botnet indicators)',
-          query: 'dataset="$DATASET" request_method=="POST" status_code==401 earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin)"\n| summarize Attempts=count(), UserAgents=dcount(user_agent) by client_ip\n| where Attempts > 3 and Attempts < 20\n| summarize SuspiciousIPs=count(), TotalAttempts=sum(Attempts)\n| where SuspiciousIPs > 10'
+          query: 'dataset="$DATASET" request_method=="POST" status_code==401 earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin)"\n| summarize Attempts=count(), UserAgents=dcount(user_agent) by client_ip\n| where Attempts > 3 and Attempts < 20\n| summarize SuspiciousIPs=count(), TotalAttempts=sum(Attempts)\n| where SuspiciousIPs > 10'
         },
         {
           name: 'Successful logins during stuffing window',
           description: 'Critical: identify any successful logins during suspected credential stuffing',
-          query: 'dataset="$DATASET" request_method=="POST" status_code==200 earliest=-1h\n| where request_uri matches regex "(?i)(login|auth|signin)"\n| summarize count() by client_ip, request_uri, user_agent, vhost\n| order by count_ desc'
+          query: 'dataset="$DATASET" request_method=="POST" status_code==200 earliest=-1h\n| where tolower(request_uri) matches regex "(login|auth|signin)"\n| summarize count() by client_ip, request_uri, user_agent, vhost\n| order by count_ desc'
         },
         {
           name: 'Credential stuffing timeline',
           description: 'Visualize login attempt volume over time to identify attack windows',
-          query: 'dataset="$DATASET" request_method=="POST" earliest=-24h\n| where request_uri matches regex "(?i)(login|auth|signin)"\n| timestats span=5m count() by status_code'
+          query: 'dataset="$DATASET" request_method=="POST" earliest=-24h\n| where tolower(request_uri) matches regex "(login|auth|signin)"\n| timestats span=5m count() by status_code'
         }
       ]
     }
@@ -4638,22 +4638,22 @@ export const securityDetections = {
         {
           name: 'Script file uploads to writable directories',
           description: 'Detect PUT/POST of script files to commonly writable IIS directories',
-          query: 'dataset="$DATASET" earliest=-24h\n| where cs_method in ("PUT", "POST") and cs_uri_stem matches regex "(?i)\\.(aspx|ashx|asmx|asp|php|jsp)$"\n| where cs_uri_stem matches regex "(?i)(upload|temp|app_data|content|images|media)"\n| summarize count(), StatusCodes=values(sc_status) by c_ip, cs_uri_stem, cs_method, cs_host, cs_User_Agent\n| order by count_ desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where cs_method in ("PUT", "POST") and tolower(cs_uri_stem) matches regex "\\.(aspx|ashx|asmx|asp|php|jsp)$"\n| where tolower(cs_uri_stem) matches regex "(upload|temp|app_data|content|images|media)"\n| summarize count(), StatusCodes=values(sc_status) by c_ip, cs_uri_stem, cs_method, cs_host, cs_User_Agent\n| order by count_ desc'
         },
         {
           name: 'Web shell filename pattern access',
           description: 'Detect access to files matching known web shell naming patterns',
-          query: 'dataset="$DATASET" sc_status==200 earliest=-7d\n| where cs_uri_stem matches regex "(?i)(cmd|shell|backdoor|eval|exec|upload|hack|pwn|c99|r57)\\.(aspx|ashx|asp)"\n| summarize AccessCount=count(), IPs=values(c_ip) by cs_uri_stem, cs_host, s_computername\n| order by AccessCount desc'
+          query: 'dataset="$DATASET" sc_status==200 earliest=-7d\n| where tolower(cs_uri_stem) matches regex "(cmd|shell|backdoor|eval|exec|upload|hack|pwn|c99|r57)\\.(aspx|ashx|asp)"\n| summarize AccessCount=count(), IPs=values(c_ip) by cs_uri_stem, cs_host, s_computername\n| order by AccessCount desc'
         },
         {
           name: 'Successful script file creation (201 status)',
           description: 'Find confirmed file creation events for script files on IIS',
-          query: 'dataset="$DATASET" sc_status==201 earliest=-7d\n| where cs_uri_stem matches regex "(?i)\\.(aspx|ashx|asmx|asp)$"\n| summarize count() by c_ip, cs_uri_stem, cs_method, cs_host, cs_User_Agent, timestamp\n| order by timestamp desc'
+          query: 'dataset="$DATASET" sc_status==201 earliest=-7d\n| where tolower(cs_uri_stem) matches regex "\\.(aspx|ashx|asmx|asp)$"\n| summarize count() by c_ip, cs_uri_stem, cs_method, cs_host, cs_User_Agent, timestamp\n| order by timestamp desc'
         },
         {
           name: 'Command parameters in web requests',
           description: 'Detect query strings with command execution parameters on IIS scripts',
-          query: 'dataset="$DATASET" sc_status==200 earliest=-24h\n| where cs_uri_query matches regex "(?i)(cmd|exec|command|shell|eval|powershell)="\n| summarize count() by c_ip, cs_uri_stem, cs_uri_query, cs_host\n| order by count_ desc'
+          query: 'dataset="$DATASET" sc_status==200 earliest=-24h\n| where tolower(cs_uri_query) matches regex "(cmd|exec|command|shell|eval|powershell)="\n| summarize count() by c_ip, cs_uri_stem, cs_uri_query, cs_host\n| order by count_ desc'
         }
       ]
     },
@@ -4678,7 +4678,7 @@ export const securityDetections = {
         {
           name: 'Anonymous access to protected resources',
           description: 'Detect successful access without credentials to paths that should require auth',
-          query: 'dataset="$DATASET" sc_status==200 earliest=-24h\n| where (cs_username == "-" or isnotnull(cs_username) == false)\n| where cs_uri_stem matches regex "(?i)(admin|manage|config|setup|internal|api)"\n| summarize count() by c_ip, cs_uri_stem, cs_host, cs_User_Agent\n| order by count_ desc'
+          query: 'dataset="$DATASET" sc_status==200 earliest=-24h\n| where (cs_username == "-" or isnotnull(cs_username) == false)\n| where tolower(cs_uri_stem) matches regex "(admin|manage|config|setup|internal|api)"\n| summarize count() by c_ip, cs_uri_stem, cs_host, cs_User_Agent\n| order by count_ desc'
         },
         {
           name: 'Auth bypass per substatus analysis',
@@ -4718,7 +4718,7 @@ export const securityDetections = {
         {
           name: 'Sensitive config file access attempts',
           description: 'Detect direct access attempts to IIS and Windows configuration files',
-          query: 'dataset="$DATASET" earliest=-7d\n| where cs_uri_stem matches regex "(?i)(web\\.config|machine\\.config|applicationhost\\.config|global\\.asa|iisstart)"\n| summarize count(), StatusCodes=values(sc_status) by c_ip, cs_uri_stem, cs_host\n| order by count_ desc'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(cs_uri_stem) matches regex "(web\\.config|machine\\.config|applicationhost\\.config|global\\.asa|iisstart)"\n| summarize count(), StatusCodes=values(sc_status) by c_ip, cs_uri_stem, cs_host\n| order by count_ desc'
         },
         {
           name: 'Path traversal source profiling',
@@ -4818,7 +4818,7 @@ export const securityDetections = {
         {
           name: 'Sensitive directory discovery attempts',
           description: 'Detect enumeration targeting known sensitive directory names',
-          query: 'dataset="$DATASET" earliest=-24h\n| where cs_uri_stem matches regex "(?i)^/(admin|backup|config|test|dev|old|tmp|private|internal|api|hidden|secret|debug)"\n| summarize count(), StatusCodes=values(sc_status), IPs=dcount(c_ip) by cs_uri_stem, cs_host\n| order by count_ desc'
+          query: 'dataset="$DATASET" earliest=-24h\n| where tolower(cs_uri_stem) matches regex "^/(admin|backup|config|test|dev|old|tmp|private|internal|api|hidden|secret|debug)"\n| summarize count(), StatusCodes=values(sc_status), IPs=dcount(c_ip) by cs_uri_stem, cs_host\n| order by count_ desc'
         },
         {
           name: 'Enumeration followed by discovery',
@@ -4900,7 +4900,7 @@ export const securityDetections = {
         {
           name: 'Privileged accounts with NTLM NewCredentials',
           description: 'Focus on high-value accounts being used in PtH-style authentications',
-          query: 'dataset="$DATASET" event_id==4624 logon_type==9 authentication_package=="NTLM" earliest=-7d\n| where target_username matches regex "(?i)(admin|svc|service)"\n| summarize count(), Sources=values(source_network_address) by target_username, target_domain\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==4624 logon_type==9 authentication_package=="NTLM" earliest=-7d\n| where tolower(target_username) matches regex "(admin|svc|service)"\n| summarize count(), Sources=values(source_network_address) by target_username, target_domain\n| order by count_ desc'
         }
       ]
     },
@@ -5132,7 +5132,7 @@ export const securityDetections = {
         {
           name: 'New services from suspicious paths',
           description: 'Detect new service installations with executables in temp or unusual directories',
-          query: 'dataset="$DATASET" event_id==7045 earliest=-24h\n| where image_path matches regex "(?i)(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\|\\\\programdata\\\\|\\\\users\\\\)"\n| summarize count() by service_name, image_path, account_name, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==7045 earliest=-24h\n| where tolower(image_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\|\\\\programdata\\\\|\\\\users\\\\)"\n| summarize count() by service_name, image_path, account_name, computer\n| order by count_ desc'
         },
         {
           name: 'All new service installations',
@@ -5142,7 +5142,7 @@ export const securityDetections = {
         {
           name: 'Services running as SYSTEM from non-standard paths',
           description: 'Identify high-privilege services with unusual executable locations',
-          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where account_name == "LocalSystem" or account_name == "NT AUTHORITY\\\\SYSTEM"\n| where not(image_path matches regex "(?i)(^C:\\\\Windows\\\\|^C:\\\\Program Files)")\n| summarize count() by service_name, image_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where account_name == "LocalSystem" or account_name == "NT AUTHORITY\\\\SYSTEM"\n| where not(tolower(image_path) matches regex "(^c:\\\\windows\\\\|^c:\\\\program files)")\n| summarize count() by service_name, image_path, computer\n| order by count_ desc'
         },
         {
           name: 'Service installation timeline',
@@ -5237,7 +5237,7 @@ export const securityDetections = {
         {
           name: 'Drivers loaded from non-standard paths',
           description: 'Detect driver installations with executables outside System32\\drivers',
-          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where service_type in ("kernel driver", "0x1", "0x2")\n| where not(image_path matches regex "(?i)(System32\\\\drivers\\\\|\\\\SystemRoot\\\\System32\\\\drivers)")\n| summarize count() by service_name, image_path, computer, account_name\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where service_type in ("kernel driver", "0x1", "0x2")\n| where not(tolower(image_path) matches regex "(system32\\\\drivers\\\\|\\\\systemroot\\\\system32\\\\drivers)")\n| summarize count() by service_name, image_path, computer, account_name\n| order by count_ desc'
         },
         {
           name: 'All kernel driver installations',
@@ -5247,7 +5247,7 @@ export const securityDetections = {
         {
           name: 'Drivers from user-writable paths',
           description: 'Identify drivers loaded from user-accessible directories',
-          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where service_type in ("kernel driver", "0x1", "0x2")\n| where image_path matches regex "(?i)(\\\\Users\\\\|\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\)"\n| summarize count() by service_name, image_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==7045 earliest=-30d\n| where service_type in ("kernel driver", "0x1", "0x2")\n| where tolower(image_path) matches regex "(\\\\users\\\\|\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\)"\n| summarize count() by service_name, image_path, computer\n| order by count_ desc'
         },
         {
           name: 'Driver installation timeline',
@@ -5347,7 +5347,7 @@ export const securityDetections = {
         {
           name: 'Security service crashes',
           description: 'Focus on crashes of security-critical services',
-          query: 'dataset="$DATASET" event_id==7034 earliest=-7d\n| where service_name matches regex "(?i)(defender|symantec|crowdstrike|carbon|sentinel|splunk|cribl|sysmon|winlog)"\n| summarize CrashCount=count() by service_name, computer\n| order by CrashCount desc'
+          query: 'dataset="$DATASET" event_id==7034 earliest=-7d\n| where tolower(service_name) matches regex "(defender|symantec|crowdstrike|carbon|sentinel|splunk|cribl|sysmon|winlog)"\n| summarize CrashCount=count() by service_name, computer\n| order by CrashCount desc'
         },
         {
           name: 'Service crash trend',
@@ -5414,22 +5414,22 @@ export const securityDetections = {
         {
           name: 'Modules loaded from non-standard paths',
           description: 'Identify application crashes caused by modules outside system directories',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-7d\n| where not(faulting_module_path matches regex "(?i)(C:\\\\Windows\\\\|C:\\\\Program Files)")\n| where faulting_module_path != "" and faulting_module_path != "-"\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-7d\n| where not(tolower(faulting_module_path) matches regex "(c:\\\\windows\\\\|c:\\\\program files)")\n| where faulting_module_path != "" and faulting_module_path != "-"\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
         },
         {
           name: 'Critical process crashes with unusual modules',
           description: 'Focus on system processes crashing due to unexpected DLLs',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where faulting_application matches regex "(?i)(svchost|explorer|winlogon|services|csrss|smss)\\.exe"\n| where not(faulting_module_path matches regex "(?i)(C:\\\\Windows\\\\System32|C:\\\\Windows\\\\SysWOW64)")\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where tolower(faulting_application) matches regex "(svchost|explorer|winlogon|services|csrss|smss)\\.exe"\n| where not(tolower(faulting_module_path) matches regex "(c:\\\\windows\\\\system32|c:\\\\windows\\\\syswow64)")\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
         },
         {
           name: 'Modules from temp directories',
           description: 'Detect modules loaded from user-writable temporary directories',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where faulting_module_path matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\)"\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where tolower(faulting_module_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\)"\n| summarize count() by faulting_application, faulting_module, faulting_module_path, computer\n| order by count_ desc'
         },
         {
           name: 'Suspicious module load timeline',
           description: 'Track suspicious module activity over time',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where not(faulting_module_path matches regex "(?i)(C:\\\\Windows\\\\|C:\\\\Program Files)")\n| where faulting_module_path != "" and faulting_module_path != "-"\n| timestats span=1d count() by faulting_module'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-30d\n| where not(tolower(faulting_module_path) matches regex "(c:\\\\windows\\\\|c:\\\\program files)")\n| where faulting_module_path != "" and faulting_module_path != "-"\n| timestats span=1d count() by faulting_module'
         }
       ]
     },
@@ -5449,12 +5449,12 @@ export const securityDetections = {
         {
           name: 'Application crashes coinciding with logon',
           description: 'Detect app crashes occurring during typical logon windows from temp paths',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-24h\n| where faulting_application_path matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Users\\\\)"\n| summarize Crashes=count(), Apps=values(faulting_application) by computer, bin(timestamp, 1m)\n| order by Crashes desc'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-24h\n| where tolower(faulting_application_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\users\\\\)"\n| summarize Crashes=count(), Apps=values(faulting_application) by computer, bin(timestamp, 1m)\n| order by Crashes desc'
         },
         {
           name: 'Non-standard applications crashing at logon',
           description: 'Focus on unusual applications that crash specifically during user logon windows',
-          query: 'dataset="$DATASET" event_id==1000 earliest=-7d\n| where not(faulting_application matches regex "(?i)(chrome|firefox|outlook|teams|onedrive|explorer)\\.exe")\n| where faulting_application_path matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\Local\\\\Temp)"\n| summarize count() by faulting_application, faulting_application_path, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1000 earliest=-7d\n| where not(tolower(faulting_application) matches regex "(chrome|firefox|outlook|teams|onedrive|explorer)\\.exe")\n| where tolower(faulting_application_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\local\\\\temp)"\n| summarize count() by faulting_application, faulting_application_path, computer\n| order by count_ desc'
         },
         {
           name: 'Crash frequency by application',
@@ -5484,7 +5484,7 @@ export const securityDetections = {
         {
           name: 'MSI installs from temp/user directories',
           description: 'Detect MSI installations sourced from temporary or user-writable paths',
-          query: 'dataset="$DATASET" event_id in (1033, 1040) earliest=-7d\n| where source_path matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\|\\\\Desktop\\\\)"\n| summarize count() by product_name, manufacturer, source_path, computer, user_sid\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id in (1033, 1040) earliest=-7d\n| where tolower(source_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\|\\\\desktop\\\\)"\n| summarize count() by product_name, manufacturer, source_path, computer, user_sid\n| order by count_ desc'
         },
         {
           name: 'Unknown software installations',
@@ -5499,7 +5499,7 @@ export const securityDetections = {
         {
           name: 'Non-admin MSI installations',
           description: 'Identify MSI installations initiated by non-administrative users',
-          query: 'dataset="$DATASET" event_id==1033 earliest=-7d\n| where source_path matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\)"\n| summarize Products=values(product_name), InstallCount=count() by user_sid, computer\n| order by InstallCount desc'
+          query: 'dataset="$DATASET" event_id==1033 earliest=-7d\n| where tolower(source_path) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\)"\n| summarize Products=values(product_name), InstallCount=count() by user_sid, computer\n| order by InstallCount desc'
         }
       ]
     },
@@ -5519,22 +5519,22 @@ export const securityDetections = {
         {
           name: 'Deserialization exceptions',
           description: 'Detect .NET deserialization errors that may indicate exploitation',
-          query: 'dataset="$DATASET" event_id==1026 earliest=-7d\n| where exception_message matches regex "(?i)(deserializ|BinaryFormatter|ObjectStateFormatter|SoapFormatter|LosFormatter)"\n| summarize count() by faulting_application, exception_type, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1026 earliest=-7d\n| where tolower(exception_message) matches regex "(deserializ|binaryformatter|objectstateformatter|soapformatter|losformatter)"\n| summarize count() by faulting_application, exception_type, computer\n| order by count_ desc'
         },
         {
           name: 'Known gadget chain indicators',
           description: 'Detect references to known .NET deserialization gadget chains',
-          query: 'dataset="$DATASET" event_id==1026 earliest=-30d\n| where exception_message matches regex "(?i)(TypeConfuseDelegate|TextFormattingRunProperties|PSObject|ActivitySurrogateSelector)"\n| summarize count() by faulting_application, exception_message, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1026 earliest=-30d\n| where tolower(exception_message) matches regex "(typeconfusedelegate|textformattingrunproperties|psobject|activitysurrogateselector)"\n| summarize count() by faulting_application, exception_message, computer\n| order by count_ desc'
         },
         {
           name: 'Deserialization error spike detection',
           description: 'Identify sudden increases in deserialization errors indicating active exploitation',
-          query: 'dataset="$DATASET" event_id==1026 earliest=-7d\n| where exception_message matches regex "(?i)deserializ"\n| timestats span=1h count() by faulting_application, computer'
+          query: 'dataset="$DATASET" event_id==1026 earliest=-7d\n| where tolower(exception_message) matches regex "deserializ"\n| timestats span=1h count() by faulting_application, computer'
         },
         {
           name: 'Web application deserialization errors',
           description: 'Focus on deserialization errors in IIS and web-facing applications',
-          query: 'dataset="$DATASET" event_id==1026 earliest=-30d\n| where faulting_application matches regex "(?i)(w3wp|iis|web)"\n| where exception_message matches regex "(?i)deserializ"\n| summarize count() by faulting_application, exception_type, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1026 earliest=-30d\n| where tolower(faulting_application) matches regex "(w3wp|iis|web)"\n| where tolower(exception_message) matches regex "deserializ"\n| summarize count() by faulting_application, exception_type, computer\n| order by count_ desc'
         }
       ]
     },
@@ -5559,7 +5559,7 @@ export const securityDetections = {
         {
           name: 'Critical application hangs',
           description: 'Focus on hangs affecting security or business-critical applications',
-          query: 'dataset="$DATASET" event_id==1002 earliest=-7d\n| where faulting_application matches regex "(?i)(defender|crowdstrike|splunk|cribl|sql|exchange|iis|w3wp)"\n| summarize HangCount=count() by faulting_application, computer\n| order by HangCount desc'
+          query: 'dataset="$DATASET" event_id==1002 earliest=-7d\n| where tolower(faulting_application) matches regex "(defender|crowdstrike|splunk|cribl|sql|exchange|iis|w3wp)"\n| summarize HangCount=count() by faulting_application, computer\n| order by HangCount desc'
         },
         {
           name: 'Application hang trend',
@@ -5589,22 +5589,22 @@ export const securityDetections = {
         {
           name: 'SQL error spike detection',
           description: 'Identify sudden increases in SQL Server errors indicating potential attacks',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(MSSQL|SQLSERVER)" earliest=-24h\n| where severity_level >= 11\n| timestats span=15m count() by computer, database_name\n| where count_ > 50'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(mssql|sqlserver)" earliest=-24h\n| where severity_level >= 11\n| timestats span=15m count() by computer, database_name\n| where count_ > 50'
         },
         {
           name: 'SQL authentication failures by source',
           description: 'Detect brute force attempts against SQL Server authentication',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(MSSQL|SQLSERVER)" error_number==18456 earliest=-1h\n| summarize FailCount=count() by client_host, database_name, computer\n| where FailCount > 10\n| order by FailCount desc'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(mssql|sqlserver)" error_number==18456 earliest=-1h\n| summarize FailCount=count() by client_host, database_name, computer\n| where FailCount > 10\n| order by FailCount desc'
         },
         {
           name: 'SQL injection indicators',
           description: 'Detect error patterns commonly associated with SQL injection attempts',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(MSSQL|SQLSERVER)" earliest=-24h\n| where error_number in (229, 230, 262, 4060, 102, 105, 156)\n| summarize count() by error_number, client_host, database_name, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(mssql|sqlserver)" earliest=-24h\n| where error_number in (229, 230, 262, 4060, 102, 105, 156)\n| summarize count() by error_number, client_host, database_name, computer\n| order by count_ desc'
         },
         {
           name: 'SQL error trend by severity',
           description: 'Visualize SQL Server error patterns over time grouped by severity',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(MSSQL|SQLSERVER)" earliest=-7d\n| where severity_level >= 11\n| timestats span=1h count() by severity_level, computer'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(mssql|sqlserver)" earliest=-7d\n| where severity_level >= 11\n| timestats span=1h count() by severity_level, computer'
         }
       ]
     }
@@ -5626,22 +5626,22 @@ export const securityDetections = {
         {
           name: 'Direct LSASS memory access',
           description: 'Detect processes accessing LSASS memory with suspicious access rights',
-          query: 'dataset="$DATASET" event_id==10 target_image matches regex "(?i)lsass\\.exe$" earliest=-24h\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| summarize count() by source_image, granted_access, source_user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==10 tolower(target_image) matches regex "lsass\\.exe$" earliest=-24h\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| summarize count() by source_image, granted_access, source_user, computer\n| order by count_ desc'
         },
         {
           name: 'LSASS access from non-standard processes',
           description: 'Identify unexpected processes accessing LSASS outside the allowlist',
-          query: 'dataset="$DATASET" event_id==10 target_image matches regex "(?i)lsass\\.exe$" earliest=-7d\n| where not(source_image matches regex "(?i)(MsMpEng|csrss|WerFault|svchost|lsass|wininit)\\.exe$")\n| summarize AccessCount=count(), AccessTypes=values(granted_access) by source_image, source_user, computer\n| order by AccessCount desc'
+          query: 'dataset="$DATASET" event_id==10 tolower(target_image) matches regex "lsass\\.exe$" earliest=-7d\n| where not(tolower(source_image) matches regex "(msmpeng|csrss|werfault|svchost|lsass|wininit)\\.exe$")\n| summarize AccessCount=count(), AccessTypes=values(granted_access) by source_image, source_user, computer\n| order by AccessCount desc'
         },
         {
           name: 'LSASS access timeline',
           description: 'Track LSASS access events over time to identify anomalous spikes',
-          query: 'dataset="$DATASET" event_id==10 target_image matches regex "(?i)lsass\\.exe$" earliest=-7d\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| timestats span=1h count() by computer'
+          query: 'dataset="$DATASET" event_id==10 tolower(target_image) matches regex "lsass\\.exe$" earliest=-7d\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| timestats span=1h count() by computer'
         },
         {
           name: 'LSASS access with full call trace',
           description: 'Get detailed call trace information for LSASS access events',
-          query: 'dataset="$DATASET" event_id==10 target_image matches regex "(?i)lsass\\.exe$" earliest=-24h\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| summarize count() by source_image, call_trace, granted_access, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==10 tolower(target_image) matches regex "lsass\\.exe$" earliest=-24h\n| where granted_access in ("0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff")\n| summarize count() by source_image, call_trace, granted_access, computer\n| order by count_ desc'
         }
       ]
     },
@@ -5661,22 +5661,22 @@ export const securityDetections = {
         {
           name: 'Encoded PowerShell executions',
           description: 'Detect all encoded PowerShell command executions',
-          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where image matches regex "(?i)(powershell|pwsh)\\.exe$"\n| where command_line matches regex "(?i)(-enc|-encodedcommand|-ec\\s)"\n| summarize count() by user, parent_image, computer, command_line\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where tolower(image) matches regex "(powershell|pwsh)\\.exe$"\n| where tolower(command_line) matches regex "(-enc|-encodedcommand|-ec\\s)"\n| summarize count() by user, parent_image, computer, command_line\n| order by count_ desc'
         },
         {
           name: 'Encoded PowerShell from unusual parents',
           description: 'Focus on encoded PowerShell launched by non-standard parent processes',
-          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where image matches regex "(?i)(powershell|pwsh)\\.exe$"\n| where command_line matches regex "(?i)(-enc|-encodedcommand|-ec\\s)"\n| where not(parent_image matches regex "(?i)(svchost|services|mmc|explorer|cmd)\\.exe$")\n| summarize count() by parent_image, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where tolower(image) matches regex "(powershell|pwsh)\\.exe$"\n| where tolower(command_line) matches regex "(-enc|-encodedcommand|-ec\\s)"\n| where not(tolower(parent_image) matches regex "(svchost|services|mmc|explorer|cmd)\\.exe$")\n| summarize count() by parent_image, user, computer\n| order by count_ desc'
         },
         {
           name: 'Encoded PowerShell timeline',
           description: 'Track encoded PowerShell execution patterns over time',
-          query: 'dataset="$DATASET" event_id==1 earliest=-30d\n| where image matches regex "(?i)(powershell|pwsh)\\.exe$"\n| where command_line matches regex "(?i)(-enc|-encodedcommand|-ec\\s)"\n| timestats span=1d count() by computer'
+          query: 'dataset="$DATASET" event_id==1 earliest=-30d\n| where tolower(image) matches regex "(powershell|pwsh)\\.exe$"\n| where tolower(command_line) matches regex "(-enc|-encodedcommand|-ec\\s)"\n| timestats span=1d count() by computer'
         },
         {
           name: 'Interactive encoded PowerShell',
           description: 'Detect encoded PowerShell in interactive user sessions — highest suspicion',
-          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where image matches regex "(?i)(powershell|pwsh)\\.exe$"\n| where command_line matches regex "(?i)(-enc|-encodedcommand|-ec\\s)"\n| where parent_image matches regex "(?i)(explorer|cmd)\\.exe$"\n| summarize count() by user, computer, parent_image, command_line\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where tolower(image) matches regex "(powershell|pwsh)\\.exe$"\n| where tolower(command_line) matches regex "(-enc|-encodedcommand|-ec\\s)"\n| where tolower(parent_image) matches regex "(explorer|cmd)\\.exe$"\n| summarize count() by user, computer, parent_image, command_line\n| order by count_ desc'
         }
       ]
     },
@@ -5701,17 +5701,17 @@ export const securityDetections = {
         {
           name: 'Injection into critical system processes',
           description: 'Focus on thread injection targeting high-value system processes',
-          query: 'dataset="$DATASET" event_id==8 earliest=-7d\n| where target_image matches regex "(?i)(svchost|lsass|csrss|winlogon|services|explorer)\\.exe$"\n| where not(source_image matches regex "(?i)(csrss|MsMpEng|svchost)\\.exe$")\n| summarize count() by source_image, target_image, source_user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==8 earliest=-7d\n| where tolower(target_image) matches regex "(svchost|lsass|csrss|winlogon|services|explorer)\\.exe$"\n| where not(tolower(source_image) matches regex "(csrss|msmpeng|svchost)\\.exe$")\n| summarize count() by source_image, target_image, source_user, computer\n| order by count_ desc'
         },
         {
           name: 'Thread injection from user-writable paths',
           description: 'Detect thread injection where the source is in a suspicious location',
-          query: 'dataset="$DATASET" event_id==8 earliest=-30d\n| where source_image matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\|\\\\Users\\\\)"\n| summarize count() by source_image, target_image, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==8 earliest=-30d\n| where tolower(source_image) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|\\\\downloads\\\\|\\\\users\\\\)"\n| summarize count() by source_image, target_image, computer\n| order by count_ desc'
         },
         {
           name: 'Remote thread creation timeline',
           description: 'Track thread injection activity over time to identify campaigns',
-          query: 'dataset="$DATASET" event_id==8 earliest=-30d\n| where source_image != target_image\n| where not(source_image matches regex "(?i)(csrss|MsMpEng)\\.exe$")\n| timestats span=1d count() by computer'
+          query: 'dataset="$DATASET" event_id==8 earliest=-30d\n| where source_image != target_image\n| where not(tolower(source_image) matches regex "(csrss|msmpeng)\\.exe$")\n| timestats span=1d count() by computer'
         }
       ]
     },
@@ -5731,12 +5731,12 @@ export const securityDetections = {
         {
           name: 'High-entropy DNS queries',
           description: 'Detect DNS queries to domains with high randomness suggesting DGA',
-          query: 'dataset="$DATASET" event_id==22 earliest=-24h\n| where strlen(query_name) > 30\n| where not(query_name matches regex "(?i)(microsoft|google|amazon|cloudflare|akamai)\\.com$")\n| summarize QueryCount=count() by query_name, image, computer\n| where QueryCount < 5\n| order by QueryCount desc\n| limit 50'
+          query: 'dataset="$DATASET" event_id==22 earliest=-24h\n| where strlen(query_name) > 30\n| where not(tolower(query_name) matches regex "(microsoft|google|amazon|cloudflare|akamai)\\.com$")\n| summarize QueryCount=count() by query_name, image, computer\n| where QueryCount < 5\n| order by QueryCount desc\n| limit 50'
         },
         {
           name: 'DNS queries from non-browser processes',
           description: 'Identify unusual processes making DNS queries',
-          query: 'dataset="$DATASET" event_id==22 earliest=-24h\n| where not(image matches regex "(?i)(chrome|firefox|edge|iexplore|msedge|svchost|dns)\\.exe$")\n| summarize UniqueQueries=dcount(query_name), QueryCount=count() by image, computer, user\n| where UniqueQueries > 50\n| order by UniqueQueries desc'
+          query: 'dataset="$DATASET" event_id==22 earliest=-24h\n| where not(tolower(image) matches regex "(chrome|firefox|edge|iexplore|msedge|svchost|dns)\\.exe$")\n| summarize UniqueQueries=dcount(query_name), QueryCount=count() by image, computer, user\n| where UniqueQueries > 50\n| order by UniqueQueries desc'
         },
         {
           name: 'Potential DNS tunneling',
@@ -5746,7 +5746,7 @@ export const securityDetections = {
         {
           name: 'DNS query timeline by process',
           description: 'Track DNS query patterns over time to identify sustained C2 beaconing',
-          query: 'dataset="$DATASET" event_id==22 earliest=-7d\n| where not(image matches regex "(?i)(chrome|firefox|edge|svchost)\\.exe$")\n| extend BaseDomain=extract("([^.]+\\\\.[^.]+)$", 1, query_name)\n| timestats span=1h count() by BaseDomain, image'
+          query: 'dataset="$DATASET" event_id==22 earliest=-7d\n| where not(tolower(image) matches regex "(chrome|firefox|edge|svchost)\\.exe$")\n| extend BaseDomain=extract("([^.]+\\\\.[^.]+)$", 1, query_name)\n| timestats span=1h count() by BaseDomain, image'
         }
       ]
     },
@@ -5766,22 +5766,22 @@ export const securityDetections = {
         {
           name: 'Suspicious LOLBin executions',
           description: 'Detect LOLBin usage with suspicious command-line arguments',
-          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where image matches regex "(?i)(certutil|mshta|regsvr32|rundll32|cmstp|msbuild|installutil)\\.exe$"\n| where command_line matches regex "(?i)(http|urlcache|decode|javascript|vbscript|scrobj|/i:)"\n| summarize count() by image, command_line, parent_image, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-24h\n| where tolower(image) matches regex "(certutil|mshta|regsvr32|rundll32|cmstp|msbuild|installutil)\\.exe$"\n| where tolower(command_line) matches regex "(http|urlcache|decode|javascript|vbscript|scrobj|/i:)"\n| summarize count() by image, command_line, parent_image, user, computer\n| order by count_ desc'
         },
         {
           name: 'Certutil download/decode activity',
           description: 'Focus on certutil being used to download or decode files',
-          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where image matches regex "(?i)certutil\\.exe$"\n| where command_line matches regex "(?i)(-urlcache|-decode|-decodehex|-encode)"\n| summarize count() by command_line, parent_image, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where tolower(image) matches regex "certutil\\.exe$"\n| where tolower(command_line) matches regex "(-urlcache|-decode|-decodehex|-encode)"\n| summarize count() by command_line, parent_image, user, computer\n| order by count_ desc'
         },
         {
           name: 'LOLBin execution from unusual parents',
           description: 'Detect LOLBin launches from non-standard parent processes',
-          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where image matches regex "(?i)(certutil|mshta|regsvr32|rundll32)\\.exe$"\n| where not(parent_image matches regex "(?i)(explorer|cmd|powershell|svchost|services)\\.exe$")\n| summarize count() by image, parent_image, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==1 earliest=-7d\n| where tolower(image) matches regex "(certutil|mshta|regsvr32|rundll32)\\.exe$"\n| where not(tolower(parent_image) matches regex "(explorer|cmd|powershell|svchost|services)\\.exe$")\n| summarize count() by image, parent_image, user, computer\n| order by count_ desc'
         },
         {
           name: 'LOLBin usage trend',
           description: 'Track LOLBin execution patterns over time to identify campaigns',
-          query: 'dataset="$DATASET" event_id==1 earliest=-30d\n| where image matches regex "(?i)(certutil|mshta|regsvr32|rundll32|cmstp|msbuild)\\.exe$"\n| where command_line matches regex "(?i)(http|urlcache|decode|javascript|vbscript|scrobj)"\n| timestats span=1d count() by image'
+          query: 'dataset="$DATASET" event_id==1 earliest=-30d\n| where tolower(image) matches regex "(certutil|mshta|regsvr32|rundll32|cmstp|msbuild)\\.exe$"\n| where tolower(command_line) matches regex "(http|urlcache|decode|javascript|vbscript|scrobj)"\n| timestats span=1d count() by image'
         }
       ]
     },
@@ -5801,22 +5801,22 @@ export const securityDetections = {
         {
           name: 'Run key modifications',
           description: 'Detect all modifications to Run/RunOnce registry keys',
-          query: 'dataset="$DATASET" event_id==13 earliest=-24h\n| where target_object matches regex "(?i)(\\\\Run\\\\|\\\\RunOnce\\\\|\\\\RunServices)"\n| summarize count() by image, target_object, details, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==13 earliest=-24h\n| where tolower(target_object) matches regex "(\\\\run\\\\|\\\\runonce\\\\|\\\\runservices)"\n| summarize count() by image, target_object, details, user, computer\n| order by count_ desc'
         },
         {
           name: 'Suspicious Run key values',
           description: 'Focus on Run key entries pointing to suspicious locations or using encoded commands',
-          query: 'dataset="$DATASET" event_id==13 earliest=-7d\n| where target_object matches regex "(?i)(\\\\Run\\\\|\\\\RunOnce\\\\)"\n| where details matches regex "(?i)(\\\\Temp\\\\|\\\\AppData\\\\|powershell|cmd\\.exe|/c |/k |-enc)"\n| summarize count() by image, target_object, details, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==13 earliest=-7d\n| where tolower(target_object) matches regex "(\\\\run\\\\|\\\\runonce\\\\)"\n| where tolower(details) matches regex "(\\\\temp\\\\|\\\\appdata\\\\|powershell|cmd\\.exe|/c |/k |-enc)"\n| summarize count() by image, target_object, details, computer\n| order by count_ desc'
         },
         {
           name: 'Run key changes by non-installer processes',
           description: 'Detect Run key modifications from processes that are not typical installers',
-          query: 'dataset="$DATASET" event_id==13 earliest=-7d\n| where target_object matches regex "(?i)(\\\\Run\\\\|\\\\RunOnce\\\\)"\n| where not(image matches regex "(?i)(msiexec|setup|install|update)\\.exe$")\n| where image matches regex "(?i)(cmd|powershell|wscript|cscript|mshta)\\.exe$"\n| summarize count() by image, target_object, details, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==13 earliest=-7d\n| where tolower(target_object) matches regex "(\\\\run\\\\|\\\\runonce\\\\)"\n| where not(tolower(image) matches regex "(msiexec|setup|install|update)\\.exe$")\n| where tolower(image) matches regex "(cmd|powershell|wscript|cscript|mshta)\\.exe$"\n| summarize count() by image, target_object, details, computer\n| order by count_ desc'
         },
         {
           name: 'Registry persistence timeline',
           description: 'Track Run key modification patterns over time',
-          query: 'dataset="$DATASET" event_id==13 earliest=-30d\n| where target_object matches regex "(?i)(\\\\Run\\\\|\\\\RunOnce\\\\)"\n| timestats span=1d count() by computer'
+          query: 'dataset="$DATASET" event_id==13 earliest=-30d\n| where tolower(target_object) matches regex "(\\\\run\\\\|\\\\runonce\\\\)"\n| timestats span=1d count() by computer'
         }
       ]
     },
@@ -5836,7 +5836,7 @@ export const securityDetections = {
         {
           name: 'Known attack tool pipe patterns',
           description: 'Detect named pipes matching Cobalt Strike, Metasploit, and other attack tools',
-          query: 'dataset="$DATASET" event_id in (17, 18) earliest=-24h\n| where pipe_name matches regex "(?i)(msagent_|MSSE-.*-server|status_|postex_|mojo\\.|win_svc|ntsvcs|DserNamePipe|SearchTextHarvester)"\n| summarize count() by pipe_name, image, event_id, user, computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id in (17, 18) earliest=-24h\n| where tolower(pipe_name) matches regex "(msagent_|msse-.*-server|status_|postex_|mojo\\.|win_svc|ntsvcs|dsernamepipe|searchtextharvester)"\n| summarize count() by pipe_name, image, event_id, user, computer\n| order by count_ desc'
         },
         {
           name: 'Pipes with random/hex names',
@@ -5846,12 +5846,12 @@ export const securityDetections = {
         {
           name: 'Non-system processes creating pipes',
           description: 'Identify unusual processes creating named pipes',
-          query: 'dataset="$DATASET" event_id==17 earliest=-24h\n| where not(image matches regex "(?i)(svchost|lsass|services|System|smss)\\.exe$")\n| summarize PipeCount=dcount(pipe_name), Pipes=values(pipe_name) by image, user, computer\n| where PipeCount > 1\n| order by PipeCount desc'
+          query: 'dataset="$DATASET" event_id==17 earliest=-24h\n| where not(tolower(image) matches regex "(svchost|lsass|services|system|smss)\\.exe$")\n| summarize PipeCount=dcount(pipe_name), Pipes=values(pipe_name) by image, user, computer\n| where PipeCount > 1\n| order by PipeCount desc'
         },
         {
           name: 'Named pipe activity timeline',
           description: 'Track named pipe creation patterns over time',
-          query: 'dataset="$DATASET" event_id in (17, 18) earliest=-7d\n| where not(image matches regex "(?i)(svchost|lsass|services)\\.exe$")\n| timestats span=1h count() by event_id, computer'
+          query: 'dataset="$DATASET" event_id in (17, 18) earliest=-7d\n| where not(tolower(image) matches regex "(svchost|lsass|services)\\.exe$")\n| timestats span=1h count() by event_id, computer'
         }
       ]
     }
@@ -5958,7 +5958,7 @@ export const securityDetections = {
         {
           name: 'Lateral movement to sensitive hosts',
           description: 'Focus on lateral movement targeting domain controllers and critical servers',
-          query: 'dataset="$DATASET" event_id==4624 logon_type==3 earliest=-24h\n| where forwarding_computer matches regex "(?i)(dc|domain|sql|exchange|ca|adfs)"\n| where source_network_address != "" and source_network_address != "-"\n| summarize count() by source_network_address, target_username, forwarding_computer\n| order by count_ desc'
+          query: 'dataset="$DATASET" event_id==4624 logon_type==3 earliest=-24h\n| where tolower(forwarding_computer) matches regex "(dc|domain|sql|exchange|ca|adfs)"\n| where source_network_address != "" and source_network_address != "-"\n| summarize count() by source_network_address, target_username, forwarding_computer\n| order by count_ desc'
         }
       ]
     },
@@ -5978,22 +5978,22 @@ export const securityDetections = {
         {
           name: 'WEF subscription changes',
           description: 'Detect all modifications to WEF subscriptions',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(EventForwarder|EventCollector)" event_id in (100, 101, 102, 103) earliest=-30d\n| summarize count() by event_id, subscription_name, subject_username, computer, timestamp\n| order by timestamp desc'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(eventforwarder|eventcollector)" event_id in (100, 101, 102, 103) earliest=-30d\n| summarize count() by event_id, subscription_name, subject_username, computer, timestamp\n| order by timestamp desc'
         },
         {
           name: 'Subscription changes outside business hours',
           description: 'Identify WEF subscription modifications during non-standard hours',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(EventForwarder|EventCollector)" event_id in (100, 101, 102, 103) earliest=-30d\n| extend Hour=hourofday(timestamp)\n| where Hour < 7 or Hour > 19\n| summarize count() by event_id, subscription_name, subject_username, Hour\n| order by count_ desc'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(eventforwarder|eventcollector)" event_id in (100, 101, 102, 103) earliest=-30d\n| extend Hour=hourofday(timestamp)\n| where Hour < 7 or Hour > 19\n| summarize count() by event_id, subscription_name, subject_username, Hour\n| order by count_ desc'
         },
         {
           name: 'Subscription deletions',
           description: 'Focus specifically on subscription deletion events which are highest risk',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(EventForwarder|EventCollector)" event_id==101 earliest=-90d\n| summarize count() by subscription_name, subject_username, computer, timestamp\n| order by timestamp desc'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(eventforwarder|eventcollector)" event_id==101 earliest=-90d\n| summarize count() by subscription_name, subject_username, computer, timestamp\n| order by timestamp desc'
         },
         {
           name: 'Subscription change timeline',
           description: 'Track all subscription management activity over time',
-          query: 'dataset="$DATASET" source_name matches regex "(?i)(EventForwarder|EventCollector)" event_id in (100, 101, 102, 103) earliest=-90d\n| timestats span=1d count() by event_id'
+          query: 'dataset="$DATASET" tolower(source_name) matches regex "(eventforwarder|eventcollector)" event_id in (100, 101, 102, 103) earliest=-90d\n| timestats span=1d count() by event_id'
         }
       ]
     },
@@ -6048,22 +6048,22 @@ export const securityDetections = {
         {
           name: 'Privileged accounts with wide host reach',
           description: 'Identify accounts authenticating to many hosts fleet-wide',
-          query: 'dataset="$DATASET" event_id==4624 earliest=-24h\n| where target_username matches regex "(?i)(admin|svc|service|da-)"\n| summarize UniqueHosts=dcount(forwarding_computer), Hosts=values(forwarding_computer) by target_username, target_domain\n| where UniqueHosts > 10\n| order by UniqueHosts desc'
+          query: 'dataset="$DATASET" event_id==4624 earliest=-24h\n| where tolower(target_username) matches regex "(admin|svc|service|da-)"\n| summarize UniqueHosts=dcount(forwarding_computer), Hosts=values(forwarding_computer) by target_username, target_domain\n| where UniqueHosts > 10\n| order by UniqueHosts desc'
         },
         {
           name: 'Privileged account host spread trend',
           description: 'Track how many hosts each privileged account touches over time',
-          query: 'dataset="$DATASET" event_id==4624 earliest=-7d\n| where target_username matches regex "(?i)(admin|svc|service|da-)"\n| summarize UniqueHosts=dcount(forwarding_computer) by target_username, bin(timestamp, 1d)\n| where UniqueHosts > 5\n| order by UniqueHosts desc'
+          query: 'dataset="$DATASET" event_id==4624 earliest=-7d\n| where tolower(target_username) matches regex "(admin|svc|service|da-)"\n| summarize UniqueHosts=dcount(forwarding_computer) by target_username, bin(timestamp, 1d)\n| where UniqueHosts > 5\n| order by UniqueHosts desc'
         },
         {
           name: 'New hosts for privileged accounts',
           description: 'Detect privileged accounts accessing hosts they have not previously authenticated to',
-          query: 'dataset="$DATASET" event_id==4624 earliest=-24h\n| where target_username matches regex "(?i)(admin|svc|service|da-)"\n| summarize HostsToday=dcount(forwarding_computer), TodayHosts=values(forwarding_computer) by target_username\n| where HostsToday > 10\n| order by HostsToday desc'
+          query: 'dataset="$DATASET" event_id==4624 earliest=-24h\n| where tolower(target_username) matches regex "(admin|svc|service|da-)"\n| summarize HostsToday=dcount(forwarding_computer), TodayHosts=values(forwarding_computer) by target_username\n| where HostsToday > 10\n| order by HostsToday desc'
         },
         {
           name: 'Privileged account authentication timeline',
           description: 'Visualize privileged account usage patterns across the fleet',
-          query: 'dataset="$DATASET" event_id==4624 earliest=-7d\n| where target_username matches regex "(?i)(admin|svc|service|da-)"\n| timestats span=1h dcount(forwarding_computer) by target_username'
+          query: 'dataset="$DATASET" event_id==4624 earliest=-7d\n| where tolower(target_username) matches regex "(admin|svc|service|da-)"\n| timestats span=1h dcount(forwarding_computer) by target_username'
         }
       ]
     },
@@ -6669,7 +6669,7 @@ export const securityDetections = {
         {
           name: 'Recent logging status changes',
           description: 'Track changes to audit trail status to catch recent disablement',
-          query: 'dataset="$DATASET" earliest=-7d\n| where policy_name matches regex "(?i)cloudtrail|audit.log|activity.log"\n| summarize StatusChanges=count(), LastStatus=last(logging_status) by cloud_account, region, trail_name\n| order by StatusChanges desc'
+          query: 'dataset="$DATASET" earliest=-7d\n| where tolower(policy_name) matches regex "cloudtrail|audit.log|activity.log"\n| summarize StatusChanges=count(), LastStatus=last(logging_status) by cloud_account, region, trail_name\n| order by StatusChanges desc'
         },
         {
           name: 'Logging gap timeline',
@@ -7148,7 +7148,7 @@ export const securityDetections = {
         {
           name: 'Suspicious file writes to startup paths',
           description: 'Find files written to startup directories or temp with suspicious characteristics',
-          query: 'dataset="$DATASET" ioc_category="suspicious-file" earliest=-24h\n| where file_path matches regex "(?i)(startup|temp|appdata)"\n| summarize Writes=count(), Files=values(file_name), WriterProcesses=values(process_name) by host_name, file_path\n| order by Writes desc'
+          query: 'dataset="$DATASET" ioc_category="suspicious-file" earliest=-24h\n| where tolower(file_path) matches regex "(startup|temp|appdata)"\n| summarize Writes=count(), Files=values(file_name), WriterProcesses=values(process_name) by host_name, file_path\n| order by Writes desc'
         },
         {
           name: 'Double extension and obfuscated file names',
@@ -7210,17 +7210,17 @@ export const securityDetections = {
         {
           name: 'Active C2 callbacks',
           description: 'Find internal hosts with confirmed C2 communication',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)callback|c2|command.control" mvx_verdict="malicious" earliest=-24h\n| summarize Callbacks=count(), Destinations=values(destination_ip), Domains=values(callback_domain) by source_ip, malware_family\n| order by Callbacks desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "callback|c2|command.control" mvx_verdict="malicious" earliest=-24h\n| summarize Callbacks=count(), Destinations=values(destination_ip), Domains=values(callback_domain) by source_ip, malware_family\n| order by Callbacks desc'
         },
         {
           name: 'C2 infrastructure mapping',
           description: 'Map all C2 destinations being contacted from the network',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)callback|c2|command.control" earliest=-7d\n| summarize InternalHosts=dcount(source_ip), HostList=values(source_ip), Protocols=values(protocol) by destination_ip, callback_domain, malware_family\n| order by InternalHosts desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "callback|c2|command.control" earliest=-7d\n| summarize InternalHosts=dcount(source_ip), HostList=values(source_ip), Protocols=values(protocol) by destination_ip, callback_domain, malware_family\n| order by InternalHosts desc'
         },
         {
           name: 'C2 communication trend',
           description: 'Track C2 callback detections over time to identify persistent compromises',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)callback|c2|command.control" earliest=-30d\n| timestats span=1d count() by source_ip, malware_family'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "callback|c2|command.control" earliest=-30d\n| timestats span=1d count() by source_ip, malware_family'
         }
       ]
     },
@@ -7300,7 +7300,7 @@ export const securityDetections = {
         {
           name: 'DNS tunneling indicators',
           description: 'Find hosts making abnormal DNS queries suggesting data exfiltration',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)dns.*(tunnel|exfil)" earliest=-24h\n| summarize Queries=count(), AvgLength=avg(query_length), MaxLength=max(query_length) by source_ip, query_name\n| where AvgLength > 50 and Queries > 100\n| order by Queries desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "dns.*(tunnel|exfil)" earliest=-24h\n| summarize Queries=count(), AvgLength=avg(query_length), MaxLength=max(query_length) by source_ip, query_name\n| where AvgLength > 50 and Queries > 100\n| order by Queries desc'
         },
         {
           name: 'High-entropy DNS queries',
@@ -7310,7 +7310,7 @@ export const securityDetections = {
         {
           name: 'DNS exfiltration trend',
           description: 'Track suspected DNS tunneling activity over time by source',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)dns.*(tunnel|exfil)" earliest=-7d\n| timestats span=1h count() by source_ip'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "dns.*(tunnel|exfil)" earliest=-7d\n| timestats span=1h count() by source_ip'
         }
       ]
     },
@@ -7330,7 +7330,7 @@ export const securityDetections = {
         {
           name: 'Suspicious TLS connections',
           description: 'Find TLS connections with certificate anomalies to potential C2 infrastructure',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)(tls|ssl|cert).*(anomal|suspicious|c2)" earliest=-24h\n| summarize Connections=count(), Certs=values(tls_subject) by source_ip, destination_ip, destination_port\n| order by Connections desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "(tls|ssl|cert).*(anomal|suspicious|c2)" earliest=-24h\n| summarize Connections=count(), Certs=values(tls_subject) by source_ip, destination_ip, destination_port\n| order by Connections desc'
         },
         {
           name: 'Malicious JA3 hash matches',
@@ -7340,7 +7340,7 @@ export const securityDetections = {
         {
           name: 'Encrypted C2 trend',
           description: 'Track suspicious encrypted channel detections over time',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)(tls|ssl|cert).*(anomal|suspicious|c2)" earliest=-7d\n| timestats span=1d count() by source_ip, destination_ip'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "(tls|ssl|cert).*(anomal|suspicious|c2)" earliest=-7d\n| timestats span=1d count() by source_ip, destination_ip'
         }
       ]
     },
@@ -7360,17 +7360,17 @@ export const securityDetections = {
         {
           name: 'Internal exploitation attempts',
           description: 'Find internal host-to-host traffic matching exploitation patterns',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)lateral|exploit|internal" earliest=-24h\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| summarize Attempts=count(), Exploits=values(exploit_name), Ports=values(destination_port) by source_ip, destination_ip\n| order by Attempts desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "lateral|exploit|internal" earliest=-24h\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| summarize Attempts=count(), Exploits=values(exploit_name), Ports=values(destination_port) by source_ip, destination_ip\n| order by Attempts desc'
         },
         {
           name: 'Lateral movement path analysis',
           description: 'Map attacker movement across internal hosts for scope assessment',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)lateral|exploit" earliest=-7d\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| summarize Connections=count(), TargetPorts=values(destination_port) by source_ip, destination_ip\n| order by source_ip, Connections desc'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "lateral|exploit" earliest=-7d\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| summarize Connections=count(), TargetPorts=values(destination_port) by source_ip, destination_ip\n| order by source_ip, Connections desc'
         },
         {
           name: 'Internal exploitation trend',
           description: 'Track internal lateral movement detections over time for outbreak monitoring',
-          query: 'dataset="$DATASET" alert_name matches regex "(?i)lateral|exploit|internal" earliest=-7d\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| timestats span=1h count() by source_ip'
+          query: 'dataset="$DATASET" tolower(alert_name) matches regex "lateral|exploit|internal" earliest=-7d\n| where source_ip matches regex "^(10\\.|172\\.(1[6-9]|2|3[01])\\.|192\\.168\\.)"\n| timestats span=1h count() by source_ip'
         }
       ]
     }
@@ -7392,17 +7392,17 @@ export const securityDetections = {
         {
           name: 'Executive impersonation attempts',
           description: 'Find emails with executive display names failing authentication checks',
-          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-24h\n| where sender_display matches regex "(?i)(CEO|CFO|CTO|VP|Director|President)"\n| summarize Attempts=count(), Recipients=values(recipient), Subjects=values(subject) by sender, sender_display, sender_ip\n| order by Attempts desc'
+          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-24h\n| where tolower(sender_display) matches regex "(ceo|cfo|cto|vp|director|president)"\n| summarize Attempts=count(), Recipients=values(recipient), Subjects=values(subject) by sender, sender_display, sender_ip\n| order by Attempts desc'
         },
         {
           name: 'BEC targeting specific recipients',
           description: 'Identify which internal users are most targeted by impersonation attacks',
-          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-7d\n| where sender_display matches regex "(?i)(CEO|CFO|CTO|VP|Director|President)"\n| summarize BECAttempts=count(), Senders=values(sender) by recipient\n| order by BECAttempts desc'
+          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-7d\n| where tolower(sender_display) matches regex "(ceo|cfo|cto|vp|director|president)"\n| summarize BECAttempts=count(), Senders=values(sender) by recipient\n| order by BECAttempts desc'
         },
         {
           name: 'BEC attack trend',
           description: 'Track executive impersonation attempts over time to identify campaigns',
-          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-30d\n| where sender_display matches regex "(?i)(CEO|CFO|CTO|VP|Director|President)"\n| timestats span=1d count() by sender_display'
+          query: 'dataset="$DATASET" spf_result!="pass" dkim_result!="pass" earliest=-30d\n| where tolower(sender_display) matches regex "(ceo|cfo|cto|vp|director|president)"\n| timestats span=1d count() by sender_display'
         }
       ]
     },
@@ -9730,7 +9730,7 @@ export const securityDetections = {
         {
           name: 'LSASS cross-process access events',
           description: 'Find all processes that accessed lsass.exe via cross-process operations',
-          query: 'dataset="$DATASET" type="crossproc" earliest=-24h\n| where process_name matches regex "(?i)lsass\\.exe" == false\n| where crossproc_type in ("open_process", "remote_write")\n| summarize count() by device_name, process_name, process_cmdline, process_username, crossproc_type\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="crossproc" earliest=-24h\n| where tolower(process_name) matches regex "lsass\\.exe" == false\n| where crossproc_type in ("open_process", "remote_write")\n| summarize count() by device_name, process_name, process_cmdline, process_username, crossproc_type\n| order by count_ desc'
         },
         {
           name: 'Process tree for LSASS accessor',
@@ -9765,12 +9765,12 @@ export const securityDetections = {
         {
           name: 'Suspicious file extension changes',
           description: 'Detect file modifications resulting in known ransomware extensions',
-          query: 'dataset="$DATASET" type="filemod" earliest=-4h\n| where filemod_filename matches regex "(?i)\\.(encrypted|locked|crypt|crypto|ransom|wcry|locky|cerber|zepto)$"\n| summarize count() by device_name, process_name, process_guid\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="filemod" earliest=-4h\n| where tolower(filemod_filename) matches regex "\\.(encrypted|locked|crypt|crypto|ransom|wcry|locky|cerber|zepto)$"\n| summarize count() by device_name, process_name, process_guid\n| order by count_ desc'
         },
         {
           name: 'Ransom note file creation',
           description: 'Find creation of known ransom note filenames',
-          query: 'dataset="$DATASET" type="filemod" earliest=-24h\n| where filemod_filename matches regex "(?i)(README|DECRYPT|RECOVER|RESTORE|HOW_TO|RANSOM|HELP_DECRYPT).*\\.(txt|html|hta)$"\n| summarize count() by device_name, process_name, filemod_filename, process_username\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="filemod" earliest=-24h\n| where tolower(filemod_filename) matches regex "(readme|decrypt|recover|restore|how_to|ransom|help_decrypt).*\\.(txt|html|hta)$"\n| summarize count() by device_name, process_name, filemod_filename, process_username\n| order by count_ desc'
         }
       ]
     },
@@ -9790,17 +9790,17 @@ export const securityDetections = {
         {
           name: 'LOLBin execution with suspicious arguments',
           description: 'Find LOLBin processes with download, decode, or remote execution indicators',
-          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where process_name matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| where process_cmdline matches regex "(?i)(http[s]?://|-urlcache|-decode|-encode|/i\\s+http|scrobj|javascript|vbscript)"\n| summarize count() by device_name, process_username, process_name, process_cmdline, parent_name\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where tolower(process_name) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp|msiexec|wmic)\\.exe$"\n| where tolower(process_cmdline) matches regex "(http[s]?://|-urlcache|-decode|-encode|/i\\s+http|scrobj|javascript|vbscript)"\n| summarize count() by device_name, process_username, process_name, process_cmdline, parent_name\n| order by count_ desc'
         },
         {
           name: 'LOLBin spawned by Office or script host',
           description: 'Find LOLBins launched by Office applications or scripting engines',
-          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where process_name matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp)\\.exe$"\n| where parent_name matches regex "(?i)(winword|excel|powerpnt|outlook|wscript|cscript|cmd)\\.exe$"\n| summarize count() by device_name, parent_name, process_name, process_cmdline, process_username'
+          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where tolower(process_name) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin|cmstp)\\.exe$"\n| where tolower(parent_name) matches regex "(winword|excel|powerpnt|outlook|wscript|cscript|cmd)\\.exe$"\n| summarize count() by device_name, parent_name, process_name, process_cmdline, process_username'
         },
         {
           name: 'LOLBin network activity',
           description: 'Find outbound network connections initiated by LOLBin processes',
-          query: 'dataset="$DATASET" type="netconn" earliest=-24h\n| where process_name matches regex "(?i)(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| summarize Connections=count() by device_name, process_name, netconn_remote_ip, netconn_remote_port, netconn_domain\n| order by Connections desc'
+          query: 'dataset="$DATASET" type="netconn" earliest=-24h\n| where tolower(process_name) matches regex "(certutil|mshta|rundll32|regsvr32|bitsadmin)\\.exe$"\n| summarize Connections=count() by device_name, process_name, netconn_remote_ip, netconn_remote_port, netconn_domain\n| order by Connections desc'
         }
       ]
     },
@@ -9820,12 +9820,12 @@ export const securityDetections = {
         {
           name: 'PsExec service execution on targets',
           description: 'Find PSEXESVC.exe spawning child processes indicating PsExec lateral movement',
-          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where parent_name matches regex "(?i)(psexesvc|PSEXESVC)\\.exe$"\n| summarize count() by device_name, process_name, process_cmdline, process_username\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where tolower(parent_name) matches regex "(psexesvc|psexesvc)\\.exe$"\n| summarize count() by device_name, process_name, process_cmdline, process_username\n| order by count_ desc'
         },
         {
           name: 'WMI/WinRM remote process execution',
           description: 'Find wmiprvse or wsmprovhost spawning command interpreters',
-          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where parent_name matches regex "(?i)(wmiprvse|wsmprovhost)\\.exe$"\n| where process_name matches regex "(?i)(cmd|powershell|pwsh|wscript|cscript)\\.exe$"\n| summarize count() by device_name, parent_name, process_name, process_cmdline, process_username\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where tolower(parent_name) matches regex "(wmiprvse|wsmprovhost)\\.exe$"\n| where tolower(process_name) matches regex "(cmd|powershell|pwsh|wscript|cscript)\\.exe$"\n| summarize count() by device_name, parent_name, process_name, process_cmdline, process_username\n| order by count_ desc'
         },
         {
           name: 'Lateral movement network indicators',
@@ -9850,17 +9850,17 @@ export const securityDetections = {
         {
           name: 'Regular-interval connections from non-browser processes',
           description: 'Find processes making repetitive outbound connections with consistent timing',
-          query: 'dataset="$DATASET" type="netconn" earliest=-4h\n| where not(process_name matches regex "(?i)(chrome|firefox|msedge|safari|iexplore)\\.exe$")\n| summarize ConnectionCount=count(), FirstSeen=min(event_timestamp), LastSeen=max(event_timestamp) by device_name, process_name, netconn_remote_ip, netconn_remote_port\n| where ConnectionCount > 10\n| order by ConnectionCount desc'
+          query: 'dataset="$DATASET" type="netconn" earliest=-4h\n| where not(tolower(process_name) matches regex "(chrome|firefox|msedge|safari|iexplore)\\.exe$")\n| summarize ConnectionCount=count(), FirstSeen=min(event_timestamp), LastSeen=max(event_timestamp) by device_name, process_name, netconn_remote_ip, netconn_remote_port\n| where ConnectionCount > 10\n| order by ConnectionCount desc'
         },
         {
           name: 'Connections to unresolved IPs (no domain)',
           description: 'Find outbound connections where no DNS domain was resolved — direct IP communication',
-          query: 'dataset="$DATASET" type="netconn" netconn_domain="" earliest=-24h\n| where not(process_name matches regex "(?i)(chrome|firefox|msedge|svchost)\\.exe$")\n| summarize count() by device_name, process_name, netconn_remote_ip, netconn_remote_port\n| where count_ > 5\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="netconn" netconn_domain="" earliest=-24h\n| where not(tolower(process_name) matches regex "(chrome|firefox|msedge|svchost)\\.exe$")\n| summarize count() by device_name, process_name, netconn_remote_ip, netconn_remote_port\n| where count_ > 5\n| order by count_ desc'
         },
         {
           name: 'Non-standard port outbound connections',
           description: 'Find outbound connections to ports other than common web/mail ports',
-          query: 'dataset="$DATASET" type="netconn" earliest=-24h\n| where not(netconn_remote_port in ("80", "443", "53", "25", "587"))\n| where not(process_name matches regex "(?i)(svchost|dns|outlook)\\.exe$")\n| summarize count() by device_name, process_name, netconn_remote_ip, netconn_remote_port, netconn_domain\n| where count_ > 3\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="netconn" earliest=-24h\n| where not(netconn_remote_port in ("80", "443", "53", "25", "587"))\n| where not(tolower(process_name) matches regex "(svchost|dns|outlook)\\.exe$")\n| summarize count() by device_name, process_name, netconn_remote_ip, netconn_remote_port, netconn_domain\n| where count_ > 3\n| order by count_ desc'
         }
       ]
     },
@@ -9880,17 +9880,17 @@ export const securityDetections = {
         {
           name: 'Run key modifications by non-installers',
           description: 'Find modifications to Run/RunOnce registry keys by unexpected processes',
-          query: 'dataset="$DATASET" type="regmod" earliest=-24h\n| where regmod_regpath matches regex "(?i)(CurrentVersion\\\\Run|Winlogon\\\\Shell|Winlogon\\\\Userinit)"\n| where not(process_name matches regex "(?i)(msiexec|setup|update|installer)\\.exe$")\n| summarize count() by device_name, process_name, regmod_regpath, process_username\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="regmod" earliest=-24h\n| where tolower(regmod_regpath) matches regex "(currentversion\\\\run|winlogon\\\\shell|winlogon\\\\userinit)"\n| where not(tolower(process_name) matches regex "(msiexec|setup|update|installer)\\.exe$")\n| summarize count() by device_name, process_name, regmod_regpath, process_username\n| order by count_ desc'
         },
         {
           name: 'Service registry modifications',
           description: 'Find new service registrations via registry modification',
-          query: 'dataset="$DATASET" type="regmod" earliest=-24h\n| where regmod_regpath matches regex "(?i)SYSTEM\\\\CurrentControlSet\\\\Services\\\\.*\\\\(ImagePath|Start|Type)"\n| where not(process_name matches regex "(?i)(services|svchost|trustedinstaller)\\.exe$")\n| summarize count() by device_name, process_name, regmod_regpath, process_username\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="regmod" earliest=-24h\n| where tolower(regmod_regpath) matches regex "system\\\\currentcontrolset\\\\services\\\\.*\\\\(imagepath|start|type)"\n| where not(tolower(process_name) matches regex "(services|svchost|trustedinstaller)\\.exe$")\n| summarize count() by device_name, process_name, regmod_regpath, process_username\n| order by count_ desc'
         },
         {
           name: 'Registry persistence trending',
           description: 'Track persistence-related registry modifications over time',
-          query: 'dataset="$DATASET" type="regmod" earliest=-7d\n| where regmod_regpath matches regex "(?i)(CurrentVersion\\\\Run|Services\\\\.*\\\\ImagePath|Winlogon)"\n| timestats span=1d count() by device_name\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="regmod" earliest=-7d\n| where tolower(regmod_regpath) matches regex "(currentversion\\\\run|services\\\\.*\\\\imagepath|winlogon)"\n| timestats span=1d count() by device_name\n| order by count_ desc'
         }
       ]
     },
@@ -9915,7 +9915,7 @@ export const securityDetections = {
         {
           name: 'New binaries from suspicious paths',
           description: 'Find first-execution binaries running from temp, downloads, or AppData',
-          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where process_cmdline matches regex "(?i)(\\\\Temp\\\\|\\\\Downloads\\\\|\\\\AppData\\\\Local\\\\Temp)"\n| summarize Endpoints=dcount(device_name), count() by process_hash, process_name, process_cmdline\n| where Endpoints <= 2\n| order by count_ desc'
+          query: 'dataset="$DATASET" type="procstart" earliest=-24h\n| where tolower(process_cmdline) matches regex "(\\\\temp\\\\|\\\\downloads\\\\|\\\\appdata\\\\local\\\\temp)"\n| summarize Endpoints=dcount(device_name), count() by process_hash, process_name, process_cmdline\n| where Endpoints <= 2\n| order by count_ desc'
         },
         {
           name: 'Unsigned first-execution binaries',

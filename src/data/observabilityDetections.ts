@@ -3596,17 +3596,17 @@ export const observabilityDetections = {
         {
           name: 'Throttle events by application',
           description: 'Find applications experiencing API throttling',
-          query: 'dataset="$DATASET" result_status matches regex "(?i)(throttl|429|rate.limit)" earliest=-24h\n| summarize ThrottleCount=count() by application_id, user_id, workload\n| order by ThrottleCount desc'
+          query: 'dataset="$DATASET" tolower(result_status) matches regex "(throttl|429|rate.limit)" earliest=-24h\n| summarize ThrottleCount=count() by application_id, user_id, workload\n| order by ThrottleCount desc'
         },
         {
           name: 'Throttle rate trend over time',
           description: 'Visualize throttling patterns to identify peak throttle windows',
-          query: 'dataset="$DATASET" result_status matches regex "(?i)(throttl|429|rate.limit)" earliest=-7d\n| timestats span=1h count() by workload'
+          query: 'dataset="$DATASET" tolower(result_status) matches regex "(throttl|429|rate.limit)" earliest=-7d\n| timestats span=1h count() by workload'
         },
         {
           name: 'Operations triggering throttles',
           description: 'Identify which specific API operations cause the most throttling',
-          query: 'dataset="$DATASET" result_status matches regex "(?i)(throttl|429|rate.limit)" earliest=-24h\n| summarize count() by operation, workload, application_id\n| order by count_ desc\n| limit 20'
+          query: 'dataset="$DATASET" tolower(result_status) matches regex "(throttl|429|rate.limit)" earliest=-24h\n| summarize count() by operation, workload, application_id\n| order by count_ desc\n| limit 20'
         }
       ]
     },
@@ -3720,17 +3720,17 @@ export const observabilityDetections = {
         {
           name: 'Sync failure rate (last 24 hours)',
           description: 'Track sync operation success/failure rates',
-          query: 'dataset="$DATASET" workload in ("OneDrive", "SharePoint") operation matches regex "(?i)(sync|upload|download)" earliest=-24h\n| summarize Total=count(), Failures=countif(result_status=="Failed") by workload\n| extend FailRate=round(Failures * 100.0 / Total, 2)'
+          query: 'dataset="$DATASET" workload in ("OneDrive", "SharePoint") tolower(operation) matches regex "(sync|upload|download)" earliest=-24h\n| summarize Total=count(), Failures=countif(result_status=="Failed") by workload\n| extend FailRate=round(Failures * 100.0 / Total, 2)'
         },
         {
           name: 'Sync failures by client version',
           description: 'Identify if specific client versions are causing sync issues',
-          query: 'dataset="$DATASET" result_status=="Failed" operation matches regex "(?i)(sync|FileSyncUpload|FileSyncDownload)" earliest=-7d\n| summarize Failures=count(), Users=dcount(user_id) by user_agent\n| order by Failures desc'
+          query: 'dataset="$DATASET" result_status=="Failed" tolower(operation) matches regex "(sync|filesyncupload|filesyncdownload)" earliest=-7d\n| summarize Failures=count(), Users=dcount(user_id) by user_agent\n| order by Failures desc'
         },
         {
           name: 'Users with persistent sync failures',
           description: 'Find users experiencing repeated sync issues indicating unresolved problems',
-          query: 'dataset="$DATASET" result_status=="Failed" operation matches regex "(?i)(sync|FileSyncUpload|FileSyncDownload)" earliest=-7d\n| summarize FailCount=count(), Days=dcount(bin(creation_time, 1d)) by user_id\n| where FailCount > 20 and Days > 2\n| order by FailCount desc'
+          query: 'dataset="$DATASET" result_status=="Failed" tolower(operation) matches regex "(sync|filesyncupload|filesyncdownload)" earliest=-7d\n| summarize FailCount=count(), Days=dcount(bin(creation_time, 1d)) by user_id\n| where FailCount > 20 and Days > 2\n| order by FailCount desc'
         }
       ]
     },
