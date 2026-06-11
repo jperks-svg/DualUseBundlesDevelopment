@@ -82,7 +82,7 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
 
     if (security && enabledSecIds.size > 0) {
       if (mode === 'new') {
-        log(`Creating new dashboard: ${security.name} (${security.rows.length} panels)...`);
+        log(`Creating new dashboard: ${security.name} (${security.elements.length} panels)...`);
         const result = await createDashboard(security);
         if (result.ok) {
           successCount++;
@@ -103,17 +103,17 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
         }
       } else {
         if (selectedSecDashId) {
-          log(`Adding ${security.rows.length} security panels to existing dashboard...`);
+          log(`Adding ${security.elements.length} security panels to existing dashboard...`);
           const existing = await getDashboard(selectedSecDashId);
           if (existing) {
             const merged: Dashboard = {
               ...existing,
-              rows: [...(existing.rows || []), ...security.rows],
+              elements: [...(existing.elements || []), ...security.elements],
             };
             const result = await updateDashboard(selectedSecDashId, merged);
             if (result.ok) {
               successCount++;
-              log(`+ Added ${security.rows.length} panels to: ${existing.name}`);
+              log(`+ Added ${security.elements.length} panels to: ${existing.name}`);
             } else {
               errorCount++;
               log(`! Failed to update ${existing.name}: ${result.status} ${result.message || ''}`);
@@ -128,7 +128,7 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
 
     if (observability && enabledObsIds.size > 0) {
       if (mode === 'new') {
-        log(`Creating new dashboard: ${observability.name} (${observability.rows.length} panels)...`);
+        log(`Creating new dashboard: ${observability.name} (${observability.elements.length} panels)...`);
         const result = await createDashboard(observability);
         if (result.ok) {
           successCount++;
@@ -149,17 +149,17 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
         }
       } else {
         if (selectedObsDashId) {
-          log(`Adding ${observability.rows.length} observability panels to existing dashboard...`);
+          log(`Adding ${observability.elements.length} observability panels to existing dashboard...`);
           const existing = await getDashboard(selectedObsDashId);
           if (existing) {
             const merged: Dashboard = {
               ...existing,
-              rows: [...(existing.rows || []), ...observability.rows],
+              elements: [...(existing.elements || []), ...observability.elements],
             };
             const result = await updateDashboard(selectedObsDashId, merged);
             if (result.ok) {
               successCount++;
-              log(`+ Added ${observability.rows.length} panels to: ${existing.name}`);
+              log(`+ Added ${observability.elements.length} panels to: ${existing.name}`);
             } else {
               errorCount++;
               log(`! Failed to update ${existing.name}: ${result.status} ${result.message || ''}`);
@@ -249,7 +249,7 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
                         </label>
                         <select value={selectedSecDashId} onChange={e => setSelectedSecDashId(e.target.value)} style={{ ...selectStyle, width: '100%' }}>
                           <option value="">-- Select a dashboard --</option>
-                          {existingDashboards.map(d => <option key={d.id} value={d.id}>{d.name} ({(d.rows || []).length} panels)</option>)}
+                          {existingDashboards.map(d => <option key={d.id} value={d.id}>{d.name} ({(d.elements || []).length} panels)</option>)}
                         </select>
                       </div>
                     )}
@@ -260,7 +260,7 @@ export default function DashboardDeployModal({ sourceName, sourceId, secDetectio
                         </label>
                         <select value={selectedObsDashId} onChange={e => setSelectedObsDashId(e.target.value)} style={{ ...selectStyle, width: '100%' }}>
                           <option value="">-- Select a dashboard --</option>
-                          {existingDashboards.map(d => <option key={d.id} value={d.id}>{d.name} ({(d.rows || []).length} panels)</option>)}
+                          {existingDashboards.map(d => <option key={d.id} value={d.id}>{d.name} ({(d.elements || []).length} panels)</option>)}
                         </select>
                       </div>
                     )}
