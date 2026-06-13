@@ -1553,5 +1553,461 @@ export const dataSources = [
         sampleEvent: '<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-Security-Auditing"/><EventID>4624</EventID><TimeCreated SystemTime="2026-06-06T14:22:18.123Z"/><Computer>DC01.corp.example.com</Computer></System><EventData><Data Name="TargetUserName">jsmith</Data><Data Name="TargetDomainName">CORP</Data><Data Name="LogonType">3</Data><Data Name="IpAddress">10.1.2.100</Data><Data Name="AuthenticationPackageName">Kerberos</Data><Data Name="LogonProcessName">Kerberos</Data></EventData></Event>'
       }
     ]
+  },
+  {
+    category: 'Additional Firewalls',
+    icon: '🔥',
+    sources: [
+      {
+        id: 'fortinet-fortigate',
+        name: 'Fortinet FortiGate Traffic & UTM Logs',
+        vendor: 'Fortinet',
+        description: 'Next-generation firewall logs from FortiGate appliances covering traffic sessions, UTM threat detection (antivirus, IPS, web filter, application control), VPN tunnels, and system events. Delivered via syslog or FortiAnalyzer.',
+        status: 'available',
+        useCases: ['Security Detection', 'Threat Prevention', 'Policy Enforcement', 'VPN Monitoring', 'Application Control', 'Web Filtering', 'Network Troubleshooting'],
+        personas: ['Security Engineering', 'SOC', 'NOC', 'Platform Engineering', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Reduce FortiGate log volume by 40-55% by filtering routine allow traffic while preserving all UTM, deny, and VPN events for SIEM' },
+            { persona: 'Data Engineer', job: 'Route UTM threat events to SIEM at full fidelity while sending session logs to Lake at storage-tier cost' }
+          ]},
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for port scanning, brute force attempts, IPS signature matches, and policy violations using pre-enriched FortiGate fields' },
+            { persona: 'Data End User / Analyst', job: 'Correlate UTM blocks with traffic patterns to identify compromised hosts attempting lateral movement' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor VPN tunnel health, session counts, and bandwidth utilization across FortiGate clusters' },
+            { persona: 'Data End User / Analyst', job: 'Track application usage trends and web filter block rates to inform policy tuning' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Parse FortiGate key=value syslog format and route to multiple destinations within 30 minutes using pre-built pack pipelines' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (UDP/TCP/TLS) / FortiAnalyzer / REST API',
+        logFormat: 'Key=value pair format: date=YYYY-MM-DD time=HH:MM:SS devname=hostname devid=serial logid=ID type=traffic/utm subtype=forward/ips/webfilter. Critical fields: srcip, dstip, srcport, dstport, action, service, policyid, app, utmaction.',
+        avgEPS: '5,000-150,000 EPS depending on throughput, UTM features enabled, and logging verbosity',
+        sampleEvent: 'date=2026-06-11 time=14:32:08 devname="FGT-HQ-01" devid="FG100F0000000001" logid="0000000013" type="traffic" subtype="forward" level="notice" vd="root" eventtime=1718107928 srcip=10.0.1.50 srcport=52341 srcintf="port1" dstip=203.0.113.100 dstport=443 dstintf="port2" policyid=5 sessionid=574326 proto=6 action="accept" duration=45 sentbyte=15000 rcvdbyte=89000 sentpkt=25 rcvdpkt=20 appcat="Web.Client" app="HTTPS.BROWSER" srccountry="Reserved" dstcountry="United States"'
+      }
+    ]
+  },
+  {
+    category: 'SASE / Cloud Security',
+    icon: '☁️',
+    sources: [
+      {
+        id: 'netskope',
+        name: 'Netskope Cloud Activity & Alert Logs',
+        vendor: 'Netskope',
+        description: 'Cloud-native SASE platform logs covering web transactions, CASB activity, DLP violations, threat protection events, private access connections, and user behavior analytics. Delivered via REST API or Cloud Log Shipper.',
+        status: 'available',
+        useCases: ['Cloud DLP', 'Shadow IT Discovery', 'Threat Protection', 'CASB Policy Enforcement', 'Zero Trust Access', 'User Risk Scoring', 'Data Exfiltration Detection'],
+        personas: ['Cloud Security', 'SOC', 'Security Engineering', 'Compliance', 'Data Protection'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for anomalous cloud app usage, DLP policy violations, and malware downloads across SaaS applications' },
+            { persona: 'Data End User / Analyst', job: 'Investigate shadow IT usage patterns and identify unsanctioned cloud storage sharing sensitive data' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Suppress high-volume benign web transaction logs while preserving all alerts, DLP events, and threat detections for SIEM routing' },
+            { persona: 'Data Engineer', job: 'Route Netskope alerts and DLP matches to SIEM while sending page visits and application activity to Lake for behavioral analysis' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain complete audit trail of DLP violations and cloud sharing events for regulatory compliance reporting' },
+            { persona: 'Data End User / Analyst', job: 'Generate reports on data exposure risk by application, user, and sensitivity classification' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Netskope Cloud Log Shipper integration and parse JSON events for multi-destination routing within 1 hour' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (Cloud Log Shipper) / Syslog / Cloud-to-Cloud connector',
+        logFormat: 'JSON — fields include timestamp, user, src_location, dst_location, app, activity, object, alert_type, dlp_profile, severity, risk_level, category, ccl, cci, url, bytes_uploaded, bytes_downloaded, traffic_type.',
+        avgEPS: '1,000-50,000 EPS depending on user count and inline vs API deployment',
+        sampleEvent: '{"timestamp":"2026-06-11T14:32:08Z","type":"page","user":"jperks@cribl.io","src_ip":"203.0.113.42","src_country":"US","dst_country":"US","app":"Microsoft OneDrive","category":"Cloud Storage","ccl":"excellent","activity":"Upload","object":"roadmap-2026.xlsx","bytes_uploaded":85000000,"severity":"low","alert":"no","dlp_profile":"","policy":"Allow Cloud Storage","traffic_type":"CloudApp"}'
+      },
+      {
+        id: 'cloudflare',
+        name: 'Cloudflare HTTP & Firewall Logs',
+        vendor: 'Cloudflare',
+        description: 'Edge network logs from Cloudflare covering HTTP requests, WAF events, bot management decisions, DDoS mitigation, DNS queries, and Zero Trust access. Delivered via Logpush to cloud storage or HTTP endpoint.',
+        status: 'available',
+        useCases: ['DDoS Mitigation', 'WAF Monitoring', 'Bot Management', 'DNS Security', 'Performance Monitoring', 'Zero Trust Access', 'CDN Analytics'],
+        personas: ['Security Engineering', 'SOC', 'Platform Engineering', 'NOC', 'DevOps'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for WAF bypass attempts, credential stuffing, API abuse, and DDoS attack patterns from Cloudflare edge logs' },
+            { persona: 'Data End User / Analyst', job: 'Analyze bot traffic patterns and WAF rule effectiveness to tune protection policies' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor origin server health, cache hit ratios, and edge latency to optimize CDN configuration' },
+            { persona: 'Data End User / Analyst', job: 'Track request rates, error ratios, and bandwidth by zone to detect performance degradation' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter Cloudflare logs to route only security events (WAF blocks, challenges, bot detections) to SIEM while sending full request logs to Lake' },
+            { persona: 'Data Engineer', job: 'Reduce SIEM ingest cost by 70% by suppressing 200-status cached requests and retaining only actionable security and error events' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Cloudflare Logpush to S3/GCS and set up Cribl Stream pull to parse and route within 45 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Datadog', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Logpush (S3/GCS/Azure Blob/HTTP endpoint) / REST API',
+        logFormat: 'JSON (NDJSON) — fields include ClientIP, ClientRequestHost, ClientRequestURI, EdgeResponseStatus, WAFAction, WAFRuleID, BotScore, BotManagementDecision, CacheCacheStatus, EdgeStartTimestamp, OriginResponseTime.',
+        avgEPS: '10,000-1,000,000+ EPS depending on traffic volume and log types enabled',
+        sampleEvent: '{"ClientIP":"203.0.113.42","ClientRequestHost":"app.example.com","ClientRequestMethod":"GET","ClientRequestURI":"/api/users","EdgeResponseStatus":200,"EdgeStartTimestamp":"2026-06-11T14:32:08Z","CacheCacheStatus":"hit","WAFAction":"allow","WAFRuleID":"","BotScore":2,"BotManagementDecision":"allow","OriginResponseTime":45000,"EdgeEndTimestamp":"2026-06-11T14:32:08.045Z"}'
+      }
+    ]
+  },
+  {
+    category: 'IDS / Network Security',
+    icon: '🔍',
+    sources: [
+      {
+        id: 'zeek-logs',
+        name: 'Zeek (Bro) Network Logs',
+        vendor: 'Zeek Project (Open Source)',
+        description: 'Passive network traffic analysis logs from Zeek sensors covering connections (conn.log), DNS queries (dns.log), HTTP transactions (http.log), SSL/TLS sessions (ssl.log), file transfers (files.log), and protocol-specific analyzers. Tab-separated or JSON format.',
+        status: 'available',
+        useCases: ['Network Detection & Response', 'Threat Hunting', 'Lateral Movement Detection', 'DNS Tunneling Detection', 'Certificate Monitoring', 'Protocol Anomaly Detection', 'Forensic Analysis'],
+        personas: ['Security Engineering', 'SOC', 'Threat Hunting', 'Incident Response', 'Network Security'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for lateral movement, DNS tunneling, beaconing behavior, and JA3/JA3S fingerprint matches using structured Zeek fields' },
+            { persona: 'Data End User / Analyst', job: 'Hunt for anomalous connections using conn.log duration, byte ratios, and unusual port/protocol combinations' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Reduce Zeek conn.log volume by 60-80% by filtering local broadcast, DNS responses, and short-lived ephemeral connections while preserving long-duration and high-byte flows' },
+            { persona: 'Data Engineer', job: 'Route Zeek notice.log and weird.log directly to SIEM while conn.log goes to Lake with sampled subsets to SIEM for baseline analytics' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor network throughput, connection counts, and protocol distribution trends from Zeek conn.log metadata' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Parse Zeek TSV and JSON output formats and configure per-log-type routing rules within 30 minutes using pack pipelines' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (Cribl Edge) / Syslog / Kafka / Direct file ingest',
+        logFormat: 'TSV (tab-separated) or JSON. Key log types: conn.log (uid, id.orig_h, id.resp_h, id.resp_p, proto, duration, orig_bytes, resp_bytes), dns.log (query, qtype, answers), http.log (method, host, uri, status_code), ssl.log (server_name, subject, ja3, ja3s), notice.log (note, msg, src, dst).',
+        avgEPS: '10,000-500,000 EPS depending on network throughput and enabled analyzers',
+        sampleEvent: '{"ts":"2026-06-11T14:32:08.000000Z","uid":"CYF1xz3qOViQKLMwXe","id.orig_h":"10.0.1.50","id.orig_p":52341,"id.resp_h":"203.0.113.100","id.resp_p":443,"proto":"tcp","service":"ssl","duration":45.2,"orig_bytes":15000,"resp_bytes":89000,"conn_state":"SF","missed_bytes":0,"history":"ShADadFf","orig_pkts":25,"resp_pkts":20,"ja3":"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6","ja3s":"b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7"}'
+      },
+      {
+        id: 'suricata-ids',
+        name: 'Suricata IDS/IPS Alerts',
+        vendor: 'Open Information Security Foundation (OISF)',
+        description: 'Network intrusion detection and prevention alerts from Suricata in EVE JSON format. Covers signature-based detection, protocol anomalies, DNS events, TLS metadata, file extraction, and flow records. Compatible with Emerging Threats and Snort rule sets.',
+        status: 'available',
+        useCases: ['Intrusion Detection', 'Signature-Based Threat Detection', 'Protocol Anomaly Detection', 'File Extraction', 'Network Forensics', 'Compliance Monitoring', 'Lateral Movement Detection'],
+        personas: ['Security Engineering', 'SOC', 'Network Security', 'Incident Response', 'Threat Hunting'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate Suricata alert signatures with flow data and DNS events to build high-confidence composite detections' },
+            { persona: 'Data End User / Analyst', job: 'Investigate IDS alerts by pivoting from signature match to full session context including DNS, TLS, and file metadata' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter noisy informational alerts (severity 3) and DNS query logs while preserving all severity 1-2 alerts and file extraction events for SIEM' },
+            { persona: 'Data Engineer', job: 'Route alert events to SIEM and flow/protocol metadata to Lake, reducing SIEM volume by 75% while maintaining full forensic capability' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Suricata sensor health, dropped packets, and rule processing latency to ensure detection coverage' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Ingest Suricata EVE JSON via file monitor or syslog and configure alert-priority routing within 20 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (eve.json) / Syslog / Redis / Kafka',
+        logFormat: 'EVE JSON — event_type field determines schema: alert (signature, severity, category), dns (rrname, rrtype, rcode), tls (subject, issuer, ja3), http (hostname, url, method), flow (bytes_toserver, bytes_toclient, pkts).',
+        avgEPS: '5,000-200,000 EPS depending on network throughput, rule count, and event types enabled',
+        sampleEvent: '{"timestamp":"2026-06-11T14:32:08.000000+0000","flow_id":1234567890,"event_type":"alert","src_ip":"185.220.101.33","src_port":44100,"dest_ip":"10.0.1.50","dest_port":22,"proto":"TCP","alert":{"action":"allowed","gid":1,"signature_id":2024792,"rev":3,"signature":"ET SCAN SSH Brute Force Attempt","category":"Attempted Administrator Privilege Gain","severity":1},"flow":{"pkts_toserver":15,"pkts_toclient":12,"bytes_toserver":4500,"bytes_toclient":3800,"start":"2026-06-11T14:32:00.000000+0000"}}'
+      }
+    ]
+  },
+  {
+    category: 'Cloud Infrastructure',
+    icon: '🏗️',
+    sources: [
+      {
+        id: 'aws-cloudtrail',
+        name: 'AWS CloudTrail',
+        vendor: 'Amazon Web Services',
+        description: 'API activity logs for AWS accounts capturing every API call made via the console, CLI, SDKs, and services. Records who made the call, from where, what was requested, and the response. Essential for security monitoring, compliance auditing, and operational troubleshooting.',
+        status: 'available',
+        useCases: ['API Security Monitoring', 'Privilege Escalation Detection', 'Resource Change Tracking', 'Compliance Auditing', 'Incident Investigation', 'Cost Attribution', 'Unauthorized Access Detection'],
+        personas: ['Cloud Security', 'SOC', 'DevOps', 'Platform Engineering', 'Compliance', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for IAM privilege escalation, unauthorized resource access, security group modifications, and credential compromise indicators' },
+            { persona: 'Data End User / Analyst', job: 'Investigate suspicious API activity by correlating source IP, user identity, and resource targets across CloudTrail events' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Suppress high-volume read-only API calls (Describe*, List*, Get*) and KMS decrypt events, reducing CloudTrail volume by 70-85% while preserving all mutating and auth events' },
+            { persona: 'Data Engineer', job: 'Route security-critical events (ConsoleLogin failures, IAM changes, S3 policy modifications) to SIEM while sending full CloudTrail to Lake for compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain 365-day CloudTrail retention with tamper-proof storage in Lake to satisfy SOC 2 and PCI-DSS audit requirements' },
+            { persona: 'Data End User / Analyst', job: 'Generate compliance reports showing all IAM policy changes, root account usage, and cross-account access within any time window' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure S3-SQS source for CloudTrail ingestion and set up event-type-based routing within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'S3 + SQS / CloudWatch Logs / EventBridge / Direct S3 pull',
+        logFormat: 'JSON — fields include eventTime, eventSource, eventName, awsRegion, sourceIPAddress, userIdentity (type, arn, accountId), requestParameters, responseElements, errorCode, errorMessage, readOnly, eventType.',
+        avgEPS: '10,000-1,000,000+ EPS depending on account count, service usage, and data event logging',
+        sampleEvent: '{"eventVersion":"1.09","userIdentity":{"type":"IAMUser","principalId":"AIDA1234567890EXAMPLE","arn":"arn:aws:iam::123456789012:user/jperks","accountId":"123456789012","userName":"jperks"},"eventTime":"2026-06-11T14:32:08Z","eventSource":"iam.amazonaws.com","eventName":"CreateUser","awsRegion":"us-east-1","sourceIPAddress":"203.0.113.42","userAgent":"console.amazonaws.com","requestParameters":{"userName":"new-service-account"},"responseElements":{"user":{"userName":"new-service-account","userId":"AIDA0987654321EXAMPLE"}}}'
+      },
+      {
+        id: 'aws-cloudwatch',
+        name: 'AWS CloudWatch Logs',
+        vendor: 'Amazon Web Services',
+        description: 'Application and infrastructure logs from AWS services including Lambda functions, ECS containers, API Gateway, RDS, and custom applications. Structured and unstructured log streams organized by log groups.',
+        status: 'available',
+        useCases: ['Application Monitoring', 'Error Tracking', 'Performance Analysis', 'Lambda Function Debugging', 'Container Observability', 'API Gateway Monitoring', 'Custom Metric Extraction'],
+        personas: ['DevOps', 'Platform Engineering', 'SRE', 'Application Development', 'NOC'],
+        jobsToBeDone: [
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Reduce CloudWatch Logs volume by 50-70% by filtering debug-level Lambda logs and retaining only errors, warnings, and cold starts for SIEM/observability platforms' },
+            { persona: 'Data Engineer', job: 'Extract metrics from unstructured log lines (latency, error counts, memory usage) and route to metrics platforms while sending raw logs to Lake' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Lambda cold start rates, timeout errors, and memory utilization trends across all functions' },
+            { persona: 'Data End User / Analyst', job: 'Trace API Gateway 5xx errors to downstream Lambda failures and identify root cause within 5 minutes' }
+          ]},
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for unauthorized API calls, unusual Lambda invocation patterns, and application-layer attack indicators in custom app logs' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure CloudWatch Logs subscription filter to Kinesis Firehose and connect to Cribl Stream for multi-destination routing' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'Datadog', 'New Relic', 'Dynatrace', 'Elastic', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'CloudWatch Logs Subscription Filter → Kinesis Firehose / S3 + SQS / Lambda forwarder',
+        logFormat: 'Mixed — JSON (structured app logs, API Gateway), plain text (Lambda stdout), CloudWatch Logs Insights format. Key metadata: logGroup, logStream, timestamp, message.',
+        avgEPS: '50,000-5,000,000+ EPS depending on application count and log verbosity',
+        sampleEvent: '{"logGroup":"/aws/lambda/api-handler","logStream":"2026/06/11/[$LATEST]abc123","timestamp":1718107928000,"message":"START RequestId: e1a2b3c4-d5e6-f7a8 Version: $LATEST\\nINFO: Processing request for user jperks, method=GET path=/api/users duration=45ms\\nEND RequestId: e1a2b3c4-d5e6-f7a8\\nREPORT RequestId: e1a2b3c4-d5e6-f7a8 Duration: 45.23 ms Billed Duration: 46 ms Memory Size: 256 MB Max Memory Used: 128 MB Init Duration: 234.56 ms"}'
+      },
+      {
+        id: 'azure-activity',
+        name: 'Azure Activity & Monitor Logs',
+        vendor: 'Microsoft Azure',
+        description: 'Azure platform activity logs capturing subscription-level operations (resource creation, deletion, modification), Azure AD sign-in events, resource health changes, and service health notifications. Equivalent to AWS CloudTrail for Azure environments.',
+        status: 'available',
+        useCases: ['Resource Change Tracking', 'Access Monitoring', 'Compliance Auditing', 'Cost Attribution', 'Service Health Monitoring', 'Privilege Escalation Detection', 'Policy Compliance'],
+        personas: ['Cloud Security', 'SOC', 'DevOps', 'Platform Engineering', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for role assignment changes, NSG modifications, key vault access anomalies, and storage account exposure' },
+            { persona: 'Data End User / Analyst', job: 'Investigate unauthorized resource modifications by correlating caller identity, IP address, and operation details' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume read operations and health check polls while preserving write operations and authentication events for SIEM' },
+            { persona: 'Data Engineer', job: 'Route security-critical categories (Administrative, Security, Policy) to SIEM and full activity log to Lake for compliance' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain complete audit trail of all Azure resource modifications for SOC 2 and regulatory compliance' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Azure Event Hub export for Activity Logs and connect to Cribl Stream for parsing and routing' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Microsoft Sentinel', 'Splunk', 'CrowdStrike NG SIEM', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Azure Event Hub / Azure Monitor Diagnostic Settings / REST API',
+        logFormat: 'JSON — fields include time, resourceId, operationName, category, resultType, callerIpAddress, identity, properties. Categories: Administrative, Security, ServiceHealth, Alert, Recommendation, Policy, Autoscale, ResourceHealth.',
+        avgEPS: '5,000-500,000 EPS depending on subscription count and resource activity',
+        sampleEvent: '{"time":"2026-06-11T14:32:08Z","resourceId":"/subscriptions/a1b2c3d4/resourceGroups/prod-rg/providers/Microsoft.Compute/virtualMachines/web-server-01","operationName":"Microsoft.Compute/virtualMachines/write","category":"Administrative","resultType":"Success","callerIpAddress":"203.0.113.42","identity":{"claims":{"name":"Jordan Perks","upn":"jperks@contoso.com"}},"properties":{"statusCode":"OK","serviceRequestId":"e1a2b3c4-d5e6-f7a8"}}'
+      },
+      {
+        id: 'gcp-audit-logs',
+        name: 'GCP Cloud Audit Logs',
+        vendor: 'Google Cloud Platform',
+        description: 'Google Cloud audit logs capturing Admin Activity (always-on), Data Access (configurable), System Events, and Policy Denied events across all GCP services. Essential for security monitoring and compliance in GCP environments.',
+        status: 'available',
+        useCases: ['API Security Monitoring', 'Data Access Tracking', 'Compliance Auditing', 'Privilege Escalation Detection', 'Resource Change Monitoring', 'Service Account Abuse Detection'],
+        personas: ['Cloud Security', 'SOC', 'DevOps', 'Platform Engineering', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for service account key creation, IAM policy changes, firewall rule modifications, and unusual data access patterns' },
+            { persona: 'Data End User / Analyst', job: 'Investigate suspicious GCP API activity by correlating principal email, source IP, and method across audit log entries' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume Data Access audit logs (storage.objects.get, bigquery.jobs.get) reducing volume by 80%+ while preserving Admin Activity and Policy Denied events' },
+            { persona: 'Data Engineer', job: 'Route Admin Activity logs to SIEM in real-time while batching Data Access logs to Lake for on-demand forensic queries' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain tamper-proof audit trail of all GCP administrative actions for FedRAMP and SOC 2 compliance' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure GCP log sink to Pub/Sub and connect Cribl Stream pull source for parsing and multi-destination routing' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Google Chronicle', 'Splunk', 'CrowdStrike NG SIEM', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Pub/Sub subscription / Cloud Storage sink / BigQuery export',
+        logFormat: 'JSON — fields include protoPayload.methodName, protoPayload.serviceName, protoPayload.authenticationInfo.principalEmail, protoPayload.requestMetadata.callerIp, resource.type, resource.labels, severity, logName.',
+        avgEPS: '5,000-500,000 EPS depending on project count and Data Access logging configuration',
+        sampleEvent: '{"protoPayload":{"@type":"type.googleapis.com/google.cloud.audit.v1.AuditLog","serviceName":"iam.googleapis.com","methodName":"google.iam.admin.v1.CreateServiceAccountKey","authenticationInfo":{"principalEmail":"jperks@cribl.io"},"requestMetadata":{"callerIp":"203.0.113.42","callerSuppliedUserAgent":"google-cloud-sdk gcloud/450.0.0"},"resourceName":"projects/-/serviceAccounts/automation@project-123.iam.gserviceaccount.com/keys/key-id-123"},"resource":{"type":"service_account","labels":{"project_id":"project-123","email_id":"automation@project-123.iam.gserviceaccount.com"}},"severity":"NOTICE","logName":"projects/project-123/logs/cloudaudit.googleapis.com%2Factivity","receiveTimestamp":"2026-06-11T14:32:08Z"}'
+      }
+    ]
+  },
+  {
+    category: 'Endpoint (Additional)',
+    icon: '💻',
+    sources: [
+      {
+        id: 'microsoft-defender-endpoint',
+        name: 'Microsoft Defender for Endpoint (MDE)',
+        vendor: 'Microsoft',
+        description: 'Enterprise endpoint detection and response logs from Microsoft Defender for Endpoint covering alerts, device events, advanced hunting telemetry, vulnerability assessments, and automated investigation results. Integrated with Microsoft 365 Defender.',
+        status: 'available',
+        useCases: ['Endpoint Threat Detection', 'Vulnerability Management', 'Automated Investigation', 'Threat Hunting', 'Device Compliance', 'Incident Response', 'Attack Surface Reduction'],
+        personas: ['SOC', 'Security Engineering', 'Incident Response', 'Threat Hunting', 'Endpoint Security'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Enrich MDE alerts with network context and correlate across endpoint, identity, and email telemetry for composite detections' },
+            { persona: 'Data End User / Analyst', job: 'Investigate MDE alerts using advanced hunting data including process trees, network connections, and file modifications' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume device telemetry events (registry reads, benign process creation) reducing MDE volume by 60-75% while preserving alerts and suspicious activity' },
+            { persona: 'Data Engineer', job: 'Route MDE alerts and high-severity events to SIEM while sending raw device telemetry to Lake for threat hunting queries' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor MDE sensor health, onboarding status, and detection coverage gaps across the device fleet' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Microsoft 365 Defender streaming API to Event Hub and connect to Cribl Stream for multi-destination routing' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Microsoft Sentinel', 'CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Microsoft 365 Defender Streaming API → Event Hub / REST API (Advanced Hunting) / SIEM Agent',
+        logFormat: 'JSON — tables include AlertInfo, AlertEvidence, DeviceProcessEvents, DeviceNetworkEvents, DeviceFileEvents, DeviceRegistryEvents, DeviceLogonEvents. Key fields: Timestamp, DeviceName, ActionType, FileName, ProcessCommandLine, RemoteIP.',
+        avgEPS: '10,000-500,000 EPS depending on device count and telemetry level (basic vs advanced)',
+        sampleEvent: '{"Timestamp":"2026-06-11T14:32:08Z","DeviceId":"abc123def456","DeviceName":"DESKTOP-JP01","ActionType":"ProcessCreated","FileName":"powershell.exe","FolderPath":"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0","ProcessCommandLine":"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\\\Scripts\\\\backup.ps1","InitiatingProcessFileName":"explorer.exe","AccountName":"jperks","AccountDomain":"CORP","RemoteIP":"","RemotePort":0,"AlertId":"","ThreatFamily":""}'
+      }
+    ]
+  },
+  {
+    category: 'Network Infrastructure',
+    icon: '🌐',
+    sources: [
+      {
+        id: 'cisco-meraki',
+        name: 'Cisco Meraki Security & Event Logs',
+        vendor: 'Cisco Meraki',
+        description: 'Cloud-managed network logs from Meraki MX security appliances, MR access points, and MS switches. Covers security events (IDS/IPS, malware, content filtering), client connectivity, system events, and air marshal wireless threat detection.',
+        status: 'available',
+        useCases: ['Branch Security Monitoring', 'Wireless Threat Detection', 'Content Filtering', 'Client Connectivity', 'IDS/IPS Alerting', 'Device Inventory', 'Network Performance'],
+        personas: ['NOC', 'Security Engineering', 'SOC', 'Network Engineering', 'Branch IT'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for rogue AP activity, IDS signature matches, malware downloads, and content filter bypass attempts across Meraki MX fleet' },
+            { persona: 'Data End User / Analyst', job: 'Investigate wireless threats detected by Air Marshal and correlate with client identity for containment' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Meraki device health, client counts, and link utilization across distributed branch locations from a single pane' },
+            { persona: 'Data End User / Analyst', job: 'Track WiFi client roaming patterns, association failures, and signal quality to optimize AP placement' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume client association and URL log events while preserving security events and system alerts for SIEM routing' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Meraki syslog export and parse space-delimited event format for multi-destination routing within 20 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Datadog', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (UDP/TCP) / Meraki API / Webhook',
+        logFormat: 'Syslog — space-delimited fields with epoch timestamp. Format: <timestamp> <device_serial> <log_type> <event_data>. Log types: security_event, urls, flows, ids-alerts, air_marshal, events.',
+        avgEPS: '500-50,000 EPS per site depending on client count and logging configuration',
+        sampleEvent: '1718107928.123456789 Q2HP-ABCD-1234 security_event ids_alerted signature=1:2024792:3 priority=1 timestamp=1718107928.123 dhost=AA:BB:CC:DD:EE:FF direction=ingress protocol=tcp/22 src=185.220.101.33:44100 dst=10.0.1.50:22 message="ET SCAN SSH Brute Force Attempt"'
+      }
+    ]
+  },
+  {
+    category: 'Vulnerability Management',
+    icon: '🔬',
+    sources: [
+      {
+        id: 'qualys-tenable',
+        name: 'Qualys / Tenable Vulnerability Scan Results',
+        vendor: 'Qualys / Tenable',
+        description: 'Vulnerability assessment scan results from Qualys VMDR or Tenable.io/Nessus covering host vulnerabilities, compliance checks, software inventory, and remediation status. Provides CVE-level detail with CVSS scoring and fix availability.',
+        status: 'available',
+        useCases: ['Vulnerability Prioritization', 'Patch Management', 'Compliance Reporting', 'Attack Surface Reduction', 'Risk Scoring', 'SLA Tracking', 'Remediation Workflow'],
+        personas: ['Security Engineering', 'Vulnerability Management', 'Compliance', 'Platform Engineering', 'SOC'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate active vulnerabilities with threat intelligence and network exposure to prioritize exploitable findings over theoretical risk' },
+            { persona: 'Data End User / Analyst', job: 'Identify hosts with critical unpatched vulnerabilities exposed to the internet for emergency remediation' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Generate vulnerability SLA compliance reports showing mean time to remediation by severity and business unit' },
+            { persona: 'Data End User / Analyst', job: 'Track vulnerability trends over time and demonstrate risk reduction to leadership' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Deduplicate vulnerability findings across overlapping scan schedules and suppress informational findings, reducing data volume by 40-60%' },
+            { persona: 'Data Engineer', job: 'Route critical and high findings to SIEM for correlation while sending full scan results to Lake for compliance retention' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Qualys/Tenable API integration to pull scan results on schedule and normalize to common vulnerability schema' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'ServiceNow', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (scheduled pull) / Webhook / File export (CSV/XML)',
+        logFormat: 'JSON or XML — fields include host_ip, hostname, os, qid/plugin_id, cve, cvss_base, cvss_temporal, severity, title, solution, first_found, last_found, status, port, protocol, service.',
+        avgEPS: '100-10,000 EPS (bursty — high volume during scan windows, near-zero between scans)',
+        sampleEvent: '{"scan_id":"scan-2026-06-11-001","host_ip":"10.0.1.50","hostname":"web-server-01","os":"Ubuntu 22.04 LTS","qid":376148,"cve":"CVE-2026-1234","cvss_base":9.8,"cvss_temporal":8.5,"severity":5,"title":"OpenSSL Buffer Overflow - Remote Code Execution","solution":"Update OpenSSL to version 3.1.5 or later","port":443,"protocol":"tcp","service":"https","first_found":"2026-06-01T00:00:00Z","last_found":"2026-06-11T14:32:08Z","status":"Active","exploitability":"Exploit Available"}'
+      }
+    ]
+  },
+  {
+    category: 'ITSM / CMDB',
+    icon: '📋',
+    sources: [
+      {
+        id: 'servicenow',
+        name: 'ServiceNow CMDB & Incident Events',
+        vendor: 'ServiceNow',
+        description: 'Configuration management and incident lifecycle events from ServiceNow covering CI changes, incident creation/updates, change requests, and CMDB relationship modifications. Enables correlation of security events with asset context and change windows.',
+        status: 'available',
+        useCases: ['Asset Context Enrichment', 'Change Correlation', 'Incident Automation', 'CMDB Accuracy', 'SLA Monitoring', 'Risk Assessment', 'Impact Analysis'],
+        personas: ['SOC', 'Platform Engineering', 'Security Engineering', 'IT Operations', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Enrich security alerts with CMDB context (asset owner, business criticality, environment) for automated priority scoring and routing' },
+            { persona: 'Data End User / Analyst', job: 'Correlate detected threats with recent change requests to distinguish authorized maintenance from unauthorized access' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Track CMDB accuracy by comparing discovered assets against registered CIs and flagging shadow IT' },
+            { persona: 'Data End User / Analyst', job: 'Monitor incident volume, MTTR, and SLA compliance trends by service and priority' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Engineer', job: 'Use ServiceNow CMDB as a lookup source to enrich events in-flight, adding asset owner and criticality without storing duplicate data' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure ServiceNow REST API integration for CMDB and incident table exports to Cribl Stream for enrichment and routing' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (Table API / CMDB API) / MID Server / Event-driven webhook',
+        logFormat: 'JSON — fields include sys_id, number, state, priority, assignment_group, cmdb_ci, short_description, sys_created_on, sys_updated_on, caller_id, category, subcategory, impact, urgency.',
+        avgEPS: '100-5,000 EPS (event-driven from updates and scheduled CMDB syncs)',
+        sampleEvent: '{"sys_id":"a1b2c3d4e5f6a7b8","number":"INC0012345","state":"New","priority":"1 - Critical","assignment_group":"Security Operations","cmdb_ci":"web-server-01","short_description":"Critical vulnerability detected on production web server","sys_created_on":"2026-06-11T14:32:08Z","caller_id":"automation","category":"Security","subcategory":"Vulnerability","impact":"1 - High","urgency":"1 - High","business_service":"Customer Portal"}'
+      }
+    ]
   }
 ];

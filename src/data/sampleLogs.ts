@@ -1,10 +1,13 @@
 import { firewallLogs } from './sampleLogs/firewalls';
+import { additionalFirewallLogs } from './sampleLogs/additional-firewall';
 import { dnsLogs } from './sampleLogs/dns';
 import { webLogs } from './sampleLogs/web';
 import { networkLogs } from './sampleLogs/network';
 import { cloudLogs } from './sampleLogs/cloud';
+import { cloudInfraLogs } from './sampleLogs/cloud-infra';
 import { identityLogs } from './sampleLogs/identity';
 import { endpointLogs } from './sampleLogs/endpoint';
+import { additionalEndpointLogs } from './sampleLogs/additional-endpoint';
 import { emailLogs } from './sampleLogs/email';
 import { kubernetesLogs } from './sampleLogs/kubernetes';
 import { linuxLogs } from './sampleLogs/linux';
@@ -12,6 +15,11 @@ import { windowsLogs } from './sampleLogs/windows';
 import { loadbalancerLogs } from './sampleLogs/loadbalancers';
 import { directoryLogs } from './sampleLogs/directory';
 import { aiLogs } from './sampleLogs/ai';
+import { idsLogs } from './sampleLogs/ids';
+import { saseCloudLogs } from './sampleLogs/sase-cloud';
+import { networkInfraLogs } from './sampleLogs/network-infra';
+import { vulnerabilityLogs } from './sampleLogs/vulnerability';
+import { itsmLogs } from './sampleLogs/itsm';
 
 const saseLogs: Record<string, string> = {
 
@@ -49,12 +57,15 @@ const saseLogs: Record<string, string> = {
 export const sampleLogSets: Record<string, string> = {
   ...saseLogs,
   ...firewallLogs,
+  ...additionalFirewallLogs,
   ...dnsLogs,
   ...webLogs,
   ...networkLogs,
   ...cloudLogs,
+  ...cloudInfraLogs,
   ...identityLogs,
   ...endpointLogs,
+  ...additionalEndpointLogs,
   ...emailLogs,
   ...kubernetesLogs,
   ...linuxLogs,
@@ -62,4 +73,9 @@ export const sampleLogSets: Record<string, string> = {
   ...loadbalancerLogs,
   ...directoryLogs,
   ...aiLogs,
+  ...idsLogs,
+  ...saseCloudLogs,
+  ...networkInfraLogs,
+  ...vulnerabilityLogs,
+  ...itsmLogs,
 };
