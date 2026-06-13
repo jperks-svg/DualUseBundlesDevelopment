@@ -7,6 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { enrichments as enrichmentData } from '../data/enrichments';
 import DashboardDeployModal from '../components/DashboardDeployModal';
+import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
 
 const tag = (bg: string, color: string): React.CSSProperties => ({
@@ -44,8 +45,7 @@ const btnSecondary: React.CSSProperties = {
   fontSize: 'var(--cds-font-size-sm)', fontWeight: 500,
 };
 
-function downloadBlob(content: string, filename: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
+function downloadBlobFile(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -123,49 +123,45 @@ export default function SourceDetailPage() {
     return { secRequired, obsRequired, allRequired, notNeeded };
   }, [enabledSecDetections, enabledObsDetections, secDetections, obsDetections, fields]);
 
-  // Client-side YAML generation
-  function generateSearchPackYaml(): string {
-    const queries: any[] = [];
+
+  async function exportSearchPack() {
+    const queries: { id: string; name: string; description: string; query: string; earliest: string; latest: string }[] = [];
     [...secDetections.filter((d: any) => enabledSecDetections.has(d.id)),
      ...obsDetections.filter((d: any) => enabledObsDetections.has(d.id))]
       .forEach((d: any) => {
         if (d.criblSearchQueries) {
-          d.criblSearchQueries.forEach((q: any) => queries.push({ ...q, detection: d.name, severity: d.severity || d.category }));
+          d.criblSearchQueries.forEach((q: any, i: number) => {
+            queries.push({
+              id: `${d.id}_${i}`,
+              name: `${d.name} - ${q.name}`,
+              description: q.description || d.objective,
+              query: q.query,
+              earliest: '-24h',
+              latest: 'now',
+            });
+          });
         }
       });
-    let yaml = `# Search Pack for ${sourceId}\n# Generated: ${new Date().toISOString()}\n# Detections: ${totalEnabled}\n\nsaved_queries:\n`;
-    queries.forEach(q => {
-      yaml += `  - name: "${q.name}"\n    description: "${q.description}"\n    detection: "${q.detection}"\n    severity: "${q.severity}"\n    query: |\n      ${q.query.split('\n').join('\n      ')}\n\n`;
-    });
-    return yaml;
+    const blob = await buildSearchPack(
+      { name: `${sourceId}-search-pack`, version: '1.0.0', displayName: `${source.name} Search Pack`, description: `Search detections for ${source.name}` },
+      queries,
+    );
+    downloadBlobFile(blob, `${sourceId}-search-pack.crbl`);
+    setExportStatus('Search Pack (.crbl) downloaded');
   }
 
-  function generateStreamPackYaml(): string {
-    const requiredFields = [...fieldAnalysis.allRequired].sort();
-    const droppableFields = fieldAnalysis.notNeeded.sort();
-    let yaml = `# Stream Pack for ${sourceId}\n# Generated: ${new Date().toISOString()}\n# Required fields: ${requiredFields.length}\n# Droppable fields: ${droppableFields.length}\n\npipeline:\n  functions:\n    - id: field_filter\n      description: "Keep only fields required by enabled detections"\n      keep_fields:\n`;
-    requiredFields.forEach(f => { yaml += `        - ${f}\n`; });
-    yaml += `\n    - id: field_removal\n      description: "Remove fields not needed by any detection"\n      remove_fields:\n`;
-    droppableFields.forEach(f => { yaml += `        - ${f}\n`; });
-    if (enabledStreamEnrichments.size > 0 && enrichments) {
-      yaml += `\nenrichments:\n`;
-      enrichments.streamTime.filter((e: any) => enabledStreamEnrichments.has(e.name)).forEach((e: any) => {
-        yaml += `  - name: "${e.name}"\n    function: "${e.criblFunction}"\n    added_fields: [${e.addedFields.join(', ')}]\n\n`;
-      });
-    }
-    return yaml;
-  }
-
-  function exportSearchPack() {
-    const yaml = generateSearchPackYaml();
-    downloadBlob(yaml, `${sourceId}-search-pack.yml`, 'text/yaml');
-    setExportStatus('Search Pack downloaded');
-  }
-
-  function exportStreamPack() {
-    const yaml = generateStreamPackYaml();
-    downloadBlob(yaml, `${sourceId}-stream-pack.yml`, 'text/yaml');
-    setExportStatus('Stream Pack downloaded');
+  async function exportStreamPack() {
+    const selectedEnrichments = enrichments?.streamTime?.filter((e: any) => enabledStreamEnrichments.has(e.name)) || [];
+    const blob = await buildStreamPack(
+      { name: `${sourceId}-stream-pack`, version: '1.0.0', displayName: `${source.name} Stream Pack`, description: `Stream pipeline for ${source.name}` },
+      {
+        keepFields: [...fieldAnalysis.allRequired].sort(),
+        removeFields: fieldAnalysis.notNeeded.sort(),
+        enrichments: selectedEnrichments.map((e: any) => ({ name: e.name, criblFunction: e.criblFunction, addedFields: e.addedFields })),
+      },
+    );
+    downloadBlobFile(blob, `${sourceId}-stream-pack.crbl`);
+    setExportStatus('Stream Pack (.crbl) downloaded');
   }
 
   async function deployToCriblSearch(dataset: string) {
@@ -376,7 +372,7 @@ export default function SourceDetailPage() {
                     <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>{enabledSearchEnrichments.size} search enrichments</span>
                   </div>
                 </div>
-                <button style={{ ...btnPrimary, whiteSpace: 'nowrap' }} onClick={exportSearchPack} disabled={totalEnabled === 0 && enabledSearchEnrichments.size === 0}>Download .yml</button>
+                <button style={{ ...btnPrimary, whiteSpace: 'nowrap' }} onClick={exportSearchPack} disabled={totalEnabled === 0 && enabledSearchEnrichments.size === 0}>Download .crbl</button>
               </div>
               {/* Stream Pack */}
               <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -389,7 +385,7 @@ export default function SourceDetailPage() {
                     <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>{enabledStreamEnrichments.size} stream enrichments</span>
                   </div>
                 </div>
-                <button style={{ ...btnPrimary, whiteSpace: 'nowrap' }} onClick={exportStreamPack}>Download .yml</button>
+                <button style={{ ...btnPrimary, whiteSpace: 'nowrap' }} onClick={exportStreamPack}>Download .crbl</button>
               </div>
             </div>
             {(enabledStreamEnrichments.size === 0 && enabledSearchEnrichments.size === 0) && (
