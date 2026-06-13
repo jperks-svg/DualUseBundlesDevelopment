@@ -6,6 +6,7 @@ import { routingBlueprints } from '../data/routing';
 import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { enrichments as enrichmentData } from '../data/enrichments';
+import { sampleLogSets } from '../data/sampleLogs';
 import DashboardDeployModal from '../components/DashboardDeployModal';
 import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
@@ -58,6 +59,7 @@ export default function SourceDetailPage() {
   const { sourceId } = useParams<{ sourceId: string }>();
   const [activeTab, setActiveTab] = useState('overview');
   const [expandedSample, setExpandedSample] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [expandedDetection, setExpandedDetection] = useState<string | null>(null);
   const [detectionSubTab, setDetectionSubTab] = useState<'security' | 'observability'>('security');
   const [enrichmentSubTab, setEnrichmentSubTab] = useState<'stream' | 'search'>('stream');
@@ -475,21 +477,41 @@ export default function SourceDetailPage() {
             <p style={{ color: 'var(--cds-color-fg-muted)' }}>{source.collectionMethod}</p>
           </div>
 
-          {source.sampleEvent && (
+          {(sampleLogSets[source.id] || source.sampleEvent) && (
             <div style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, marginBottom: 10 }}>Sample Event</h3>
+              <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, marginBottom: 10 }}>
+                {sampleLogSets[source.id] ? 'Sample Log Set' : 'Sample Event'}
+              </h3>
+              {sampleLogSets[source.id] && (
+                <p style={{ color: 'var(--cds-color-fg-muted)', fontSize: 'var(--cds-font-size-sm)', marginBottom: 10 }}>
+                  {sampleLogSets[source.id].trim().split('\n').length} sample events covering all log types, dashboards, and detection triggers.
+                </p>
+              )}
               <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
                 <button
                   onClick={() => setExpandedSample(!expandedSample)}
                   style={{ width: '100%', padding: '12px 16px', background: 'var(--cds-color-bg-subtle)', border: 'none', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)' }}
                 >
-                  <span>Sample Raw Event</span>
+                  <span>{sampleLogSets[source.id] ? `Sample Logs (${sampleLogSets[source.id].trim().split('\n').length} events)` : 'Sample Raw Event'}</span>
                   <span>{expandedSample ? '▼' : '▶'}</span>
                 </button>
                 {expandedSample && (
-                  <pre style={{ padding: 16, margin: 0, fontSize: 'var(--cds-font-size-xs)', lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'var(--cds-font-mono)' }}>
-                    {source.sampleEvent}
-                  </pre>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      onClick={() => {
+                        const text = sampleLogSets[source.id] || source.sampleEvent;
+                        navigator.clipboard.writeText(text);
+                        setCopyStatus('Copied!');
+                        setTimeout(() => setCopyStatus(null), 2000);
+                      }}
+                      style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', border: '1px solid var(--cds-color-border)', borderRadius: 'var(--cds-radius-sm)', background: 'var(--cds-color-bg)', color: 'var(--cds-color-fg-muted)', cursor: 'pointer', fontSize: 'var(--cds-font-size-xs)', zIndex: 1 }}
+                    >
+                      {copyStatus || 'Copy All'}
+                    </button>
+                    <pre style={{ padding: 16, margin: 0, fontSize: 'var(--cds-font-size-xs)', lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'var(--cds-font-mono)', maxHeight: 500, overflowY: 'auto' }}>
+                      {sampleLogSets[source.id] || source.sampleEvent}
+                    </pre>
+                  </div>
                 )}
               </div>
             </div>
