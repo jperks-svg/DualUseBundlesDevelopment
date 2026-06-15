@@ -55,6 +55,14 @@ function downloadBlobFile(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+const personaLenses: Record<string, { label: string; color: string; filter: (job: any) => boolean; description: string }> = {
+  all: { label: 'All Teams', color: 'var(--cds-brand-teal)', filter: () => true, description: 'All use cases across every team' },
+  soc: { label: 'SOC', color: 'var(--cds-color-danger)', filter: (j: any) => /SOC|Security|Incident|Threat/i.test(j.persona), description: 'Security Operations — detection, investigation, response' },
+  platform: { label: 'Platform Eng', color: 'var(--cds-color-accent)', filter: (j: any) => /Platform|DevOps|SRE|Operator/i.test(j.persona), description: 'Platform Engineering — reliability, performance, operations' },
+  compliance: { label: 'Compliance', color: 'var(--cds-color-warning)', filter: (j: any) => /Compliance|Governance|Administrator|Audit/i.test(j.persona), description: 'Compliance & Governance — audit trails, policy enforcement' },
+  data: { label: 'Data Team', color: 'var(--cds-color-success)', filter: (j: any) => /Data|Optimizer|Engineer|Onboard/i.test(j.persona), description: 'Data Engineering — pipeline optimization, onboarding, cost reduction' },
+};
+
 export default function SourceDetailPage() {
   const { sourceId } = useParams<{ sourceId: string }>();
   const [activeTab, setActiveTab] = useState('overview');
@@ -64,6 +72,7 @@ export default function SourceDetailPage() {
   const [detectionSubTab, setDetectionSubTab] = useState<'security' | 'observability'>('security');
   const [enrichmentSubTab, setEnrichmentSubTab] = useState<'stream' | 'search'>('stream');
   const [expandedImpl, setExpandedImpl] = useState<string | null>(null);
+  const [personaLens, setPersonaLens] = useState<string>('all');
 
   // Selection state
   const [enabledSecDetections, setEnabledSecDetections] = useState<Set<string>>(new Set());
@@ -444,24 +453,82 @@ export default function SourceDetailPage() {
             </div>
           </div>
 
-          {source.jobsToBeDone && source.jobsToBeDone.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, marginBottom: 12 }}>Jobs to Be Done</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+          {/* What Else Can This Do? — cross-team value discovery */}
+          {source.jobsToBeDone && source.jobsToBeDone.length > 1 && (
+            <div style={{ marginBottom: 20, background: 'var(--cds-color-bg-subtle)', border: '1px solid var(--cds-brand-teal)', borderRadius: 'var(--cds-radius-lg)', padding: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <span style={{ fontSize: 20 }}>💡</span>
+                <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>What Else Can This Data Do?</h3>
+              </div>
+              <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', marginBottom: 16, lineHeight: 1.6 }}>
+                You're already collecting <strong>{source.name}</strong>. Here's what other teams can get from the same telemetry — zero additional ingest cost.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 12 }}>
                 {source.jobsToBeDone.map((cat: any) => (
-                  <div key={cat.category} style={{ ...card, padding: 16 }}>
-                    <h4 style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, color: 'var(--cds-brand-teal)', marginBottom: 10 }}>{cat.category}</h4>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {cat.jobs.map((j: any, i: number) => (
-                        <div key={i} style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                          <span style={{ ...tag('var(--cds-color-accent-subtle)', 'var(--cds-color-accent)'), flexShrink: 0 }}>{j.persona}</span>
-                          <span style={{ lineHeight: 1.5 }}>{j.job}</span>
-                        </div>
-                      ))}
+                  <div key={cat.category} style={{ background: 'var(--cds-color-bg)', borderRadius: 'var(--cds-radius-md)', padding: 14, border: '1px solid var(--cds-color-border-subtle)' }}>
+                    <div style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, color: 'var(--cds-brand-teal)', marginBottom: 6 }}>{cat.category}</div>
+                    <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>
+                      {cat.jobs.length} outcome{cat.jobs.length > 1 ? 's' : ''} for {[...new Set(cat.jobs.map((j: any) => j.persona))].join(', ')}
                     </div>
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Persona Lens Toggle */}
+          {source.jobsToBeDone && source.jobsToBeDone.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>Jobs to Be Done</h3>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {Object.entries(personaLenses).map(([key, lens]) => (
+                    <button
+                      key={key}
+                      onClick={() => setPersonaLens(key)}
+                      style={{
+                        padding: '4px 10px', border: personaLens === key ? `2px solid ${lens.color}` : '1px solid var(--cds-color-border)',
+                        borderRadius: 'var(--cds-radius-sm)', cursor: 'pointer', fontSize: 'var(--cds-font-size-xs)',
+                        fontWeight: personaLens === key ? 600 : 400, background: personaLens === key ? 'var(--cds-color-bg-subtle)' : 'var(--cds-color-bg)',
+                        color: personaLens === key ? lens.color : 'var(--cds-color-fg-muted)',
+                      }}
+                    >
+                      {lens.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {personaLens !== 'all' && (
+                <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', marginBottom: 12, fontStyle: 'italic' }}>
+                  Showing: {personaLenses[personaLens].description}
+                </p>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
+                {source.jobsToBeDone
+                  .map((cat: any) => ({
+                    ...cat,
+                    filteredJobs: cat.jobs.filter(personaLenses[personaLens].filter),
+                  }))
+                  .filter((cat: any) => cat.filteredJobs.length > 0)
+                  .map((cat: any) => (
+                    <div key={cat.category} style={{ ...card, padding: 16 }}>
+                      <h4 style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, color: 'var(--cds-brand-teal)', marginBottom: 10 }}>{cat.category}</h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {cat.filteredJobs.map((j: any, i: number) => (
+                          <div key={i} style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                            <span style={{ ...tag('var(--cds-color-accent-subtle)', 'var(--cds-color-accent)'), flexShrink: 0 }}>{j.persona}</span>
+                            <span style={{ lineHeight: 1.5 }}>{j.job}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+              {personaLens !== 'all' && source.jobsToBeDone.flatMap((c: any) => c.jobs).filter(personaLenses[personaLens].filter).length === 0 && (
+                <p style={{ color: 'var(--cds-color-fg-subtle)', fontSize: 'var(--cds-font-size-sm)', textAlign: 'center', padding: 20 }}>
+                  No jobs match this persona lens for this source. Try "All Teams" to see all outcomes.
+                </p>
+              )}
             </div>
           )}
 

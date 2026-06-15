@@ -6,6 +6,9 @@ import FieldMatrixPage from './routes/FieldMatrixPage';
 import DetectionLibraryPage from './routes/DetectionLibraryPage';
 import ExportPage from './routes/ExportPage';
 import SettingsPage from './routes/SettingsPage';
+import CostSimulatorPage from './routes/CostSimulatorPage';
+import CorrelationStoriesPage from './routes/CorrelationStoriesPage';
+import CoverageHeatmapPage from './routes/CoverageHeatmapPage';
 
 export default function App() {
   return (
@@ -16,6 +19,9 @@ export default function App() {
           <Route path="/source/:sourceId" element={<SourceDetailPage />} />
           <Route path="/fields" element={<FieldMatrixPage />} />
           <Route path="/detections" element={<DetectionLibraryPage />} />
+          <Route path="/cost" element={<CostSimulatorPage />} />
+          <Route path="/stories" element={<CorrelationStoriesPage />} />
+          <Route path="/coverage" element={<CoverageHeatmapPage />} />
           <Route path="/export" element={<ExportPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
