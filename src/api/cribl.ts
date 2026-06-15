@@ -2,6 +2,10 @@ export function apiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
+function isMetadataRow(obj: any): boolean {
+  return obj && typeof obj === 'object' && ('isFinished' in obj || 'job' in obj || 'persistedEventCount' in obj);
+}
+
 export async function runQuery(kql: string, earliest: string, latest: string, limit = 10000): Promise<any[]> {
   const base = apiUrl();
   if (!base) throw new Error('Not running inside Cribl Search — this feature requires the Cribl Search App environment.');
@@ -20,28 +24,37 @@ export async function runQuery(kql: string, earliest: string, latest: string, li
     throw new Error(`Search job created but no ID returned. Response: ${JSON.stringify(createBody).slice(0, 300)}`);
   }
 
-  let status = 'running';
-  let errorMsg = '';
-  while (status === 'running') {
-    await new Promise(r => setTimeout(r, 1000));
-    const pollRes = await fetch(`${base}/m/default_search/search/jobs/${id}`);
-    const job = await pollRes.json();
-    status = job.status || job.state;
-    if (status === 'failed' || status === 'error') {
-      errorMsg = job.error || job.message || 'Search job failed';
-      break;
+  // Poll until job finishes
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    const resultsRes = await fetch(`${base}/m/default_search/search/jobs/${id}/results?output=json&offset=0&count=${limit}`);
+    if (!resultsRes.ok) continue;
+
+    const text = await resultsRes.text();
+    if (!text.trim()) continue;
+
+    // Parse all NDJSON lines
+    const lines = text.trim().split('\n').filter(Boolean);
+    const parsed: any[] = [];
+    let finished = false;
+
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (isMetadataRow(obj)) {
+          if (obj.isFinished === true) finished = true;
+        } else {
+          parsed.push(obj);
+        }
+      } catch { /* skip unparseable lines */ }
     }
-    if (status === 'finished' || status === 'done' || status === 'completed') {
-      break;
-    }
+
+    if (!finished) continue;
+
+    // Job is done — return only data rows (non-metadata)
+    return parsed;
   }
 
-  if (status === 'failed' || status === 'error') {
-    throw new Error(`Search job failed: ${errorMsg}`);
-  }
-
-  const resultsRes = await fetch(`${base}/m/default_search/search/jobs/${id}/results?output=json`);
-  if (!resultsRes.ok) return [];
-  const text = await resultsRes.text();
-  return text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  throw new Error('Search job timed out after 60 seconds');
 }

@@ -68,23 +68,24 @@ export default function CostSimulatorPage() {
 
     try {
       const ds = datasetName.trim();
-      const countQuery = `dataset="${ds}" earliest=-24h | summarize totalEvents=count(), minTime=min(_time), maxTime=max(_time)`;
+      const countQuery = 'dataset=' + ds + ' earliest=-24h | summarize totalEvents=count()';
       const countResults = await runQuery(countQuery, '-24h', 'now', 10000);
 
       if (!countResults.length || !countResults[0].totalEvents || Number(countResults[0].totalEvents) === 0) {
-        setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Verify the dataset name and that it contains data.`);
+        const debugInfo = countResults.length
+          ? `Got ${countResults.length} row(s). First row keys: [${Object.keys(countResults[0]).join(', ')}]. Values: ${JSON.stringify(countResults[0]).slice(0, 300)}`
+          : 'Query returned 0 rows.';
+        setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Debug: ${debugInfo}`);
         setDatasetLoading(false);
         return;
       }
 
       const row = countResults[0];
       const totalEvents = Number(row.totalEvents) || 0;
-      const minTime = Number(row.minTime) || 0;
-      const maxTime = Number(row.maxTime) || 0;
 
       let avgBytes = 800;
       try {
-        const sizeQuery = `dataset="${ds}" earliest=-24h | limit 1000 | extend eventSize=len(_raw) | summarize avgSize=avg(eventSize)`;
+        const sizeQuery = 'dataset=' + ds + ' earliest=-24h | limit 1000 | extend eventSize=len(_raw) | summarize avgSize=avg(eventSize)';
         const sizeResults = await runQuery(sizeQuery, '-24h', 'now', 10000);
         if (sizeResults.length && sizeResults[0].avgSize) {
           avgBytes = Math.round(Number(sizeResults[0].avgSize));
@@ -93,9 +94,9 @@ export default function CostSimulatorPage() {
         // Fall back to default if len(_raw) isn't available
       }
 
-      const timeSpanSeconds = maxTime - minTime;
-      const timeSpanHours = timeSpanSeconds / 3600;
-      const calculatedEps = timeSpanSeconds > 0 ? Math.round(totalEvents / timeSpanSeconds) : 0;
+      const timeSpanHours = 24;
+      const timeSpanSeconds = 86400;
+      const calculatedEps = Math.round(totalEvents / timeSpanSeconds);
       const totalGB = (totalEvents * avgBytes) / (1024 ** 3);
 
       const metrics: DatasetMetrics = {

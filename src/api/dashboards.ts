@@ -108,7 +108,9 @@ export function buildDashboards(
     for (const det of dets) {
       if (!det.criblSearchQueries) continue;
       for (const q of det.criblSearchQueries) {
-        const query = q.query.replace(/\$DATASET/g, dataset);
+        let query = q.query.replace(/\$DATASET/g, dataset);
+        // Remove filter clauses with unresolved $TOKENS (e.g. application="$APP_NAME")
+        query = query.replace(/\s*\w+\s*=\s*"?\$[A-Z_]+"?\s*/g, ' ').trim();
         elements.push({
           id: generateShortId(),
           type: chooseVizType(query),
