@@ -55,6 +55,7 @@ export default function CostSimulatorPage() {
   const [datasetMetrics, setDatasetMetrics] = useState<DatasetMetrics | null>(null);
   const [showDatasetPanel, setShowDatasetPanel] = useState(false);
 
+
   const source = allSources.find((s: any) => s.id === selectedSource);
 
   const fetchDatasetMetrics = useCallback(async () => {
@@ -72,10 +73,7 @@ export default function CostSimulatorPage() {
       const countResults = await runQuery(countQuery, '-24h', 'now', 10000);
 
       if (!countResults.length || !countResults[0].totalEvents || Number(countResults[0].totalEvents) === 0) {
-        const debugInfo = countResults.length
-          ? `Got ${countResults.length} row(s). First row keys: [${Object.keys(countResults[0]).join(', ')}]. Values: ${JSON.stringify(countResults[0]).slice(0, 300)}`
-          : 'Query returned 0 rows.';
-        setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Debug: ${debugInfo}`);
+        setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Verify the dataset name and that it contains data.`);
         setDatasetLoading(false);
         return;
       }
