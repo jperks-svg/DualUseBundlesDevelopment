@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { dataSources } from '../data/sources';
+import { runQuery } from '../api/cribl';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -16,13 +17,13 @@ const inputStyle: React.CSSProperties = {
   fontSize: 'var(--cds-font-size-sm)', width: '100%', background: 'var(--cds-color-bg)', color: 'var(--cds-color-fg)',
 };
 
-const allSources = dataSources.flatMap((c: any) => c.sources);
+const btnStyle: React.CSSProperties = {
+  padding: '8px 16px', border: 'none', borderRadius: 'var(--cds-radius-md)',
+  fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, cursor: 'pointer',
+  background: 'var(--cds-color-primary)', color: 'var(--cds-color-primary-fg)',
+};
 
-function parseEPS(epsStr: string): number {
-  const match = epsStr.match(/([\d,]+)/);
-  if (!match) return 5000;
-  return parseInt(match[1].replace(/,/g, ''), 10);
-}
+const allSources = dataSources.flatMap((c: any) => c.sources);
 
 function getReductionPercent(source: any): number {
   const desc = (source.jobsToBeDone || [])
@@ -34,22 +35,85 @@ function getReductionPercent(source: any): number {
   return 50;
 }
 
+interface DatasetMetrics {
+  eps: number;
+  avgEventSize: number;
+  totalEvents: number;
+  totalGB: number;
+  timeSpanHours: number;
+}
+
 export default function CostSimulatorPage() {
   const [selectedSource, setSelectedSource] = useState(allSources[0]?.id || '');
-  const [customEPS, setCustomEPS] = useState('');
+  const [eps, setEps] = useState('5000');
   const [costPerGB, setCostPerGB] = useState('3.50');
   const [avgEventSize, setAvgEventSize] = useState('800');
 
+  const [datasetName, setDatasetName] = useState('');
+  const [datasetLoading, setDatasetLoading] = useState(false);
+  const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [datasetMetrics, setDatasetMetrics] = useState<DatasetMetrics | null>(null);
+  const [showDatasetPanel, setShowDatasetPanel] = useState(false);
+
   const source = allSources.find((s: any) => s.id === selectedSource);
+
+  const fetchDatasetMetrics = useCallback(async () => {
+    if (!datasetName.trim()) {
+      setDatasetError('Enter a dataset name');
+      return;
+    }
+    setDatasetLoading(true);
+    setDatasetError(null);
+    setDatasetMetrics(null);
+
+    try {
+      const query = `dataset="${datasetName.trim()}" | summarize totalEvents=count(), totalBytes=sum(_raw_length), minTime=min(_time), maxTime=max(_time)`;
+      const results = await runQuery(query, '-24h', 'now', 1);
+
+      if (!results.length || !results[0].totalEvents) {
+        setDatasetError(`No data found in dataset "${datasetName.trim()}" for the last 24 hours. Verify the dataset name and that it contains data.`);
+        setDatasetLoading(false);
+        return;
+      }
+
+      const row = results[0];
+      const totalEvents = Number(row.totalEvents) || 0;
+      const totalBytes = Number(row.totalBytes) || 0;
+      const minTime = Number(row.minTime) || 0;
+      const maxTime = Number(row.maxTime) || 0;
+
+      const timeSpanSeconds = maxTime - minTime;
+      const timeSpanHours = timeSpanSeconds / 3600;
+      const calculatedEps = timeSpanSeconds > 0 ? Math.round(totalEvents / timeSpanSeconds) : 0;
+      const calculatedAvgEventSize = totalEvents > 0 ? Math.round(totalBytes / totalEvents) : 800;
+      const totalGB = totalBytes / (1024 ** 3);
+
+      const metrics: DatasetMetrics = {
+        eps: calculatedEps,
+        avgEventSize: calculatedAvgEventSize,
+        totalEvents,
+        totalGB,
+        timeSpanHours,
+      };
+
+      setDatasetMetrics(metrics);
+      setEps(String(calculatedEps));
+      setAvgEventSize(String(calculatedAvgEventSize));
+    } catch (e) {
+      setDatasetError(e instanceof Error ? e.message : 'Failed to query dataset. Ensure the app is running inside Cribl Search.');
+    } finally {
+      setDatasetLoading(false);
+    }
+  }, [datasetName]);
 
   const results = useMemo(() => {
     if (!source) return null;
-    const eps = customEPS ? parseInt(customEPS.replace(/,/g, ''), 10) : parseEPS(source.avgEPS || '5000');
+    const epsVal = parseInt(eps.replace(/,/g, ''), 10) || 0;
     const cost = parseFloat(costPerGB) || 3.50;
     const eventBytes = parseInt(avgEventSize, 10) || 800;
     const reductionPct = getReductionPercent(source);
 
-    const dailyEvents = eps * 86400;
+    const dailyEvents = epsVal * 86400;
     const dailyGB = (dailyEvents * eventBytes) / (1024 ** 3);
     const monthlyGB = dailyGB * 30;
     const monthlyCostRaw = monthlyGB * cost;
@@ -60,13 +124,13 @@ export default function CostSimulatorPage() {
     const lakeCost = monthlyGB * lakeCostPerGB;
     const optimizedTotal = siemCost + lakeCost;
     const savings = monthlyCostRaw - optimizedTotal;
-    const savingsPct = (savings / monthlyCostRaw) * 100;
+    const savingsPct = monthlyCostRaw > 0 ? (savings / monthlyCostRaw) * 100 : 0;
 
     return {
-      eps, dailyGB, monthlyGB, monthlyCostRaw,
+      eps: epsVal, dailyGB, monthlyGB, monthlyCostRaw,
       reductionPct, siemGB, siemCost, lakeCost, optimizedTotal, savings, savingsPct,
     };
-  }, [source, customEPS, costPerGB, avgEventSize]);
+  }, [source, eps, costPerGB, avgEventSize]);
 
   return (
     <div>
@@ -86,7 +150,7 @@ export default function CostSimulatorPage() {
             <label style={{ display: 'block', fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, marginBottom: 6 }}>Data Source</label>
             <select
               value={selectedSource}
-              onChange={(e) => { setSelectedSource(e.target.value); setCustomEPS(''); }}
+              onChange={(e) => { setSelectedSource(e.target.value); }}
               style={{ ...inputStyle, cursor: 'pointer' }}
             >
               {dataSources.map((cat: any) => (
@@ -105,14 +169,11 @@ export default function CostSimulatorPage() {
             </label>
             <input
               type="text"
-              value={customEPS}
-              onChange={(e) => setCustomEPS(e.target.value)}
-              placeholder={source ? `Default: ${source.avgEPS}` : 'Enter EPS'}
+              value={eps}
+              onChange={(e) => setEps(e.target.value)}
+              placeholder="e.g. 5000"
               style={inputStyle}
             />
-            <p style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)', marginTop: 4 }}>
-              Leave blank to use the typical range for this source type.
-            </p>
           </div>
 
           <div style={{ marginBottom: 16 }}>
@@ -137,6 +198,23 @@ export default function CostSimulatorPage() {
               onChange={(e) => setAvgEventSize(e.target.value)}
               style={inputStyle}
             />
+          </div>
+
+          {/* Dataset mapping toggle */}
+          <div style={{ borderTop: '1px solid var(--cds-color-border-subtle)', paddingTop: 16 }}>
+            <button
+              onClick={() => setShowDatasetPanel(!showDatasetPanel)}
+              style={{
+                ...btnStyle,
+                background: showDatasetPanel ? 'var(--cds-color-primary)' : 'var(--cds-color-bg-muted)',
+                color: showDatasetPanel ? 'var(--cds-color-primary-fg)' : 'var(--cds-color-fg)',
+                width: '100%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 16 }}>&#x1F4CA;</span>
+              {showDatasetPanel ? 'Hide Dataset Mapping' : 'Map to Dataset — Auto-fill from Real Data'}
+            </button>
           </div>
         </div>
 
@@ -200,6 +278,76 @@ export default function CostSimulatorPage() {
           )}
         </div>
       </div>
+
+      {/* Dataset Mapping Panel */}
+      {showDatasetPanel && (
+        <div style={{ ...card, marginBottom: 24, border: '1px solid var(--cds-color-primary)', borderLeft: '4px solid var(--cds-color-primary)' }}>
+          <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, marginBottom: 8 }}>Map to Cribl Search Dataset</h3>
+          <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', marginBottom: 16, lineHeight: 1.6 }}>
+            Point the simulator at a dataset that already contains this source's data. It will query the last 24 hours and auto-fill EPS, average event size, and volume based on actual ingestion metrics.
+          </p>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 16 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, marginBottom: 6 }}>Dataset Name</label>
+              <input
+                type="text"
+                value={datasetName}
+                onChange={(e) => setDatasetName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void fetchDatasetMetrics(); }}
+                placeholder="e.g. pan_traffic, firewall_logs, cribl_lake_default"
+                style={inputStyle}
+              />
+            </div>
+            <button
+              onClick={() => void fetchDatasetMetrics()}
+              disabled={datasetLoading}
+              style={{
+                ...btnStyle,
+                opacity: datasetLoading ? 0.6 : 1,
+                minWidth: 140,
+              }}
+            >
+              {datasetLoading ? 'Querying...' : 'Fetch Metrics'}
+            </button>
+          </div>
+
+          {datasetError && (
+            <div style={{ background: 'var(--cds-color-danger-subtle)', borderRadius: 'var(--cds-radius-md)', padding: 12, marginBottom: 12 }}>
+              <span style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-danger)' }}>{datasetError}</span>
+            </div>
+          )}
+
+          {datasetMetrics && (
+            <div style={{ background: 'var(--cds-color-success-subtle)', borderRadius: 'var(--cds-radius-md)', padding: 16 }}>
+              <div style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, color: 'var(--cds-color-success)', marginBottom: 12 }}>
+                Dataset metrics loaded — inputs updated
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)' }}>Calculated EPS</div>
+                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600 }}>{datasetMetrics.eps.toLocaleString()}</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)' }}>Avg Event Size</div>
+                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600 }}>{datasetMetrics.avgEventSize.toLocaleString()} B</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)' }}>Total Events (24h)</div>
+                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600 }}>{datasetMetrics.totalEvents.toLocaleString()}</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)' }}>Volume (24h)</div>
+                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600 }}>{datasetMetrics.totalGB.toFixed(2)} GB</div>
+                </div>
+              </div>
+              <p style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-subtle)', marginTop: 12, marginBottom: 0 }}>
+                Based on {datasetMetrics.timeSpanHours.toFixed(1)} hours of data. EPS and event size inputs have been updated above.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* How it works */}
       {source && results && (
