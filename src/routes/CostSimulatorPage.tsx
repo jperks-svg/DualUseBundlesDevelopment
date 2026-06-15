@@ -68,8 +68,8 @@ export default function CostSimulatorPage() {
 
     try {
       const ds = datasetName.trim();
-      const countQuery = `dataset="${ds}" | summarize totalEvents=count(), minTime=min(_time), maxTime=max(_time)`;
-      const countResults = await runQuery(countQuery, '-24h', 'now', 1);
+      const countQuery = `dataset="${ds}" earliest=-24h | summarize totalEvents=count(), minTime=min(_time), maxTime=max(_time)`;
+      const countResults = await runQuery(countQuery, '-24h', 'now', 10000);
 
       if (!countResults.length || !countResults[0].totalEvents || Number(countResults[0].totalEvents) === 0) {
         setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Verify the dataset name and that it contains data.`);
@@ -84,8 +84,8 @@ export default function CostSimulatorPage() {
 
       let avgBytes = 800;
       try {
-        const sizeQuery = `dataset="${ds}" | limit 1000 | extend eventSize=len(_raw) | summarize avgSize=avg(eventSize)`;
-        const sizeResults = await runQuery(sizeQuery, '-24h', 'now', 1);
+        const sizeQuery = `dataset="${ds}" earliest=-24h | limit 1000 | extend eventSize=len(_raw) | summarize avgSize=avg(eventSize)`;
+        const sizeResults = await runQuery(sizeQuery, '-24h', 'now', 10000);
         if (sizeResults.length && sizeResults[0].avgSize) {
           avgBytes = Math.round(Number(sizeResults[0].avgSize));
         }
