@@ -67,30 +67,40 @@ export default function CostSimulatorPage() {
     setDatasetMetrics(null);
 
     try {
-      const query = `dataset="${datasetName.trim()}" | summarize totalEvents=count(), totalBytes=sum(_raw_length), minTime=min(_time), maxTime=max(_time)`;
-      const results = await runQuery(query, '-24h', 'now', 1);
+      const ds = datasetName.trim();
+      const countQuery = `dataset="${ds}" | summarize totalEvents=count(), minTime=min(_time), maxTime=max(_time)`;
+      const countResults = await runQuery(countQuery, '-24h', 'now', 1);
 
-      if (!results.length || !results[0].totalEvents) {
-        setDatasetError(`No data found in dataset "${datasetName.trim()}" for the last 24 hours. Verify the dataset name and that it contains data.`);
+      if (!countResults.length || !countResults[0].totalEvents || Number(countResults[0].totalEvents) === 0) {
+        setDatasetError(`No data found in dataset "${ds}" for the last 24 hours. Verify the dataset name and that it contains data.`);
         setDatasetLoading(false);
         return;
       }
 
-      const row = results[0];
+      const row = countResults[0];
       const totalEvents = Number(row.totalEvents) || 0;
-      const totalBytes = Number(row.totalBytes) || 0;
       const minTime = Number(row.minTime) || 0;
       const maxTime = Number(row.maxTime) || 0;
+
+      let avgBytes = 800;
+      try {
+        const sizeQuery = `dataset="${ds}" | limit 1000 | extend eventSize=len(_raw) | summarize avgSize=avg(eventSize)`;
+        const sizeResults = await runQuery(sizeQuery, '-24h', 'now', 1);
+        if (sizeResults.length && sizeResults[0].avgSize) {
+          avgBytes = Math.round(Number(sizeResults[0].avgSize));
+        }
+      } catch {
+        // Fall back to default if len(_raw) isn't available
+      }
 
       const timeSpanSeconds = maxTime - minTime;
       const timeSpanHours = timeSpanSeconds / 3600;
       const calculatedEps = timeSpanSeconds > 0 ? Math.round(totalEvents / timeSpanSeconds) : 0;
-      const calculatedAvgEventSize = totalEvents > 0 ? Math.round(totalBytes / totalEvents) : 800;
-      const totalGB = totalBytes / (1024 ** 3);
+      const totalGB = (totalEvents * avgBytes) / (1024 ** 3);
 
       const metrics: DatasetMetrics = {
         eps: calculatedEps,
-        avgEventSize: calculatedAvgEventSize,
+        avgEventSize: avgBytes,
         totalEvents,
         totalGB,
         timeSpanHours,
@@ -98,7 +108,7 @@ export default function CostSimulatorPage() {
 
       setDatasetMetrics(metrics);
       setEps(String(calculatedEps));
-      setAvgEventSize(String(calculatedAvgEventSize));
+      setAvgEventSize(String(avgBytes));
     } catch (e) {
       setDatasetError(e instanceof Error ? e.message : 'Failed to query dataset. Ensure the app is running inside Cribl Search.');
     } finally {
