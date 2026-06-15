@@ -1,4 +1,5 @@
 import { apiUrl } from './cribl';
+import { stripUnresolvedTokens } from '../utils/queryClean';
 
 const DASHBOARD_BASE = () => `${apiUrl()}/m/default_search/search/dashboards`;
 
@@ -108,9 +109,7 @@ export function buildDashboards(
     for (const det of dets) {
       if (!det.criblSearchQueries) continue;
       for (const q of det.criblSearchQueries) {
-        let query = q.query.replace(/\$DATASET/g, dataset);
-        // Remove filter clauses with unresolved $TOKENS (e.g. application="$APP_NAME")
-        query = query.replace(/\s*\w+\s*=\s*"?\$[A-Z_]+"?\s*/g, ' ').trim();
+        const query = stripUnresolvedTokens(q.query.replace(/\$DATASET/g, dataset));
         elements.push({
           id: generateShortId(),
           type: chooseVizType(query),

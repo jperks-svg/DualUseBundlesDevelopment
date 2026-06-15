@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { dataSources } from '../data/sources';
 import { runQuery } from '../api/cribl';
+import { calculateCostSavings } from '../utils/costCalc';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -121,24 +122,7 @@ export default function CostSimulatorPage() {
     const cost = parseFloat(costPerGB) || 3.50;
     const eventBytes = parseInt(avgEventSize, 10) || 800;
     const reductionPct = getReductionPercent(source);
-
-    const dailyEvents = epsVal * 86400;
-    const dailyGB = (dailyEvents * eventBytes) / (1024 ** 3);
-    const monthlyGB = dailyGB * 30;
-    const monthlyCostRaw = monthlyGB * cost;
-
-    const siemGB = monthlyGB * (1 - reductionPct / 100);
-    const siemCost = siemGB * cost;
-    const lakeCostPerGB = 0.023;
-    const lakeCost = monthlyGB * lakeCostPerGB;
-    const optimizedTotal = siemCost + lakeCost;
-    const savings = monthlyCostRaw - optimizedTotal;
-    const savingsPct = monthlyCostRaw > 0 ? (savings / monthlyCostRaw) * 100 : 0;
-
-    return {
-      eps: epsVal, dailyGB, monthlyGB, monthlyCostRaw,
-      reductionPct, siemGB, siemCost, lakeCost, optimizedTotal, savings, savingsPct,
-    };
+    return calculateCostSavings(epsVal, eventBytes, cost, reductionPct);
   }, [source, eps, costPerGB, avgEventSize]);
 
   return (

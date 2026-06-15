@@ -2,8 +2,27 @@ export function apiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
-function isMetadataRow(obj: any): boolean {
+export function isMetadataRow(obj: any): boolean {
   return obj && typeof obj === 'object' && ('isFinished' in obj || 'job' in obj || 'persistedEventCount' in obj);
+}
+
+export function parseNdjsonResults(text: string): { finished: boolean; rows: any[] } {
+  const lines = text.trim().split('\n').filter(Boolean);
+  const rows: any[] = [];
+  let finished = false;
+
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (isMetadataRow(obj)) {
+        if (obj.isFinished === true) finished = true;
+      } else {
+        rows.push(obj);
+      }
+    } catch { /* skip unparseable lines */ }
+  }
+
+  return { finished, rows };
 }
 
 export async function runQuery(kql: string, earliest: string, latest: string, limit = 10000): Promise<any[]> {
@@ -34,26 +53,9 @@ export async function runQuery(kql: string, earliest: string, latest: string, li
     const text = await resultsRes.text();
     if (!text.trim()) continue;
 
-    // Parse all NDJSON lines
-    const lines = text.trim().split('\n').filter(Boolean);
-    const parsed: any[] = [];
-    let finished = false;
-
-    for (const line of lines) {
-      try {
-        const obj = JSON.parse(line);
-        if (isMetadataRow(obj)) {
-          if (obj.isFinished === true) finished = true;
-        } else {
-          parsed.push(obj);
-        }
-      } catch { /* skip unparseable lines */ }
-    }
-
+    const { finished, rows } = parseNdjsonResults(text);
     if (!finished) continue;
-
-    // Job is done — return only data rows (non-metadata)
-    return parsed;
+    return rows;
   }
 
   throw new Error('Search job timed out after 60 seconds');

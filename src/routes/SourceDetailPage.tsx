@@ -7,6 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { enrichments as enrichmentData } from '../data/enrichments';
 import { sampleLogSets } from '../data/sampleLogs';
+import { stripUnresolvedTokens } from '../utils/queryClean';
 import DashboardDeployModal from '../components/DashboardDeployModal';
 import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
@@ -198,11 +199,7 @@ export default function SourceDetailPage() {
       for (const q of det.criblSearchQueries) {
         const savedSearchId = `dub_${sourceId}_${det.id}_${savedCount}`.replace(/[^a-zA-Z0-9_]/g, '_');
         const cleanName = `DUB ${det.name} - ${q.name}`.replace(/[^a-zA-Z0-9 _-]/g, '').substring(0, 256);
-        let cleanQuery = q.query.replace(/\$DATASET/g, dataset.trim());
-        // Remove filter clauses with unresolved $TOKENS (e.g. application="$APP_NAME")
-        cleanQuery = cleanQuery.replace(/\s*\w+\s*=\s*"?\$[A-Z_]+"?\s*/g, ' ');
-        // Normalize whitespace
-        cleanQuery = cleanQuery.replace(/\n/g, '\n').trim();
+        const cleanQuery = stripUnresolvedTokens(q.query.replace(/\$DATASET/g, dataset.trim()));
         const body = {
           id: savedSearchId,
           name: cleanName,
