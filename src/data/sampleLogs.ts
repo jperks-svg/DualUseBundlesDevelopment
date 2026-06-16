@@ -27,6 +27,10 @@ import { secretsLogs } from './sampleLogs/secrets';
 import { devopsLogs } from './sampleLogs/devops';
 import { networkSecurityAdditionalLogs } from './sampleLogs/network-security-additional';
 import { xdrLogs } from './sampleLogs/xdr';
+import { databaseLogs } from './sampleLogs/database';
+import { ndrLogs } from './sampleLogs/ndr';
+import { mimecastLogs } from './sampleLogs/mimecast';
+import { cnappLogs } from './sampleLogs/cnapp';
 
 const saseLogs: Record<string, string> = {
 
@@ -92,4 +96,8 @@ export const sampleLogSets: Record<string, string> = {
   ...devopsLogs,
   ...networkSecurityAdditionalLogs,
   ...xdrLogs,
+  ...databaseLogs,
+  ...ndrLogs,
+  ...mimecastLogs,
+  ...cnappLogs,
 };

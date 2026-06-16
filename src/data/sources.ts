@@ -887,6 +887,38 @@ export const dataSources = [
         logFormat: 'JSON via Graph API. Entity types: alerts (v2), incidents, signInLogs, auditLogs/directoryAudits, riskDetections, servicePrincipalRiskDetections. Key fields: id, createdDateTime, severity, status, category, userPrincipalName, ipAddress, riskLevel, riskState, conditionalAccessStatus.',
         avgEPS: '1,000-50,000 EPS depending on tenant size and Defender product coverage',
         sampleEvent: '{"id":"alert-12345-abcd","createdDateTime":"2026-06-06T14:32:08Z","severity":"high","status":"new","category":"CredentialAccess","title":"Suspicious sign-in from unfamiliar location","description":"User jperks@cribl.io signed in from an IP address not recently seen for this account","userStates":[{"userPrincipalName":"jperks@cribl.io","riskScore":"85","riskLevel":"high"}],"hostStates":[],"networkConnections":[{"sourceAddress":"203.0.113.99","destinationAddress":"login.microsoftonline.com"}],"vendorInformation":{"provider":"Azure AD Identity Protection","vendor":"Microsoft"},"riskScore":85,"assignedTo":"","conditionalAccessStatus":"notApplied","ipAddress":"203.0.113.99","location":{"city":"Lagos","state":"Lagos","countryOrRegion":"NG"}}'
+      },
+      {
+        id: 'wiz-cloud-security',
+        name: 'Wiz Cloud Security (CNAPP)',
+        vendor: 'Wiz',
+        description: 'Cloud-native application protection platform alerts covering misconfigurations, vulnerabilities, toxic combinations, identity exposure, data exposure, and attack path analysis across AWS, Azure, and GCP. Agentless scanning delivers unified risk findings with full context graph.',
+        status: 'available',
+        useCases: ['Cloud Misconfiguration Detection', 'Vulnerability Prioritization', 'Toxic Combination Analysis', 'Attack Path Visualization', 'Container Security', 'Identity Exposure Detection', 'Data Exposure Prevention'],
+        personas: ['Cloud Security', 'Security Engineering', 'SOC', 'DevSecOps', 'Compliance', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate Wiz toxic combination findings with runtime signals (CloudTrail, network flows) to identify actively exploitable attack paths versus theoretical exposure' },
+            { persona: 'Data End User / Analyst', job: 'Prioritize Wiz issues by combining severity with blast radius (number of downstream resources reachable from the vulnerable asset) to focus remediation' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Generate continuous compliance reports from Wiz findings mapped to CIS, SOC 2, PCI-DSS, and HIPAA frameworks with remediation status tracking' },
+            { persona: 'Data End User / Analyst', job: 'Track mean-time-to-remediation for critical cloud misconfigurations and measure drift from security baselines over time' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Route only critical/high severity issues and status changes to SIEM while sending full inventory scans and low-severity findings to Lake for trending — reducing volume by 80-90%' },
+            { persona: 'Data Engineer', job: 'Deduplicate Wiz issues that fire on the same resource across multiple scan cycles by tracking issue IDs and only forwarding state transitions' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Wiz webhook integration or Issues API polling with proper severity filtering and resource context enrichment' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Webhook (push) / REST API (Issues, Audit) / AWS EventBridge / Azure Event Grid',
+        logFormat: 'JSON — fields include id, sourceRule, title, severity (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL), status (OPEN/RESOLVED/REJECTED), entitySnapshot (type, name, cloudPlatform, region, subscriptionId), remediation, firstDetectedAt, resolvedAt, dueAt, notes, projects.',
+        avgEPS: '100-5,000 EPS (issue-level events are low volume but high context; inventory scan results can spike during full scans)',
+        sampleEvent: '{"id":"iss-a1b2c3d4-e5f6-7890","sourceRule":{"id":"rule-public-s3","name":"S3 Bucket Publicly Accessible"},"title":"S3 bucket customer-data-prod is publicly readable","severity":"CRITICAL","status":"OPEN","entitySnapshot":{"id":"arn:aws:s3:::customer-data-prod","type":"bucket","name":"customer-data-prod","cloudPlatform":"AWS","region":"us-east-1","subscriptionExternalId":"123456789012","subscriptionName":"prod-account","tags":{"team":"data-engineering","env":"production"}},"remediation":"Remove public ACL grants and configure bucket policy with explicit deny for non-authenticated principals","firstDetectedAt":"2026-06-16T14:32:08Z","projects":[{"id":"proj-001","name":"Production Infrastructure"}],"notes":[]}'
       }
     ]
   },
@@ -1337,6 +1369,38 @@ export const dataSources = [
         logFormat: 'JSON — fields include GUID, sender, recipient, subject, messageTime, threatsInfoMap (threat, classification, url), clickTime, clickIP, classification, quarantineFolder, policyRoutes, phishScore, spamScore, impostorScore.',
         avgEPS: '2,000-20,000 EPS (scales with email volume; TAP threat events are subset)',
         sampleEvent: '{"GUID":"a1b2c3d4-e5f6-7890","sender":"hr-benefits@company-update.com","recipient":"mthompson@cribl.io","subject":"Action Required: Update Your Direct Deposit Information","messageTime":"2026-06-11T14:32:08Z","senderIP":"185.234.72.11","classification":"phish","phishScore":99,"spamScore":45,"impostorScore":92,"threatsInfoMap":[{"threat":"https://company-update.com/hr-portal/login","threatType":"url","classification":"phish","threatTime":"2026-06-11T14:32:10Z"}],"quarantineFolder":"Phishing","policyRoutes":["default_inbound","phish_quarantine"],"messageSize":15234,"headerFrom":"HR Benefits <benefits@company.com>","replyTo":"reply-a1b2c3@gmail.com"}'
+      },
+      {
+        id: 'mimecast-email',
+        name: 'Mimecast Email Security & TTP',
+        vendor: 'Mimecast',
+        description: 'Email security logs from Mimecast covering Targeted Threat Protection (TTP) URL scans, impersonation detection, attachment sandboxing, message receipt/delivery, and DLP policy actions. Delivered via SIEM Integration API with structured JSON per log type.',
+        status: 'available',
+        useCases: ['Phishing Detection', 'URL Click Protection', 'Impersonation Detection', 'Attachment Sandboxing', 'Email DLP', 'Quarantine Management', 'Executive Protection'],
+        personas: ['SOC', 'Security Engineering', 'Incident Response', 'Compliance', 'Email Administration'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections correlating Mimecast TTP URL click events with endpoint process creation to identify successful credential phishing leading to post-exploitation activity' },
+            { persona: 'Data End User / Analyst', job: 'Investigate impersonation detections by correlating sender similarity scores with header analysis and recipient targeting patterns to confirm BEC campaigns' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor email processing latency, queue depth, attachment sandbox processing time, and delivery success rates to ensure email flow health' },
+            { persona: 'Data End User / Analyst', job: 'Track TTP URL rewrite effectiveness and user click-through rates to measure security awareness impact' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter clean receipt/delivery logs (85%+ of volume) to Lake while routing TTP alerts, impersonation events, and DLP matches to SIEM — reducing ingest by 75-85%' },
+            { persona: 'Data Engineer', job: 'Suppress internal-to-internal message tracking that generates high volume with minimal security value' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Mimecast SIEM Integration API polling with proper pagination and checkpoint management for reliable log collection' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (SIEM Integration API — /api/audit/get-siem-logs) / Syslog',
+        logFormat: 'JSON — separate log types: ttp-url (url, scanResult, userOverride, action), ttp-impersonation (senderAddress, similarDomain, impersonatedUser), receipt (senderAddress, recipientAddress, subject, spamScore, rejectionType). Key shared fields: datetime, aCode, acc, id.',
+        avgEPS: '2,000-30,000 EPS (receipts dominate volume; TTP alerts are low-volume high-value)',
+        sampleEvent: '{"datetime":"2026-06-16T14:32:08+0000","aCode":"api_key_redacted","acc":"C0A0","id":"msg-TTP-a1b2c3","logType":"ttp-url","senderAddress":"hr-update@company-spoofed.com","recipientAddress":"mthompson@cribl.io","subject":"Verify Your Account Details","route":"inbound","url":"https://company-spoofed.com/login","scanResult":"malicious","action":"block","userOverride":"false","adminOverride":"N/A","urlCategory":"Phishing & Fraud","credentialTheft":"true","sendingIp":"185.234.72.11"}'
       }
     ]
   },
@@ -1912,6 +1976,38 @@ export const dataSources = [
         logFormat: 'Citrix syslog format: <date> <hostname> <module> <feature> <severity> <event_id> <message>. Key modules: SSLVPN (gateway), APPFW (WAF), TCP, HTTP, AAA (auth).',
         avgEPS: '10,000-200,000 EPS (extremely high from HTTP transaction logging; security events are small subset)',
         sampleEvent: 'Jun 11 14:32:08 ns-prod-01 0-PPE-0 : AAA LOGIN_FAILED 1234567 0 : User mthompson@cribl.io - Client_ip 198.51.100.45 - Failure_reason "Invalid credentials" - Vserver vs-gateway-prod - Nat_ip 10.0.1.100 - Browser_type "Chrome/120" - Group(s) "N/A" - Flags 0 - AuthType LDAP+RADIUS'
+      },
+      {
+        id: 'darktrace-ndr',
+        name: 'Darktrace AI Network Detection & Response',
+        vendor: 'Darktrace',
+        description: 'AI-driven network detection alerts from Darktrace covering model breaches, device anomaly scoring, connection-level behavioral analysis, and autonomous response (Antigena) actions. Uses unsupervised machine learning to establish baselines and detect deviations without signatures.',
+        status: 'available',
+        useCases: ['AI-Driven Threat Detection', 'Insider Threat Detection', 'C2 Communication Detection', 'Lateral Movement Detection', 'Anomalous Data Transfer', 'Compromised Credential Detection', 'Zero-Day Detection'],
+        personas: ['SOC', 'Security Engineering', 'Threat Hunting', 'Incident Response', 'Network Security'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate Darktrace model breaches with endpoint and identity events to validate AI-generated alerts and reduce false positives through multi-signal confirmation' },
+            { persona: 'Data End User / Analyst', job: 'Investigate high-severity model breaches by pivoting from Darktrace anomaly scores to raw network evidence and affected device timelines' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Darktrace sensor coverage, model health, and detection coverage gaps across network segments and VLANs' },
+            { persona: 'Data End User / Analyst', job: 'Track model breach volume and severity trends to measure network security posture improvements over time' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter low-severity model breaches (score <40) and informational connection logs to Lake while routing confirmed threats and Antigena actions to SIEM — reducing volume by 70-80%' },
+            { persona: 'Data Engineer', job: 'Aggregate per-device anomaly scores into hourly summaries rather than forwarding every scored connection event at full resolution' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Darktrace syslog CEF output or webhook integration and map model breach categories to common threat taxonomy' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (CEF) / Webhook (JSON) / Darktrace API',
+        logFormat: 'JSON (webhook) or CEF (syslog) — fields include model breach ID, model name/type, severity score (0-100), device info (hostname, IP, MAC), threat category, MITRE mapping, connection details, Antigena action taken.',
+        avgEPS: '1,000-50,000 EPS (model breaches are low volume; connection scoring telemetry can be high)',
+        sampleEvent: '{"createdAt":"2026-06-16T14:32:08Z","modelBreach":{"pbid":456789,"modelName":"Compromise::Beaconing Activity To External Rare","score":87,"category":"Compromise","description":"Device making regular connections at unusual intervals to rare external endpoint"},"device":{"did":123456,"hostname":"workstation-042","ip":"10.0.1.50","mac":"aa:bb:cc:dd:ee:ff","typename":"Desktop"},"triggeredComponents":[{"metric":"connections","value":"45.77.123.99:443","filters":{"interval":"60s","jitter":"15%","duration":"3600s"}}],"mitreTechniques":["T1071.001","T1573.002"]}'
       }
     ]
   },
@@ -2339,6 +2435,76 @@ export const dataSources = [
         logFormat: 'CEF or JSON — fields include alert_id, alert_name, severity, category, mitre_tactic, mitre_technique, host_name, host_ip, user_name, action_taken, causality_chain_id, incident_id, agent_version.',
         avgEPS: '10,000-500,000 EPS (raw telemetry is extremely high volume; alerts are low volume subset)',
         sampleEvent: 'CEF:0|Palo Alto Networks|Cortex XDR|3.5|Behavioral Threat|Suspicious PowerShell Execution|8|rt=2026-06-11T14:32:08Z dhost=workstation-042 duser=mthompson@cribl.io src=10.0.1.50 act=Detected cs1=T1059.001 cs1Label=MITRE_Technique cs2=Execution cs2Label=MITRE_Tactic cs3=causality-a1b2c3 cs3Label=CausalityID cs4=INC-2026-0611-001 cs4Label=IncidentID cn1=85 cn1Label=AlertScore deviceProcessName=powershell.exe msg=PowerShell executing encoded command with network callback to external IP 185.234.72.11'
+      }
+    ]
+  },
+  {
+    category: 'Database',
+    icon: '🗄️',
+    sources: [
+      {
+        id: 'mongodb-audit',
+        name: 'MongoDB Audit Logs',
+        vendor: 'MongoDB',
+        description: 'Database audit events from MongoDB covering authentication attempts, authorization checks (authCheck), CRUD operations, schema changes (DDL), role/user management, and replica set configuration changes. Available in native JSON (mongo schema) or OCSF format.',
+        status: 'available',
+        useCases: ['Database Access Monitoring', 'Privilege Escalation Detection', 'Schema Change Tracking', 'Failed Authentication Detection', 'Compliance Auditing', 'Data Exfiltration Detection', 'Replica Set Security'],
+        personas: ['SOC', 'Security Engineering', 'DBA', 'Compliance', 'Data Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect unauthorized database access patterns — bulk collection reads from unusual IPs, privilege escalation via role grants, and authentication brute-force against production clusters' },
+            { persona: 'Data End User / Analyst', job: 'Investigate data exfiltration by correlating large query result sets with source IPs outside expected application server ranges' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain complete audit trail of all privileged operations (user/role creation, collection drops, reconfig) for SOC 2 and PCI-DSS database access requirements' },
+            { persona: 'Data End User / Analyst', job: 'Generate audit reports showing all access to collections containing PII/PHI data with full user attribution and timestamp' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter successful authCheck events for read operations on non-sensitive collections (80-90% of audit volume) while preserving writes, failures, and DDL — reducing database audit log ingest by 75-85%' },
+            { persona: 'Data Engineer', job: 'Route authentication failures and DDL changes to SIEM while sending full audit trail to Lake for compliance retention at lower cost' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure mongod auditLog destination (file or syslog) and set up collection-level audit filters to capture security-relevant events without overwhelming log volume' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (auditLog JSON) / Syslog / MongoDB Atlas API (Database Auditing)',
+        logFormat: 'JSON (mongo schema) — fields include atype (authenticate, authCheck, createCollection, dropDatabase, createUser, etc), ts ($date ISO 8601), uuid, local (ip, port), remote (ip, port), users [{user, db}], roles [{role, db}], param (operation-specific), result (0=success, error code otherwise).',
+        avgEPS: '5,000-200,000 EPS (authCheck on every read/write generates extreme volume; auth events are small subset)',
+        sampleEvent: '{"atype":"authCheck","ts":{"$date":"2026-06-16T14:32:08.234+0000"},"uuid":{"$binary":"abc123def456","$type":"04"},"local":{"ip":"10.0.5.22","port":27017},"remote":{"ip":"185.234.72.11","port":49152},"users":[],"roles":[],"param":{"command":"find","ns":"production.customers","args":{"filter":{"ssn":{"$exists":true}}}},"result":13}'
+      },
+      {
+        id: 'postgresql-audit',
+        name: 'PostgreSQL pgAudit Logs',
+        vendor: 'PostgreSQL / pgAudit',
+        description: 'Statement-level and object-level audit logging for PostgreSQL via the pgAudit extension. Captures DDL, DML, role operations, and function calls with full SQL statement text, object names, and execution parameters. Integrates with PostgreSQL native logging infrastructure.',
+        status: 'available',
+        useCases: ['Database Access Auditing', 'SQL Injection Detection', 'Privilege Escalation Monitoring', 'Schema Change Tracking', 'Compliance Reporting', 'Slow Query Analysis', 'Connection Monitoring'],
+        personas: ['SOC', 'Security Engineering', 'DBA', 'Compliance', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect SQL injection patterns by analyzing pgAudit WRITE/DDL statements for suspicious syntax — UNION SELECT, information_schema queries, and pg_shadow/pg_authid access from application accounts' },
+            { persona: 'Data End User / Analyst', job: 'Identify privilege escalation by tracking ROLE class events showing unexpected GRANT statements or ALTER ROLE with SUPERUSER/CREATEROLE attributes' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX/PCI-DSS database audit requirements with complete statement-level logging of all DDL and privileged DML operations on sensitive tables' },
+            { persona: 'Data End User / Analyst', job: 'Generate compliance reports showing all access to PII tables with user, timestamp, statement type, and row counts for data privacy audits' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter READ class events on non-sensitive tables (often 90%+ of pgAudit volume) while preserving WRITE, DDL, and ROLE events — reducing database audit log volume by 80-90%' },
+            { persona: 'Data Engineer', job: 'Route DDL/ROLE events and failed statements to SIEM for real-time detection while batching full audit trail to Lake for compliance retention' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure pgAudit extension (shared_preload_libraries), set pgaudit.log classes, and connect PostgreSQL log output (csvlog or syslog) to Cribl Stream within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (PostgreSQL csvlog) / Syslog / CloudWatch Logs (RDS) / Azure Diagnostic Logs (Azure DB for PostgreSQL)',
+        logFormat: 'CSV or syslog — pgAudit appends structured fields to PostgreSQL log_line_prefix: AUDIT: <audit_type>,<statement_id>,<substatement_id>,<class>,<command>,<object_type>,<object_name>,<statement>,<parameter>. Classes: READ, WRITE, DDL, ROLE, FUNCTION, MISC.',
+        avgEPS: '5,000-100,000 EPS (READ logging on busy OLTP systems generates massive volume; DDL/ROLE events are very low)',
+        sampleEvent: '2026-06-16 14:32:08.234 UTC [12345] mthompson@production LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE,TABLE,public.users,"UPDATE users SET password_hash = $1 WHERE email = $2",<hidden>'
       }
     ]
   }
