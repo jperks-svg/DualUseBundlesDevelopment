@@ -20,6 +20,13 @@ import { saseCloudLogs } from './sampleLogs/sase-cloud';
 import { networkInfraLogs } from './sampleLogs/network-infra';
 import { vulnerabilityLogs } from './sampleLogs/vulnerability';
 import { itsmLogs } from './sampleLogs/itsm';
+import { cloudIdentityLogs } from './sampleLogs/cloud-identity';
+import { emailSecurityLogs } from './sampleLogs/email-security';
+import { virtualizationLogs } from './sampleLogs/virtualization';
+import { secretsLogs } from './sampleLogs/secrets';
+import { devopsLogs } from './sampleLogs/devops';
+import { networkSecurityAdditionalLogs } from './sampleLogs/network-security-additional';
+import { xdrLogs } from './sampleLogs/xdr';
 
 const saseLogs: Record<string, string> = {
 
@@ -78,4 +85,11 @@ export const sampleLogSets: Record<string, string> = {
   ...networkInfraLogs,
   ...vulnerabilityLogs,
   ...itsmLogs,
+  ...cloudIdentityLogs,
+  ...emailSecurityLogs,
+  ...virtualizationLogs,
+  ...secretsLogs,
+  ...devopsLogs,
+  ...networkSecurityAdditionalLogs,
+  ...xdrLogs,
 };

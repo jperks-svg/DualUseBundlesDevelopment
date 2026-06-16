@@ -2009,5 +2009,367 @@ export const dataSources = [
         sampleEvent: '{"sys_id":"a1b2c3d4e5f6a7b8","number":"INC0012345","state":"New","priority":"1 - Critical","assignment_group":"Security Operations","cmdb_ci":"web-server-01","short_description":"Critical vulnerability detected on production web server","sys_created_on":"2026-06-11T14:32:08Z","caller_id":"automation","category":"Security","subcategory":"Vulnerability","impact":"1 - High","urgency":"1 - High","business_service":"Customer Portal"}'
       }
     ]
+  },
+  {
+    category: 'Cloud Identity',
+    icon: '🔐',
+    sources: [
+      {
+        id: 'microsoft-entra-id',
+        name: 'Microsoft Entra ID (Azure AD) Sign-in & Audit Logs',
+        vendor: 'Microsoft',
+        description: 'Cloud identity sign-in events, conditional access evaluations, risky sign-in detections, service principal authentication, and directory audit changes from Microsoft Entra ID. Covers user and workload identity activity across the Microsoft cloud ecosystem.',
+        status: 'available',
+        useCases: ['Identity Threat Detection', 'Conditional Access Monitoring', 'Service Principal Security', 'SSO Health', 'License Utilization', 'Compliance Reporting', 'Token Abuse Detection'],
+        personas: ['Security Engineering', 'SOC', 'Identity & Access', 'Platform Engineering', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect risky sign-in patterns including impossible travel, token replay attacks, and MFA fatigue targeting across federated identity providers' },
+            { persona: 'Data End User / Analyst', job: 'Investigate conditional access policy bypasses and identify accounts operating outside expected geographic and device baselines' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor SSO authentication latency, token issuance failures, and service principal health across business-critical applications' },
+            { persona: 'Data End User / Analyst', job: 'Track conditional access policy effectiveness and identify overly permissive policies allowing risky sign-ins' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter verbose sign-in success events (90%+ of volume) to Lake while routing failures, risky events, and privilege changes to SIEM — reducing ingestion by 60-75%' },
+            { persona: 'Data Engineer', job: 'Suppress repetitive non-interactive service principal sign-ins that generate high volume with low security value' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Event Hub or Diagnostic Settings export from Entra ID into Cribl Stream with proper tenant context and schema normalization' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Azure Event Hub / Diagnostic Settings / Microsoft Graph API',
+        logFormat: 'JSON — fields include correlationId, userPrincipalName, appDisplayName, ipAddress, location, status, conditionalAccessStatus, riskLevelAggregated, riskState, mfaDetail, deviceDetail, authenticationRequirement.',
+        avgEPS: '5,000-50,000 EPS (high volume from non-interactive service principal sign-ins)',
+        sampleEvent: '{"time":"2026-06-11T14:32:08Z","resourceId":"/tenants/a1b2c3d4/providers/Microsoft.aadiam","operationName":"Sign-in activity","category":"SignInLogs","properties":{"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","createdDateTime":"2026-06-11T14:32:08Z","userDisplayName":"Marcus Thompson","userPrincipalName":"mthompson@cribl.io","userId":"user-guid-001","appId":"app-guid-001","appDisplayName":"Microsoft Teams","ipAddress":"198.51.100.45","location":{"city":"San Francisco","state":"California","countryOrRegion":"US"},"status":{"errorCode":0,"failureReason":""},"conditionalAccessStatus":"success","riskLevelAggregated":"none","riskState":"none","authenticationRequirement":"multiFactorAuthentication","mfaDetail":{"authMethod":"PhoneAppNotification"},"deviceDetail":{"operatingSystem":"MacOS","browser":"Edge 120"}}}'
+      },
+      {
+        id: 'cyberark-pam',
+        name: 'CyberArk Privileged Access Manager Audit Logs',
+        vendor: 'CyberArk',
+        description: 'Privileged session recordings, credential checkout/checkin events, vault access audit trail, and policy violations from CyberArk PAM. Tracks every interaction with privileged credentials including who accessed what, when, and from where.',
+        status: 'available',
+        useCases: ['Privileged Access Monitoring', 'Credential Abuse Detection', 'Session Recording', 'Compliance Audit', 'Break-glass Tracking', 'Lateral Movement Detection', 'Vendor Access Control'],
+        personas: ['Security Engineering', 'SOC', 'Identity & Access', 'Compliance', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect anomalous privileged credential usage patterns — off-hours checkouts, unusual target systems, credentials accessed but never checked back in' },
+            { persona: 'Data End User / Analyst', job: 'Correlate privileged session activity with endpoint and network events to trace lateral movement using legitimate credentials' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Generate SOX/PCI compliance reports showing all privileged access with full audit trail of who accessed which credentials and for how long' },
+            { persona: 'Data End User / Analyst', job: 'Verify dual-control and break-glass procedures were followed for emergency privileged access events' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Route credential health-check and rotation events (high volume, low security value) to Lake while sending actual access events to SIEM — reducing volume by 50-65%' },
+            { persona: 'Data Engineer', job: 'Suppress CPM (Central Policy Manager) automated rotation events that constitute bulk of audit volume but have minimal detection value' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure CyberArk SIEM integration (syslog CEF or REST API) and normalize vault/safe/account hierarchy into searchable fields' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (CEF) / REST API / SIEM Integration (Vault Conjur)',
+        logFormat: 'CEF or JSON — fields include timestamp, user, safe, target, action (retrieve, checkin, checkout, logon), reason, source_address, session_id, policy_id, severity, vault_name.',
+        avgEPS: '500-5,000 EPS (credential rotation events create steady baseline, access events are bursty)',
+        sampleEvent: 'CEF:0|CyberArk|Vault|12.6|22|Retrieve password|5|suser=mthompson@cribl.io shost=10.0.1.50 duser=svc_sql_prod dhost=sql-prod-01.internal cs1=Production-DBAs cs2=SQL-Service-Accounts act=Retrieve Password reason=Incident INC0012345 - emergency DB access cs3=safe-prod-dba cs4=2026-06-11T14:32:08Z cs5=session-a1b2c3 cn1=300 cn1Label=SessionDuration'
+      }
+    ]
+  },
+  {
+    category: 'Email Security',
+    icon: '📧',
+    sources: [
+      {
+        id: 'proofpoint-email',
+        name: 'Proofpoint Email Protection & TAP',
+        vendor: 'Proofpoint',
+        description: 'Email message trace, threat detection (TAP), URL defense clicks, and quarantine events from Proofpoint Email Protection. Covers inbound/outbound message flow with full threat intelligence including sandboxed attachment analysis and URL rewriting outcomes.',
+        status: 'available',
+        useCases: ['Phishing Detection', 'BEC Prevention', 'Malware Delivery Tracking', 'Email Flow Monitoring', 'Quarantine Management', 'URL Click Tracking', 'Executive Protection'],
+        personas: ['SOC', 'Security Engineering', 'Incident Response', 'Compliance', 'IT Operations'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detection workflows correlating Proofpoint TAP alerts with endpoint activity to identify successful phishing leading to credential theft or malware execution' },
+            { persona: 'Data End User / Analyst', job: 'Track URL defense clicks to identify users who clicked rewritten malicious links and assess potential compromise scope' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor email delivery pipeline health — queue depth, delivery latency, bounce rates, and policy engine processing time' },
+            { persona: 'Data End User / Analyst', job: 'Track quarantine volume trends and false positive rates to tune email policies without business disruption' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter clean delivered message metadata (80%+ of email volume) to Lake while routing threats, quarantines, and policy actions to SIEM — reducing ingest by 70-80%' },
+            { persona: 'Data Engineer', job: 'Suppress NDR bounce-back detail and marketing email tracking that inflates volume with no security value' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Proofpoint SIEM API (TAP + Message Trace) integration with proper deduplication across multiple log streams' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (TAP SIEM API) / Syslog / Log streaming',
+        logFormat: 'JSON — fields include GUID, sender, recipient, subject, messageTime, threatsInfoMap (threat, classification, url), clickTime, clickIP, classification, quarantineFolder, policyRoutes, phishScore, spamScore, impostorScore.',
+        avgEPS: '2,000-20,000 EPS (scales with email volume; TAP threat events are subset)',
+        sampleEvent: '{"GUID":"a1b2c3d4-e5f6-7890","sender":"hr-benefits@company-update.com","recipient":"mthompson@cribl.io","subject":"Action Required: Update Your Direct Deposit Information","messageTime":"2026-06-11T14:32:08Z","senderIP":"185.234.72.11","classification":"phish","phishScore":99,"spamScore":45,"impostorScore":92,"threatsInfoMap":[{"threat":"https://company-update.com/hr-portal/login","threatType":"url","classification":"phish","threatTime":"2026-06-11T14:32:10Z"}],"quarantineFolder":"Phishing","policyRoutes":["default_inbound","phish_quarantine"],"messageSize":15234,"headerFrom":"HR Benefits <benefits@company.com>","replyTo":"reply-a1b2c3@gmail.com"}'
+      }
+    ]
+  },
+  {
+    category: 'Virtualization',
+    icon: '🖥️',
+    sources: [
+      {
+        id: 'vmware-vsphere',
+        name: 'VMware vSphere / ESXi Event Logs',
+        vendor: 'Broadcom (VMware)',
+        description: 'Virtual infrastructure events from vCenter Server and ESXi hosts including VM lifecycle events, vMotion operations, host hardware alerts, storage IOPS, DRS recommendations, HA failovers, and administrative actions. Provides full visibility into the hypervisor layer.',
+        status: 'available',
+        useCases: ['VM Security Monitoring', 'Infrastructure Health', 'Capacity Planning', 'Change Tracking', 'Performance Optimization', 'Compliance Audit', 'Disaster Recovery Validation'],
+        personas: ['Platform Engineering', 'Security Engineering', 'SOC', 'IT Operations', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect unauthorized VM operations — snapshot creation before ransomware, vMotion to unapproved hosts, root shell access on ESXi, and permission escalation in vCenter' },
+            { persona: 'Data End User / Analyst', job: 'Investigate VM escape attempts and correlate ESXi shell access with vulnerability exploitation timelines' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor host CPU/memory contention, storage latency spikes, and DRS imbalance to prevent performance degradation before user impact' },
+            { persona: 'Data End User / Analyst', job: 'Track HA failover events and validate DR readiness by measuring recovery time against SLA commitments' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-frequency VM heartbeat and performance counter events (95% of volume) to Lake while routing security-relevant operations to SIEM — reducing ingestion by 80-90%' },
+            { persona: 'Data Engineer', job: 'Suppress per-second CPU/memory metrics that provide low value for security analysis while preserving threshold breach events' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure vCenter syslog forwarding and/or vRealize Log Insight webhook to Cribl Stream with proper event categorization by severity and type' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Datadog', 'Amazon S3', 'Elastic'],
+        collectionMethod: 'Syslog / vRealize Log Insight webhook / vCenter REST API',
+        logFormat: 'Syslog (RFC 5424) or JSON — fields include vmw_timestamp, vmw_host, vmw_cluster, vmw_vcenter, vmw_vm, vmw_user, vmw_event_type, vmw_datacenter, vmw_datastore, vmw_message.',
+        avgEPS: '5,000-100,000 EPS (dominated by performance metrics; security events are low volume)',
+        sampleEvent: '<134>1 2026-06-11T14:32:08.123Z vcenter-01.internal vpxd 12345 - [vmw@6876 VMName="web-prod-01" Host="esxi-node-03.internal" Cluster="Prod-Cluster-01" Datacenter="DC-East" User="admin@vsphere.local"] Event [VmMigratedEvent]: VM web-prod-01 migrated from esxi-node-03 to esxi-node-07 in cluster Prod-Cluster-01. Reason: DRS recommendation (CPU imbalance: 85% vs 22%)'
+      }
+    ]
+  },
+  {
+    category: 'Secrets & PKI',
+    icon: '🔑',
+    sources: [
+      {
+        id: 'hashicorp-vault',
+        name: 'HashiCorp Vault Audit Logs',
+        vendor: 'HashiCorp',
+        description: 'Full audit trail of every Vault interaction including secret read/write, authentication attempts, policy changes, token creation/revocation, encryption operations, and dynamic credential generation. Every API request and response is logged with full context.',
+        status: 'available',
+        useCases: ['Secret Access Monitoring', 'Authentication Anomaly Detection', 'Policy Violation Alerting', 'Dynamic Credential Tracking', 'Encryption Key Usage', 'Compliance Audit', 'Insider Threat Detection'],
+        personas: ['Security Engineering', 'Platform Engineering', 'SOC', 'Compliance', 'DevOps'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect anomalous secret access patterns — first-time access to production secrets, bulk secret enumeration, and access from unexpected service identities or IP ranges' },
+            { persona: 'Data End User / Analyst', job: 'Trace credential leakage by correlating Vault secret reads with subsequent API calls using those credentials from unauthorized systems' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Vault seal status, replication lag, token TTL exhaustion rates, and dynamic credential generation latency across clusters' },
+            { persona: 'Data End User / Analyst', job: 'Track secret engine utilization, lease renewal patterns, and identify orphaned dynamic credentials that should have been revoked' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Suppress Vault health check and token renewal noise (60-70% of audit volume) while preserving all secret access, auth, and policy events for SIEM' },
+            { persona: 'Data Engineer', job: 'Route response bodies (which contain no secrets but add bulk) to null while keeping request metadata for security correlation' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Enable Vault audit device (file or syslog backend) with HMAC on sensitive fields and configure Cribl Stream to parse the nested JSON auth/request/response structure' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Elastic', 'Amazon S3'],
+        collectionMethod: 'File audit device / Syslog audit device / Socket audit device',
+        logFormat: 'JSON (NDJSON) — fields include type (request/response), auth.client_token (HMAC), auth.policies, request.path, request.operation, request.remote_address, response.data (HMAC if sensitive), error.',
+        avgEPS: '1,000-20,000 EPS (scales with application secret consumption; high in microservice environments)',
+        sampleEvent: '{"time":"2026-06-11T14:32:08Z","type":"request","auth":{"client_token":"hmac-sha256:a1b2c3d4","accessor":"accessor-a1b2","display_name":"approle-web-prod","policies":["web-prod-secrets","default"],"token_type":"service","token_ttl":3600},"request":{"id":"req-a1b2c3d4","operation":"read","path":"secret/data/prod/database/postgres","remote_address":"10.0.5.22","namespace":{"id":"root"}},"response":{"data":{"data":"hmac-sha256:e5f6a7b8"}}}'
+      }
+    ]
+  },
+  {
+    category: 'DevOps & Collaboration',
+    icon: '🛠️',
+    sources: [
+      {
+        id: 'github-audit',
+        name: 'GitHub Enterprise Audit Logs',
+        vendor: 'GitHub (Microsoft)',
+        description: 'Enterprise and organization audit events from GitHub covering repository access, permission changes, secret scanning alerts, code scanning findings, Actions workflow runs, and administrative operations. Tracks every sensitive operation across the software supply chain.',
+        status: 'available',
+        useCases: ['Supply Chain Security', 'Code Access Monitoring', 'Secret Leak Detection', 'CI/CD Pipeline Security', 'Permission Drift Detection', 'Compliance Audit', 'Insider Threat Detection'],
+        personas: ['Security Engineering', 'SOC', 'Platform Engineering', 'DevOps', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect supply chain attack indicators — new collaborator access to sensitive repos, workflow modifications, secret scanning bypass, and bulk repository cloning by single actors' },
+            { persona: 'Data End User / Analyst', job: 'Investigate repository permission escalations and correlate with code changes to detect insider threat or compromised developer accounts' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor GitHub Actions runner utilization, workflow failure rates, self-hosted runner health, and API rate limit consumption' },
+            { persona: 'Data End User / Analyst', job: 'Track repository growth, PR merge velocity, and identify bottlenecks in CI/CD pipeline performance' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter git push/pull metadata and webhook delivery events (high volume, low security value) to Lake while routing permission changes and secret alerts to SIEM — 55-70% reduction' },
+            { persona: 'Data Engineer', job: 'Suppress Actions workflow step-level logging that inflates audit volume while preserving workflow-level security events' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure GitHub audit log streaming to Cribl Stream via webhook or S3 export with proper enterprise/org/repo hierarchy normalization' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Audit log streaming (webhook/S3/Azure Event Hub) / REST API',
+        logFormat: 'JSON — fields include @timestamp, action, actor, actor_location, org, repo, user, data, created_at, business, operation_type.',
+        avgEPS: '500-10,000 EPS (scales with developer count and CI/CD activity)',
+        sampleEvent: '{"@timestamp":"2026-06-11T14:32:08Z","action":"repo.create","actor":"mthompson","actor_location":{"country_code":"US"},"org":"cribl-io","repo":"cribl-io/internal-tools","visibility":"private","business":"cribl-enterprise","operation_type":"create","created_at":"2026-06-11T14:32:08Z","actor_ip":"198.51.100.45"}'
+      },
+      {
+        id: 'atlassian-audit',
+        name: 'Atlassian Cloud Audit Logs (Jira / Confluence)',
+        vendor: 'Atlassian',
+        description: 'Organization-level audit events from Atlassian Cloud covering user access, permission changes, app installations, data export requests, and administrative actions across Jira and Confluence. Provides visibility into collaboration platform security and compliance.',
+        status: 'available',
+        useCases: ['Data Exfiltration Detection', 'Permission Monitoring', 'App Security', 'Compliance Audit', 'Access Anomaly Detection', 'IP Protection', 'User Activity Monitoring'],
+        personas: ['Security Engineering', 'SOC', 'Compliance', 'IT Operations', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect potential data exfiltration via bulk Confluence space exports, mass Jira issue downloads, or unauthorized third-party app installations with broad permissions' },
+            { persona: 'Data End User / Analyst', job: 'Identify compromised accounts through anomalous Jira/Confluence access patterns — geographic anomalies, first-time project access, bulk content views' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Atlassian API rate limits, app performance, webhook delivery health, and user license consumption trends' },
+            { persona: 'Data End User / Analyst', job: 'Track project activity patterns, identify inactive spaces/projects for cleanup, and measure team collaboration health metrics' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter page view and issue view events (90%+ of volume) to Lake while routing permission changes, exports, and app events to SIEM — 80-90% reduction' },
+            { persona: 'Data Engineer', job: 'Deduplicate webhook retry events and suppress automated bot activity that inflates audit volume' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Atlassian Organization Audit Log API integration with Cribl Stream for continuous pull of admin and security events' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (Organization Audit Log API) / Webhook',
+        logFormat: 'JSON — fields include id, summary, created, category, author (accountId, displayName), context (ip, location), actor, objectItem (id, name, typeName), container, associatedItems.',
+        avgEPS: '200-5,000 EPS (driven by org size and user activity)',
+        sampleEvent: '{"id":"a1b2c3d4-e5f6-7890","summary":"User granted admin access to project","created":"2026-06-11T14:32:08.000Z","category":"permissions","author":{"id":"user-001","name":"admin@cribl.io","type":"user"},"objectItem":{"id":"proj-001","name":"Security Operations","typeName":"PROJECT"},"container":{"id":"site-001","name":"cribl.atlassian.net","typeName":"SITE"},"associatedItems":[{"id":"user-002","name":"mthompson@cribl.io","typeName":"USER","parentId":"proj-001"}],"context":{"ip":"198.51.100.45","location":"San Francisco, US"},"action":"project_admin_added"}'
+      }
+    ]
+  },
+  {
+    category: 'Network Security (Additional)',
+    icon: '🌐',
+    sources: [
+      {
+        id: 'zscaler-zpa',
+        name: 'Zscaler Private Access (ZPA) Logs',
+        vendor: 'Zscaler',
+        description: 'Zero trust application access logs from Zscaler Private Access covering user-to-application connections, connector health, policy evaluations, and session telemetry. Provides visibility into internal application access without traditional VPN infrastructure.',
+        status: 'available',
+        useCases: ['Zero Trust Access Monitoring', 'Application Discovery', 'Lateral Movement Prevention', 'Connector Health', 'Policy Effectiveness', 'User Experience Monitoring', 'Shadow IT Detection'],
+        personas: ['Security Engineering', 'SOC', 'Platform Engineering', 'Network Engineering', 'Compliance'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect lateral movement attempts via ZPA — users accessing applications outside their normal pattern, failed policy evaluations, and connector bypass attempts' },
+            { persona: 'Data End User / Analyst', job: 'Investigate blocked application access events to distinguish misconfigured policies from actual unauthorized access attempts' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor ZPA connector health, application segment response times, and broker-to-connector latency to ensure reliable internal application delivery' },
+            { persona: 'Data End User / Analyst', job: 'Track application usage patterns, identify underutilized app segments, and measure user experience quality across connection types' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Suppress ZPA health probe and keepalive traffic (50-60% of volume) while routing actual user access events and policy violations to SIEM' },
+            { persona: 'Data Engineer', job: 'Aggregate per-session byte counts into summary events rather than forwarding per-packet telemetry to SIEM at full resolution' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure ZPA Log Streaming Service (LSS) to Cribl Stream and map application segments to business context for enrichment' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Log Streaming Service (LSS) / Nanolog Streaming Service (NSS)',
+        logFormat: 'JSON — fields include LogTimestamp, Customer, SessionID, ConnectionID, InternalReason, ConnectionStatus, ClientPublicIP, ClientPrivateIP, ApplicationSegment, ServerIP, Connector, Policy, User.',
+        avgEPS: '2,000-30,000 EPS (scales with user count and connection frequency)',
+        sampleEvent: '{"LogTimestamp":"2026-06-11T14:32:08Z","Customer":"cribl.io","SessionID":"sess-a1b2c3","ConnectionID":"conn-d4e5f6","InternalReason":"","ConnectionStatus":"active","ClientPublicIP":"198.51.100.45","ClientPrivateIP":"10.0.1.50","ClientLatitude":37.7749,"ClientLongitude":-122.4194,"ApplicationSegment":"Internal-HR-Portal","ServerIP":"10.100.5.22","ServerPort":443,"Connector":"zpa-connector-us-east-01","ConnectorIP":"10.100.1.5","ConnectorPort":21344,"Policy":"HR-Team-Access","PolicyProcessingTime":12,"User":"mthompson@cribl.io","ServiceCount":1,"ClientToClient":"","DoubleEncryption":"yes"}'
+      },
+      {
+        id: 'citrix-netscaler',
+        name: 'Citrix NetScaler / ADC Logs',
+        vendor: 'Citrix (Cloud Software Group)',
+        description: 'Application delivery controller logs from Citrix NetScaler covering load balancing decisions, SSL offload events, WAF/bot management alerts, authentication (nFactor/SAML), and gateway session telemetry. Provides full visibility into application delivery and access control.',
+        status: 'available',
+        useCases: ['Web Application Security', 'Load Balancing Health', 'SSL Certificate Monitoring', 'Authentication Security', 'Bot Detection', 'Performance Optimization', 'Gateway Access Control'],
+        personas: ['Security Engineering', 'Platform Engineering', 'SOC', 'Network Engineering', 'IT Operations'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect application-layer attacks including credential stuffing against NetScaler Gateway, WAF signature matches, bot activity, and SSL/TLS downgrade attempts' },
+            { persona: 'Data End User / Analyst', job: 'Investigate authentication failures at NetScaler Gateway to identify brute-force campaigns and compromised VPN credentials' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor virtual server health, backend service response time, SSL certificate expiry, and connection surge events that indicate capacity pressure' },
+            { persona: 'Data End User / Analyst', job: 'Track load balancing distribution, identify backend server hot spots, and measure application response time percentiles' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter health monitor probe events and TCP connection state changes (70-80% of volume) while routing security events and auth failures to SIEM' },
+            { persona: 'Data Engineer', job: 'Aggregate per-request metrics into time-bucketed summaries for performance monitoring rather than forwarding individual transaction logs' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure NetScaler syslog/NSLOG and AppFlow export to Cribl Stream with proper parsing of the multi-format event types' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Datadog', 'Amazon S3', 'Elastic'],
+        collectionMethod: 'Syslog / NSLOG / AppFlow (IPFIX) / Management REST API',
+        logFormat: 'Citrix syslog format: <date> <hostname> <module> <feature> <severity> <event_id> <message>. Key modules: SSLVPN (gateway), APPFW (WAF), TCP, HTTP, AAA (auth).',
+        avgEPS: '10,000-200,000 EPS (extremely high from HTTP transaction logging; security events are small subset)',
+        sampleEvent: 'Jun 11 14:32:08 ns-prod-01 0-PPE-0 : AAA LOGIN_FAILED 1234567 0 : User mthompson@cribl.io - Client_ip 198.51.100.45 - Failure_reason "Invalid credentials" - Vserver vs-gateway-prod - Nat_ip 10.0.1.100 - Browser_type "Chrome/120" - Group(s) "N/A" - Flags 0 - AuthType LDAP+RADIUS'
+      }
+    ]
+  },
+  {
+    category: 'XDR / Threat Intelligence',
+    icon: '🎯',
+    sources: [
+      {
+        id: 'paloalto-cortex-xdr',
+        name: 'Palo Alto Cortex XDR Agent & Alert Logs',
+        vendor: 'Palo Alto Networks',
+        description: 'Extended detection and response telemetry from Cortex XDR agents covering endpoint alerts, behavioral analytics, incident correlations, and raw agent telemetry. Combines endpoint, network, and cloud signals into unified detection with full causality chain.',
+        status: 'available',
+        useCases: ['Endpoint Threat Detection', 'Behavioral Analytics', 'Incident Correlation', 'Causality Chain Analysis', 'Threat Hunting', 'Response Automation', 'Agent Health Monitoring'],
+        personas: ['SOC', 'Security Engineering', 'Incident Response', 'Threat Hunting', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate Cortex XDR behavioral alerts with network and identity events to build comprehensive attack narratives spanning endpoint-to-cloud kill chains' },
+            { persona: 'Data End User / Analyst', job: 'Use XDR causality chains to rapidly scope incidents — identifying patient zero, lateral movement paths, and all affected assets from a single alert' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor XDR agent deployment coverage, version drift, connectivity status, and policy sync failures across the fleet' },
+            { persona: 'Data End User / Analyst', job: 'Track alert volume trends by MITRE technique, host group, and severity to measure detection efficacy and identify blind spots' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Route raw agent telemetry (process creation, file operations, network connections — 95% of volume) to Lake while sending alerts and incidents to SIEM — massive 85-95% ingestion reduction' },
+            { persona: 'Data Engineer', job: 'Deduplicate XDR alerts that fire on the same causality chain and consolidate into single enriched events for SIEM consumption' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Cortex XDR syslog forwarding or API-based log collection and normalize alert severity/category into common schema alongside other detection tools' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (CEF) / REST API (Incidents & Alerts) / XDR Broker',
+        logFormat: 'CEF or JSON — fields include alert_id, alert_name, severity, category, mitre_tactic, mitre_technique, host_name, host_ip, user_name, action_taken, causality_chain_id, incident_id, agent_version.',
+        avgEPS: '10,000-500,000 EPS (raw telemetry is extremely high volume; alerts are low volume subset)',
+        sampleEvent: 'CEF:0|Palo Alto Networks|Cortex XDR|3.5|Behavioral Threat|Suspicious PowerShell Execution|8|rt=2026-06-11T14:32:08Z dhost=workstation-042 duser=mthompson@cribl.io src=10.0.1.50 act=Detected cs1=T1059.001 cs1Label=MITRE_Technique cs2=Execution cs2Label=MITRE_Tactic cs3=causality-a1b2c3 cs3Label=CausalityID cs4=INC-2026-0611-001 cs4Label=IncidentID cn1=85 cn1Label=AlertScore deviceProcessName=powershell.exe msg=PowerShell executing encoded command with network callback to external IP 185.234.72.11'
+      }
+    ]
   }
 ];
