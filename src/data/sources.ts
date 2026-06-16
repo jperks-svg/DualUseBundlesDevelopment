@@ -459,6 +459,40 @@ export const dataSources = [
         avgEPS: '5,000-100,000 EPS depending on site traffic and attack volume',
         sampleEvent: '{"type":"akamai_siem","format":"json","version":"1.0","attackData":{"rules":[{"ruleId":"950002","ruleTag":"XSS","ruleAction":"alert","ruleMessage":"Cross-site Scripting (XSS) Attack","ruleSelector":"ARGS:q"}],"ruleActions":"QWxlcnQ=","clientIP":"203.0.113.42","configId":"12345","policyId":"pol_abc123"},"httpMessage":{"requestId":"1a2b3c4d","start":"2026-06-06T14:32:08Z","method":"GET","host":"www.example.com","path":"/search","query":"q=%3Cscript%3Ealert(1)%3C/script%3E","port":"443","protocol":"HTTP/1.1","status":"403","bytes":"1247","requestHeaders":{"User-Agent":"Mozilla/5.0","X-Forwarded-For":"198.51.100.42"},"responseHeaders":{"Content-Type":"text/html"}},"geo":{"country":"US","city":"Dallas","lat":"32.7767","long":"-96.7970","regionCode":"TX","asn":"16509"},"botData":{"botScore":"85","botCategory":"WEB_SCRAPER","challengePassed":false}}'
       },
+      {
+        id: 'squid-proxy',
+        name: 'Squid / Forward Proxy Access Logs',
+        vendor: 'Squid Project (Open Source) / Blue Coat / Broadcom',
+        description: 'Forward proxy access logs capturing all outbound HTTP/HTTPS requests from endpoint users and servers. Logs include client IP, requested URL (CONNECT for HTTPS), HTTP method, response code, bytes transferred, cache result codes (HIT/MISS/DENIED), content type, and request duration. Covers Squid, Blue Coat ProxySG, and Symantec Web Protection Suite in native or ELFF (Extended Log File Format).',
+        status: 'available',
+        useCases: ['C2 Callback Detection', 'Data Exfiltration Monitoring', 'DGA Domain Detection', 'Policy Violation', 'Bandwidth Abuse', 'Cache Performance', 'Shadow IT Discovery', 'Malware Download Detection', 'User Activity Monitoring'],
+        personas: ['SOC', 'Security Engineering', 'NOC', 'Network Security', 'Threat Hunting', 'Compliance', 'FinOps'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build C2 beaconing detections by identifying endpoints making periodic requests (fixed interval ±jitter) to low-reputation domains with small response sizes and consistent User-Agent strings' },
+            { persona: 'Data End User / Analyst', job: 'Detect data exfiltration by identifying CONNECT sessions or POST requests with abnormally large request body sizes to external hosts outside business hours' },
+            { persona: 'Data Content Creator', job: 'Identify DGA domains by analyzing proxy access logs for requests to domains with high entropy scores, recently registered TLDs, and no prior DNS cache hits' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor proxy cache hit ratios per content category and identify upstream origin latency degradation causing user-visible slowness within 2 minutes' },
+            { persona: 'Data End User / Analyst', job: 'Track bandwidth consumption by category (streaming, file sharing, cloud storage) to enforce acceptable use policies and identify shadow IT SaaS adoption' },
+            { persona: 'NOC', job: 'Detect proxy capacity exhaustion by monitoring concurrent connection counts, TCP_DENIED rates, and client-side timeout increases across proxy clusters' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter routine TCP_HIT/TCP_MEM_HIT cache hit log lines (often 30-50% of volume) and 200 OK responses to known-good domains while preserving all DENIED, CONNECT, and unusual response codes for security analysis' },
+            { persona: 'Data Engineer', job: 'Route TCP_DENIED, authentication failures, and requests to uncategorized/high-risk domains to SIEM while batching full access logs to Lake for compliance retention and bandwidth analytics' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Squid access.log collection via Cribl Edge file monitor or syslog output, parse native Squid log format (timestamp, duration, client, result/status, bytes, method, URL, hierarchy, content_type) within 15 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (access.log) / Syslog / ICAP integration / Blue Coat ELFF via syslog',
+        logFormat: 'Squid native: timestamp.ms duration client_ip result_code/status bytes method URL user hierarchy/peer content_type. Blue Coat ELFF: date, time, time-taken, c-ip, cs-username, s-action, sc-status, cs-method, cs-uri-scheme, cs-host, cs-uri-path, cs-uri-query, sc-bytes, cs-bytes, cs-categories, cs-threat-risk.',
+        avgEPS: '10,000-500,000 EPS (every outbound web request from every endpoint; HTTPS CONNECT logs add volume)',
+        sampleEvent: '1718544728.234    145 10.0.1.50 TCP_MISS/200 89234 CONNECT login.microsoftonline.com:443 jperks@corp HIER_DIRECT/20.190.159.0 -\n1718544728.567     23 10.0.1.51 TCP_DENIED/407 3821 GET http://suspicious-domain.xyz/beacon.php - HIER_NONE/- text/html\n1718544728.891   2345 10.0.1.52 TCP_TUNNEL/200 15234567 CONNECT mega.nz:443 mthompson@corp HIER_DIRECT/31.216.148.0 -'
+      }
     ]
   },
   {
@@ -1765,6 +1799,40 @@ export const dataSources = [
         logFormat: 'Syslog (RFC 3164/5424) with configurable HSL (High-Speed Logging) profiles. iRule-generated logs follow custom key=value or JSON format. Management plane uses structured audit logging.',
         avgEPS: '5,000-50,000 EPS depending on virtual server traffic volume and logging profile verbosity',
         sampleEvent: 'Jun 06 14:22:18 bigip01.prod ltm[12345]: Rule /Common/http_request_logging <HTTP_REQUEST>: 10.1.2.100 -> 203.0.113.50:443 GET /api/v2/users HTTP/1.1 Host=api.example.com User-Agent="Mozilla/5.0" X-Forwarded-For=198.51.100.42 pool=/Common/api_pool member=10.10.1.5:8080 response_time=45ms status=200 bytes_in=1234 bytes_out=56789 ssl_cipher=ECDHE-RSA-AES256-GCM-SHA384 ssl_protocol=TLSv1.3'
+      },
+      {
+        id: 'aws-alb-logs',
+        name: 'AWS ALB/NLB Access Logs',
+        vendor: 'Amazon Web Services',
+        description: 'Application Load Balancer and Network Load Balancer access logs capturing every request processed. Includes client IP, target processing time, TLS cipher, request URL, response code, and Lambda/ECS target details. Often the highest-volume AWS log source and the primary entry point for all cloud-native application traffic.',
+        status: 'available',
+        useCases: ['Web Application Attack Detection', 'Latency Monitoring', 'Error Rate Analysis', 'Bot Detection', 'DDoS Identification', 'Target Health Correlation', 'Cost Attribution', 'API Usage Analytics'],
+        personas: ['SOC', 'SRE', 'Platform Engineering', 'Security Engineering', 'Application Development', 'FinOps'],
+        jobsToBeDone: [
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor target_processing_time P95/P99 per target group and identify backend instances causing latency outliers before they trigger health check failures' },
+            { persona: 'Data End User / Analyst', job: 'Track 5xx error rates per target group and correlate with deployment events to detect bad releases within 2 minutes of rollout' },
+            { persona: 'Jack of All Trades', job: 'Analyze request distribution across AZs to detect load balancer cross-zone imbalances causing unnecessary data transfer charges and uneven backend utilization' }
+          ]},
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect web application attacks by analyzing request URLs for SQL injection patterns, path traversal attempts, and abnormal query string lengths exceeding 2KB thresholds' },
+            { persona: 'Data End User / Analyst', job: 'Identify credential stuffing by correlating high request volumes to authentication endpoints with elevated 401/403 response rates from single source IPs or CIDR blocks' },
+            { persona: 'Data Content Creator', job: 'Build scanner detection rules using User-Agent anomalies, abnormal HTTP method usage (OPTIONS/TRACE), and rapid sequential path enumeration patterns' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter health check requests (ELB-HealthChecker User-Agent) and 2xx responses to static assets — typically 40-60% of ALB log volume — while preserving all error responses and security-relevant requests' },
+            { persona: 'Data Engineer', job: 'Route 4xx/5xx responses and slow requests (>1s target_processing_time) to SIEM for alerting while batching full access logs to S3/Lake for capacity planning' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Enable ALB access logging to S3, configure Cribl Stream S3 source with SQS notification trigger, and parse space-delimited ALB log format within 20 minutes per account' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Datadog', 'Elastic', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'S3 (with SQS/SNS notification) / Kinesis Data Firehose / CloudWatch Logs',
+        logFormat: 'Space-delimited text — fields: type, timestamp, elb, client:port, target:port, request_processing_time, target_processing_time, response_processing_time, elb_status_code, target_status_code, received_bytes, sent_bytes, request (method url protocol), user_agent, ssl_cipher, ssl_protocol, target_group_arn, trace_id, domain_name, chosen_cert_arn, matched_rule_priority, request_creation_time, actions_executed, redirect_url, error_reason, target:port_list, target_status_code_list, classification, classification_reason, conn_trace_id.',
+        avgEPS: '50,000-5,000,000 EPS (every HTTP request generates a log line; high-traffic web apps produce millions per hour)',
+        sampleEvent: 'h2 2026-06-16T14:32:08.234000Z app/prod-api-alb/abc123def456 198.51.100.42:49152 10.0.1.55:8080 0.001 0.045 0.000 200 200 1234 56789 "GET https://api.example.com:443/v2/users?page=1 HTTP/2.0" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" ECDHE-RSA-AES128-GCM-SHA256 TLSv1.2 arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prod-api/abc123 "Root=1-abc-def" "api.example.com" "arn:aws:acm:us-east-1:123456789012:certificate/abc-123" 0 2026-06-16T14:32:08.188000Z "forward" "-" "-" "10.0.1.55:8080" "200" "-" "-" TID_abc123'
       }
     ]
   },
@@ -1844,6 +1912,40 @@ export const dataSources = [
         logFormat: 'Key=value pair format: date=YYYY-MM-DD time=HH:MM:SS devname=hostname devid=serial logid=ID type=traffic/utm subtype=forward/ips/webfilter. Critical fields: srcip, dstip, srcport, dstport, action, service, policyid, app, utmaction.',
         avgEPS: '5,000-150,000 EPS depending on throughput, UTM features enabled, and logging verbosity',
         sampleEvent: 'date=2026-06-11 time=14:32:08 devname="FGT-HQ-01" devid="FG100F0000000001" logid="0000000013" type="traffic" subtype="forward" level="notice" vd="root" eventtime=1718107928 srcip=10.0.1.50 srcport=52341 srcintf="port1" dstip=203.0.113.100 dstport=443 dstintf="port2" policyid=5 sessionid=574326 proto=6 action="accept" duration=45 sentbyte=15000 rcvdbyte=89000 sentpkt=25 rcvdpkt=20 appcat="Web.Client" app="HTTPS.BROWSER" srccountry="Reserved" dstcountry="United States"'
+      },
+      {
+        id: 'cisco-firepower',
+        name: 'Cisco Firepower (FTD) Events',
+        vendor: 'Cisco',
+        description: 'Cisco Firepower Threat Defense intrusion events, connection events, file/malware events, and Security Intelligence alerts. Combines NGFW traffic logging with Snort IPS engine, Advanced Malware Protection (AMP) file disposition verdicts, and URL/DNS-based threat intelligence. Managed via Firepower Management Center (FMC) or Cisco Defense Orchestrator.',
+        status: 'available',
+        useCases: ['Intrusion Prevention', 'Malware Detection', 'Connection Visibility', 'File Disposition Tracking', 'URL Reputation Enforcement', 'Application Control', 'Network Segmentation Validation', 'Encrypted Traffic Analytics'],
+        personas: ['SOC', 'Security Engineering', 'NOC', 'Incident Response', 'Platform Engineering', 'Threat Hunting'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate Firepower intrusion events (Snort SID matches) with connection events to build detection chains showing full attack sequences — initial access, lateral movement, and data staging — with MITRE ATT&CK mapping' },
+            { persona: 'Data End User / Analyst', job: 'Investigate malware incidents by tracing AMP file disposition events (malware, clean, unknown) through network file transfers with SHA256 correlation and sandbox verdict timeline' },
+            { persona: 'Data Content Creator', job: 'Detect command-and-control traffic by combining Security Intelligence DNS/URL block events with connection events showing repeated short-interval outbound sessions to the same destination' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Firepower connection event volume and processing latency to detect when inspection engines are overloaded and beginning to pass traffic uninspected' },
+            { persona: 'Data End User / Analyst', job: 'Track application identification accuracy by analyzing connection events where app_proto differs from expected port-based classification, indicating shadow IT or protocol tunneling' },
+            { persona: 'NOC', job: 'Identify top bandwidth consumers and application categories across security zones to validate segmentation policy effectiveness and capacity planning' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter "allow" connection events for established trusted flows (internal-to-internal, known good applications) — typically 60-75% of Firepower event volume — while preserving all IPS, malware, and block events' },
+            { persona: 'Data Engineer', job: 'Route intrusion and malware events to SIEM at full fidelity, send connection summaries to Lake for network visibility, and drop redundant connection-start/connection-end pairs for same session' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure FMC eStreamer API or syslog output (RFC 5424) to Cribl Stream. Parse the Firepower unified event format with protocol-specific field extraction within 30 minutes per FMC' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'eStreamer API / Syslog (RFC 5424) / Cisco Security Analytics and Logging (SAL) / Secure Network Analytics',
+        logFormat: 'JSON or CEF via syslog. Key event types: intrusion (SID, classification, priority, impact_flag), connection (initiator_ip, responder_ip, protocol, app_proto, web_app, url, bytes_sent/recv, action), file_event (file_name, file_type, sha256, disposition, malware_name), SI (indicator, type, block_type).',
+        avgEPS: '20,000-2,000,000 EPS (connection events dominate; intrusion/file events are a small high-value subset)',
+        sampleEvent: '{"timestamp":"2026-06-16T14:32:08.234Z","event_type":"intrusion","sensor":"FTD-01.corp.example.com","sid":1000001,"gid":1,"classification":"Attempted Information Leak","priority":1,"description":"ET POLICY Outbound SSL/TLS Certificate Observed (Cobalt Strike)","impact_flag":2,"blocked":true,"initiator_ip":"10.0.1.50","responder_ip":"185.234.72.11","initiator_port":49152,"responder_port":443,"protocol":"TCP","app_proto":"SSL","ingress_zone":"Inside","egress_zone":"Outside","ac_policy":"Production-IPS","ac_rule":"Block-Known-Malware","ioc_category":"CnC","mitre_tactic":"Command and Control","mitre_technique":"T1071.001"}'
       }
     ]
   },
@@ -2077,6 +2179,40 @@ export const dataSources = [
         logFormat: 'Mixed — JSON (structured app logs, API Gateway), plain text (Lambda stdout), CloudWatch Logs Insights format. Key metadata: logGroup, logStream, timestamp, message.',
         avgEPS: '50,000-5,000,000+ EPS depending on application count and log verbosity',
         sampleEvent: '{"logGroup":"/aws/lambda/api-handler","logStream":"2026/06/11/[$LATEST]abc123","timestamp":1718107928000,"message":"START RequestId: e1a2b3c4-d5e6-f7a8 Version: $LATEST\\nINFO: Processing request for user jperks, method=GET path=/api/users duration=45ms\\nEND RequestId: e1a2b3c4-d5e6-f7a8\\nREPORT RequestId: e1a2b3c4-d5e6-f7a8 Duration: 45.23 ms Billed Duration: 46 ms Memory Size: 256 MB Max Memory Used: 128 MB Init Duration: 234.56 ms"}'
+      },
+      {
+        id: 'aws-cloudwatch-metrics',
+        name: 'AWS CloudWatch Metrics Streams',
+        vendor: 'Amazon Web Services',
+        description: 'Real-time streaming of AWS CloudWatch metrics in JSON format via Kinesis Data Firehose. Delivers per-minute granularity metric data points for all AWS services — EC2, RDS, Lambda, ELB, ECS, DynamoDB, and 200+ namespaces. Replaces polling-based metric collection with push-based streaming, enabling real-time alerting and long-term storage at a fraction of CloudWatch native retention cost.',
+        status: 'available',
+        useCases: ['Infrastructure Health Monitoring', 'Auto-Scaling Validation', 'Capacity Planning', 'Cost Anomaly Detection', 'SLA Tracking', 'Cross-Account Metric Aggregation', 'Security Metric Analysis', 'Custom Dashboard Federation'],
+        personas: ['SRE', 'Platform Engineering', 'DevOps', 'FinOps', 'NOC', 'Security Engineering'],
+        jobsToBeDone: [
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor real-time EC2 CPU, memory (via CW Agent), disk, and network metrics across all instances to detect resource exhaustion and auto-scaling failures within 60 seconds of onset' },
+            { persona: 'Data End User / Analyst', job: 'Track RDS connection counts, read/write latency, freeable memory, and replica lag to predict database capacity issues before application impact' },
+            { persona: 'Jack of All Trades', job: 'Build unified infrastructure dashboards correlating ELB request counts and latency with backend EC2/ECS metrics and Lambda concurrency to visualize full-stack health in a single pane' }
+          ]},
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build anomaly detections on GuardDuty finding counts, IAM authentication failure rates, and KMS decryption volume spikes that indicate credential compromise or data exfiltration attempts' },
+            { persona: 'Data End User / Analyst', job: 'Detect cryptomining by identifying EC2 instances with sustained >95% CPU utilization, anomalous network out bytes, and no corresponding application traffic in ALB logs' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter low-value high-volume metric namespaces (AWS/Usage, AWS/Billing dimension-per-resource) and downsample 1-minute metrics to 5-minute for cold storage — reducing metric stream volume by 60-80% while preserving alerting fidelity' },
+            { persona: 'Data Engineer', job: 'Route critical infrastructure metrics (EC2, RDS, ELB, Lambda) to Datadog/Dynatrace for real-time alerting while streaming all namespaces to Lake at storage-tier cost for FinOps analysis' },
+            { persona: 'Team Leader', job: 'Eliminate CloudWatch GetMetricData API costs ($0.01/1000 metrics) by using push-based Metric Streams at flat $0.003/1000 metric updates — 70% cost reduction at scale' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure CloudWatch Metric Stream → Kinesis Firehose → Cribl Stream HTTP source in JSON format with namespace filtering within 20 minutes per AWS account' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Datadog', 'Dynatrace', 'New Relic', 'Splunk', 'Cribl Lake', 'Amazon S3', 'Prometheus Remote Write'],
+        collectionMethod: 'CloudWatch Metric Stream → Kinesis Data Firehose (HTTP endpoint) / S3 delivery',
+        logFormat: 'JSON (OpenTelemetry 0.7.0 format) — fields: metric_stream_name, account_id, region, namespace, metric_name, dimensions (key-value pairs), timestamp, value (min, max, sum, count, p99, etc.), unit. Each record is a single metric data point with statistical values.',
+        avgEPS: '100,000-10,000,000+ metric data points per hour depending on account size, service count, and namespace filtering (a 500-instance environment with default namespaces generates ~2M data points/hour)',
+        sampleEvent: '{"metric_stream_name":"prod-infra-metrics","account_id":"123456789012","region":"us-east-1","namespace":"AWS/EC2","metric_name":"CPUUtilization","dimensions":{"InstanceId":"i-0abc123def456"},"timestamp":1718544728000,"value":{"max":92.3,"min":88.1,"sum":450.7,"count":5.0,"p99":92.1},"unit":"Percent"}\n{"metric_stream_name":"prod-infra-metrics","account_id":"123456789012","region":"us-east-1","namespace":"AWS/RDS","metric_name":"DatabaseConnections","dimensions":{"DBInstanceIdentifier":"prod-primary"},"timestamp":1718544728000,"value":{"max":245,"min":198,"sum":1105,"count":5.0},"unit":"Count"}\n{"metric_stream_name":"prod-infra-metrics","account_id":"123456789012","region":"us-east-1","namespace":"AWS/ApplicationELB","metric_name":"TargetResponseTime","dimensions":{"LoadBalancer":"app/prod-api-alb/abc123","TargetGroup":"targetgroup/prod-api/def456"},"timestamp":1718544728000,"value":{"max":0.892,"min":0.023,"sum":2.345,"count":15.0,"p99":0.756},"unit":"Seconds"}'
       },
       {
         id: 'azure-activity',
