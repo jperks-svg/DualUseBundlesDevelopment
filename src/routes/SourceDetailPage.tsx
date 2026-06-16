@@ -9,6 +9,7 @@ import { enrichments as enrichmentData } from '../data/enrichments';
 import { sampleLogSets } from '../data/sampleLogs';
 import { stripUnresolvedTokens } from '../utils/queryClean';
 import DashboardDeployModal from '../components/DashboardDeployModal';
+import { SigmaRuleBlock } from '../components/SigmaRuleBlock';
 import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
 
@@ -727,6 +728,7 @@ export default function SourceDetailPage() {
                           </ul>
                         </div>
                       )}
+                      <SigmaRuleBlock detectionId={d.id} />
                       {d.criblSearchQueries && d.criblSearchQueries.length > 0 && (
                         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--cds-color-border-subtle)' }}>
                           <strong style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-brand-teal)' }}>Cribl Search Queries</strong>

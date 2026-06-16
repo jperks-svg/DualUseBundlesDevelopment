@@ -6,6 +6,7 @@ import { observabilityDetections as obsDetData } from '../data/observabilityDete
 import { enrichments as enrichmentDataAll } from '../data/enrichments';
 import { stripUnresolvedTokens } from '../utils/queryClean';
 import DashboardDeployModal from '../components/DashboardDeployModal';
+import { SigmaRuleBlock } from '../components/SigmaRuleBlock';
 import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
 const tag = (bg: string, color: string): React.CSSProperties => ({
@@ -531,6 +532,7 @@ export default function DetectionLibraryPage() {
                             <p style={{ fontSize: 'var(--cds-font-size-sm)', marginTop: 4, color: 'var(--cds-color-fg-muted)' }}>{d.operationalValue}</p>
                           </div>
                         )}
+                        <SigmaRuleBlock detectionId={d.id} />
                         {d.criblSearchQueries && d.criblSearchQueries.length > 0 && (
                           <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--cds-color-border-subtle)' }}>
                             <strong style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-brand-teal)' }}>Cribl Search Queries</strong>
