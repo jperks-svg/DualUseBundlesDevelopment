@@ -953,6 +953,78 @@ export const dataSources = [
         logFormat: 'JSON — fields include id, sourceRule, title, severity (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL), status (OPEN/RESOLVED/REJECTED), entitySnapshot (type, name, cloudPlatform, region, subscriptionId), remediation, firstDetectedAt, resolvedAt, dueAt, notes, projects.',
         avgEPS: '100-5,000 EPS (issue-level events are low volume but high context; inventory scan results can spike during full scans)',
         sampleEvent: '{"id":"iss-a1b2c3d4-e5f6-7890","sourceRule":{"id":"rule-public-s3","name":"S3 Bucket Publicly Accessible"},"title":"S3 bucket customer-data-prod is publicly readable","severity":"CRITICAL","status":"OPEN","entitySnapshot":{"id":"arn:aws:s3:::customer-data-prod","type":"bucket","name":"customer-data-prod","cloudPlatform":"AWS","region":"us-east-1","subscriptionExternalId":"123456789012","subscriptionName":"prod-account","tags":{"team":"data-engineering","env":"production"}},"remediation":"Remove public ACL grants and configure bucket policy with explicit deny for non-authenticated principals","firstDetectedAt":"2026-06-16T14:32:08Z","projects":[{"id":"proj-001","name":"Production Infrastructure"}],"notes":[]}'
+      },
+      {
+        id: 'aws-guardduty',
+        name: 'AWS GuardDuty Findings',
+        vendor: 'Amazon Web Services',
+        description: 'Managed threat detection findings from AWS GuardDuty covering reconnaissance, instance compromise, credential compromise, cryptomining, S3 data access anomalies, EKS runtime threats, RDS login anomalies, and Lambda execution anomalies. GuardDuty correlates VPC Flow Logs, DNS logs, CloudTrail events, EKS audit logs, and RDS login activity using machine learning and threat intelligence to generate high-confidence security findings.',
+        status: 'available',
+        useCases: ['Credential Compromise Detection', 'Cryptomining Detection', 'Reconnaissance Detection', 'Data Exfiltration via S3', 'Container Runtime Threats', 'Malicious IP Communication', 'DNS-Based Data Exfil', 'Unauthorized API Calls', 'RDS Anomalous Login', 'Lambda Backdoor Detection'],
+        personas: ['Cloud Security', 'SOC', 'Security Engineering', 'Incident Response', 'Platform Engineering', 'DevSecOps'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Correlate GuardDuty findings with CloudTrail API activity and VPC Flow Logs to build composite detections — e.g., credential compromise finding followed by S3 data access anomaly from same principal within 30 minutes' },
+            { persona: 'Data End User / Analyst', job: 'Investigate GuardDuty high-severity findings by pivoting to the underlying evidence sources (CloudTrail events, DNS queries, network flows) to determine blast radius and confirm true positives within 10 minutes' },
+            { persona: 'Jack of All Trades', job: 'Enrich GuardDuty findings with account metadata, resource tags, and business context to auto-prioritize findings affecting production accounts with PII data classifications' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor GuardDuty finding volume trends, detector coverage status across accounts/regions, and suppression filter effectiveness to ensure no detection gaps exist in the multi-account organization' },
+            { persona: 'Data End User / Analyst', job: 'Track finding resolution velocity by severity and type to measure SOC response effectiveness and identify finding categories requiring automation or suppression tuning' },
+            { persona: 'NOC', job: 'Detect GuardDuty detector health issues — regions with disabled detectors, accounts not enrolled, or data sources not contributing — before coverage gaps allow threats to go undetected' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Suppress archived findings and low-severity informational findings (Recon:EC2/PortProbeUnprotectedPort on dev accounts) while routing all medium/high/critical findings to SIEM — reducing finding volume by 40-60%' },
+            { persona: 'Data Engineer', job: 'Route high-severity and credential-compromise findings to SIEM for immediate alerting while batching all findings to Lake for trend analysis and compliance reporting' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure EventBridge rule for GuardDuty findings → Kinesis Firehose → Cribl Stream with multi-account aggregation via delegated administrator within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'EventBridge → Kinesis Firehose / S3 export / Security Hub aggregation / GuardDuty API (Cribl REST Collector)',
+        logFormat: 'JSON (GuardDuty Finding format). Key fields: id, type, severity (0-10 numeric), title, description, accountId, region, resource (instanceDetails, accessKeyDetails, s3BucketDetails, eksClusterDetails), service (action, evidence, additionalInfo), updatedAt, createdAt.',
+        avgEPS: '100-10,000 findings/hour depending on account count and threat landscape (findings are pre-correlated, not raw logs)',
+        sampleEvent: '{"schemaVersion":"2.0","id":"a1b2c3d4-5678-90ab-cdef-111122223333","type":"UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS","severity":8.0,"title":"Credentials for instance i-0abc123 are being used from an external IP address","description":"AWS API calls from instance role credentials are being made from IP 203.0.113.99 which is not associated with EC2 infrastructure in account 123456789012.","accountId":"123456789012","region":"us-east-1","resource":{"resourceType":"AccessKey","accessKeyDetails":{"accessKeyId":"AKIA1234567890EXAMPLE","principalId":"AROA1234567890:i-0abc123","userType":"Role","userName":"prod-api-role"}},"service":{"action":{"actionType":"AWS_API_CALL","awsApiCallAction":{"api":"GetObject","serviceName":"s3.amazonaws.com","remoteIpDetails":{"ipAddressV4":"203.0.113.99","country":{"countryName":"Russia"},"city":{"cityName":"Moscow"}}}},"evidence":{"threatIntelligenceDetails":[{"threatListName":"ProofPoint","threatNames":["Known Malicious IP"]}]},"count":47,"firstSeen":"2026-06-17T12:00:00Z","lastSeen":"2026-06-17T14:32:08Z"},"updatedAt":"2026-06-17T14:32:08Z","createdAt":"2026-06-17T12:15:00Z"}'
+      },
+      {
+        id: 'google-workspace-audit',
+        name: 'Google Workspace Audit Logs',
+        vendor: 'Google',
+        description: 'Enterprise audit logs from Google Workspace (formerly G Suite) capturing user and admin activity across Gmail, Drive, Calendar, Admin Console, Login, SAML, OAuth token grants, Groups, and Chrome OS. Delivered via the Reports API or BigQuery export. Covers authentication events, file sharing and access, admin configuration changes, DLP policy matches, and third-party OAuth app authorization.',
+        status: 'available',
+        useCases: ['Account Takeover Detection', 'OAuth App Abuse', 'Data Exfiltration via Drive', 'Suspicious Login Detection', 'Admin Privilege Escalation', 'External Sharing Monitoring', 'SAML/SSO Attack Detection', 'DLP Policy Violations', 'License Utilization', 'Shadow IT Discovery'],
+        personas: ['SOC', 'Security Engineering', 'Identity Team', 'Compliance', 'IT Administration', 'Data Protection', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for account takeover sequences — suspicious login followed by OAuth token grant, mail forwarding rule creation, and external file sharing within a single session' },
+            { persona: 'Data End User / Analyst', job: 'Investigate OAuth app abuse by identifying third-party apps granted sensitive scopes (Gmail read, Drive full access) from suspicious login sessions or geographic anomalies' },
+            { persona: 'Jack of All Trades', job: 'Detect data exfiltration via Google Drive by identifying mass file downloads, ownership transfers to external accounts, and sharing permission changes to "Anyone with the link" on sensitive folders' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Google Workspace service health by tracking API error rates, login failure trends, and admin console changes that could impact user productivity' },
+            { persona: 'Data End User / Analyst', job: 'Track license utilization by correlating login activity with licensed users to identify dormant accounts and optimize licensing spend' },
+            { persona: 'NOC', job: 'Detect Google Workspace outage impact by monitoring login success rates and API availability across organizational units before Google publishes status page updates' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume Drive view events and Calendar read operations (often 60-70% of audit volume) while preserving all login, admin, sharing, and OAuth events for security analysis' },
+            { persona: 'Data Engineer', job: 'Route login failures, OAuth grants, admin changes, and DLP matches to SIEM while batching full Drive and Gmail audit logs to Lake for compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain complete audit trail of all admin actions, permission changes, and data access events for SOC 2 and GDPR data processing requirements with 13+ month retention' },
+            { persona: 'Data End User / Analyst', job: 'Generate compliance reports showing all external sharing events, third-party OAuth grants with sensitive scopes, and admin privilege changes within any audit window' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Google Workspace Reports API collection via Cribl REST Collector with service account authentication, or BigQuery export for historical data — operational within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Reports API (Cribl REST Collector) / BigQuery export / Pub/Sub (real-time) / Google Workspace Alert Center API',
+        logFormat: 'JSON (Reports API). Key fields: id.time, id.applicationName (login, drive, admin, token, saml, groups_enterprise, chrome), actor.email, actor.profileId, events[].type, events[].name, events[].parameters[]. Application-specific event names: login_success, login_failure, authorize, revoke, change_document_access_scope, CREATE_ROLE, ASSIGN_ROLE.',
+        avgEPS: '5,000-200,000 EPS depending on organization size and application usage (Drive view/edit events dominate volume)',
+        sampleEvent: '{"kind":"admin#reports#activity","id":{"time":"2026-06-17T14:32:08.000Z","uniqueQualifier":"123456789","applicationName":"token","customerId":"C0A0B1C2D3"},"actor":{"email":"mthompson@cribl.io","profileId":"112233445566778899"},"events":[{"type":"auth","name":"authorize","parameters":[{"name":"client_id","value":"abcdef123456.apps.googleusercontent.com"},{"name":"app_name","value":"Suspicious Chrome Extension"},{"name":"scope","multiValue":["https://mail.google.com/","https://www.googleapis.com/auth/drive"]},{"name":"client_type","value":"WEB"}]}],"ipAddress":"203.0.113.99","ownerDomain":"cribl.io"}'
       }
     ]
   },
@@ -1330,6 +1402,40 @@ export const dataSources = [
         logFormat: 'JSON — tables include AlertInfo, AlertEvidence, DeviceProcessEvents, DeviceNetworkEvents, DeviceFileEvents, DeviceRegistryEvents, DeviceLogonEvents. Key fields: Timestamp, DeviceName, ActionType, FileName, ProcessCommandLine, RemoteIP.',
         avgEPS: '10,000-500,000 EPS depending on device count and telemetry level (basic vs advanced)',
         sampleEvent: '{"Timestamp":"2026-06-11T14:32:08Z","DeviceId":"abc123def456","DeviceName":"DESKTOP-JP01","ActionType":"ProcessCreated","FileName":"powershell.exe","FolderPath":"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0","ProcessCommandLine":"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\\\Scripts\\\\backup.ps1","InitiatingProcessFileName":"explorer.exe","AccountName":"jperks","AccountDomain":"CORP","RemoteIP":"","RemotePort":0,"AlertId":"","ThreatFamily":""}'
+      },
+      {
+        id: 'sentinelone-edr',
+        name: 'SentinelOne Singularity EDR',
+        vendor: 'SentinelOne',
+        description: 'Autonomous endpoint detection and response telemetry from SentinelOne Singularity platform. Captures Deep Visibility process events, file operations, network connections, registry modifications, DNS queries, login events, and threat detections with automated response actions (kill, quarantine, rollback). Includes Storyline technology linking related events into attack narratives.',
+        status: 'available',
+        useCases: ['Autonomous Threat Detection', 'Ransomware Rollback', 'Behavioral AI Detection', 'Process Execution Monitoring', 'Lateral Movement Detection', 'Fileless Attack Detection', 'Device Control', 'Rogue Device Discovery', 'Threat Hunting', 'Incident Response'],
+        personas: ['SOC', 'Security Engineering', 'Threat Hunting', 'Incident Response', 'Endpoint Team', 'IT Operations'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build cross-platform detections correlating SentinelOne Deep Visibility events with network and identity telemetry — process execution chains, lateral movement via remote process creation, and credential access patterns mapped to MITRE ATT&CK' },
+            { persona: 'Data End User / Analyst', job: 'Hunt for fileless attacks by analyzing PowerShell, WMI, and .NET in-memory execution events from Deep Visibility, correlating with SentinelOne Storyline IDs to reconstruct full attack chains within 10 minutes' },
+            { persona: 'Jack of All Trades', job: 'Detect ransomware pre-encryption behavior by identifying mass file enumeration, shadow copy deletion, and encryption library loading patterns before file modification begins' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor SentinelOne agent health, policy compliance, and update status across the fleet — identify endpoints with stale signatures or disconnected agents exceeding 24 hours' },
+            { persona: 'Data End User / Analyst', job: 'Track application inventory and software vulnerabilities detected by Singularity Ranger for asset management and patch prioritization' },
+            { persona: 'NOC', job: 'Detect rogue devices on the network via Ranger discovery events and correlate with authenticated device inventory for unauthorized asset alerting' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume Deep Visibility events (module loads, benign registry reads, DNS lookups to known-good domains) reducing SentinelOne telemetry by 60-80% while preserving all threats, suspicious activity, and process execution chains' },
+            { persona: 'Data Engineer', job: 'Route SentinelOne threat detections and high-confidence behavioral indicators to SIEM for real-time alerting while streaming full Deep Visibility telemetry to Lake for retrospective threat hunting at storage-tier cost' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure SentinelOne Singularity Data Lake export via Cloud Funnel 2.0 (S3/Azure Blob) or Streaming API (HTTP POST) to Cribl Stream with event-type filtering within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3', 'Google Chronicle'],
+        collectionMethod: 'Cloud Funnel 2.0 (S3/Azure Blob) / Streaming API (HTTP POST) / SIEM Connector / REST API (Cribl REST Collector)',
+        logFormat: 'JSON (Cloud Funnel NDJSON). Key event types: process, file, network, registry, dns, login, indicator, threat. Fields include: trueContext (Storyline), src.process.name, src.process.cmdline, src.process.user, endpoint.name, endpoint.os, event.type, event.category, threat.classification, threat.mitreTechnique, indicator.category.',
+        avgEPS: '10,000-500,000 EPS depending on endpoint count and Deep Visibility telemetry depth',
+        sampleEvent: '{"timestamp":"2026-06-17T14:32:08.000Z","event.type":"Process Creation","event.category":"process","endpoint.name":"WORKSTATION-JP01","endpoint.os":"windows","src.process.name":"powershell.exe","src.process.cmdline":"powershell.exe -enc SQBFAFgAKABOAGUAdwAtAE8AYgBqAGUAYwB0ACAATgBlAHQALgBXAGUAYgBDAGwAaQBlAG4AdAApAC4ARABvAHcAbgBsAG8AYQBkAFMAdAByAGkAbgBnACgAJwBoAHQAdABwAHMAOgAvAC8AYwAyAC4AZQB4AGEAbQBwAGwAZQAuAGMAbwBtAC8AcABhAHkAbABvAGEAZAAnACkA","src.process.pid":4521,"src.process.user":"CORP\\\\jsmith","src.process.parent.name":"explorer.exe","src.process.parent.pid":2100,"src.process.storyline.id":"A1B2C3D4E5F6","src.process.integrityLevel":"MEDIUM","threat.classification":"Malware","threat.confidenceLevel":"malicious","threat.mitreTechnique":["T1059.001","T1105"],"threat.analystVerdict":"true_positive","activeResponse.action":"kill","site.name":"Corporate-Prod","group.name":"Engineering"}'
       }
     ]
   },
@@ -1946,6 +2052,40 @@ export const dataSources = [
         logFormat: 'JSON or CEF via syslog. Key event types: intrusion (SID, classification, priority, impact_flag), connection (initiator_ip, responder_ip, protocol, app_proto, web_app, url, bytes_sent/recv, action), file_event (file_name, file_type, sha256, disposition, malware_name), SI (indicator, type, block_type).',
         avgEPS: '20,000-2,000,000 EPS (connection events dominate; intrusion/file events are a small high-value subset)',
         sampleEvent: '{"timestamp":"2026-06-16T14:32:08.234Z","event_type":"intrusion","sensor":"FTD-01.corp.example.com","sid":1000001,"gid":1,"classification":"Attempted Information Leak","priority":1,"description":"ET POLICY Outbound SSL/TLS Certificate Observed (Cobalt Strike)","impact_flag":2,"blocked":true,"initiator_ip":"10.0.1.50","responder_ip":"185.234.72.11","initiator_port":49152,"responder_port":443,"protocol":"TCP","app_proto":"SSL","ingress_zone":"Inside","egress_zone":"Outside","ac_policy":"Production-IPS","ac_rule":"Block-Known-Malware","ioc_category":"CnC","mitre_tactic":"Command and Control","mitre_technique":"T1071.001"}'
+      },
+      {
+        id: 'juniper-srx',
+        name: 'Juniper SRX Firewall Logs',
+        vendor: 'Juniper Networks',
+        description: 'Next-generation firewall logs from Juniper SRX Series covering session logs (RT_FLOW), IDP/IPS intrusion detection events, AppSecure application identification, UTM (antivirus, web filtering, anti-spam), VPN tunnel events, screen/DoS protection, and chassis cluster failover. Delivered via structured syslog or Security Log stream to Juniper Security Director.',
+        status: 'available',
+        useCases: ['Session Monitoring', 'Intrusion Detection (IDP)', 'Application Identification', 'VPN Tunnel Health', 'DoS/Screen Protection', 'Policy Enforcement', 'Chassis Cluster Failover', 'UTM Threat Prevention', 'Network Troubleshooting', 'Capacity Planning'],
+        personas: ['SOC', 'Security Engineering', 'NOC', 'Network Engineering', 'Platform Engineering', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections combining IDP signature matches with session context (RT_FLOW) to create high-fidelity intrusion alerts — correlating attack signatures with actual connection success/failure and data transfer volume' },
+            { persona: 'Data End User / Analyst', job: 'Investigate lateral movement by analyzing RT_FLOW_SESSION_CLOSE events showing east-west traffic patterns between security zones with abnormal byte ratios or connection durations' },
+            { persona: 'Data Content Creator', job: 'Detect policy bypass attempts by identifying traffic matched to implicit deny rules or sessions classified by AppSecure as evasive applications (tor, psiphon, ultrasurf) across trust boundaries' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor SRX chassis cluster failover events and track active/backup node transitions to detect HA instability before it causes session drops or traffic blackholes' },
+            { persona: 'Data End User / Analyst', job: 'Track session counts per zone pair and identify capacity exhaustion by monitoring session table utilization against platform limits (64K-10M sessions depending on model)' },
+            { persona: 'NOC', job: 'Monitor VPN tunnel flap events and IKE negotiation failures to detect WAN connectivity issues affecting branch office reachability within 2 minutes' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter RT_FLOW_SESSION_CREATE events (redundant when SESSION_CLOSE contains full session summary) and routine screen counters — reducing SRX log volume by 45-60% while preserving IDP alerts and complete session records' },
+            { persona: 'Data Engineer', job: 'Route IDP attacks and denied sessions to SIEM for real-time detection while sending allowed session summaries to Lake for network capacity analysis and compliance retention' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure SRX structured syslog (log-mode stream) to Cribl Stream with security-log-source-address, enable RT_FLOW and IDP log types, and parse structured key-value format within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Structured Syslog (stream mode) / Security Log stream / Juniper Security Director / SNMP traps',
+        logFormat: 'Structured syslog (RFC 5424) with key=value pairs. Key message types: RT_FLOW_SESSION_OPEN, RT_FLOW_SESSION_CLOSE, RT_FLOW_SESSION_DENY, IDP_ATTACK_LOG_EVENT, APPTRACK_SESSION_CLOSE, KMD_VPN_UP_ALARM, KMD_VPN_DOWN_ALARM, CHASSISD_SNMP_TRAP*. Fields: source-address, destination-address, source-port, destination-port, service-name, nat-source-address, application, nested-application, policy-name, source-zone-name, destination-zone-name, elapsed-time, bytes-from-client, bytes-from-server, packets-from-client, packets-from-server.',
+        avgEPS: '10,000-1,000,000 EPS depending on traffic volume and enabled log types (IDP at full verbosity is very high)',
+        sampleEvent: '<14>1 2026-06-17T14:32:08.234Z srx-fw-01 RT_FLOW - RT_FLOW_SESSION_CLOSE [junos@2636.1.1.1.2.129 reason="TCP FIN" source-address="10.0.1.50" source-port="49152" destination-address="203.0.113.100" destination-port="443" connection-tag="0" service-name="junos-https" nat-source-address="198.51.100.1" nat-source-port="32768" nat-destination-address="203.0.113.100" nat-destination-port="443" nat-connection-tag="0" src-nat-rule-type="source rule" src-nat-rule-name="pat-internet" dst-nat-rule-type="N/A" dst-nat-rule-name="N/A" protocol-id="6" policy-name="allow-web-outbound" source-zone-name="trust" destination-zone-name="untrust" session-id-32="574326" packets-from-client="25" bytes-from-client="15000" packets-from-server="20" bytes-from-server="89000" elapsed-time="45" application="SSL" nested-application="MICROSOFT-OFFICE365" username="jperks@corp" roles="N/A" encrypted="Yes"]'
       }
     ]
   },
@@ -2312,6 +2452,41 @@ export const dataSources = [
         logFormat: 'Syslog — space-delimited fields with epoch timestamp. Format: <timestamp> <device_serial> <log_type> <event_data>. Log types: security_event, urls, flows, ids-alerts, air_marshal, events.',
         avgEPS: '500-50,000 EPS per site depending on client count and logging configuration',
         sampleEvent: '1718107928.123456789 Q2HP-ABCD-1234 security_event ids_alerted signature=1:2024792:3 priority=1 timestamp=1718107928.123 dhost=AA:BB:CC:DD:EE:FF direction=ingress protocol=tcp/22 src=185.220.101.33:44100 dst=10.0.1.50:22 message="ET SCAN SSH Brute Force Attempt"'
+      },
+      {
+        id: 'cisco-sdwan',
+        name: 'Cisco SD-WAN (Catalyst/Viptela) Events',
+        vendor: 'Cisco',
+        description: 'WAN fabric telemetry and security events from Cisco SD-WAN (formerly Viptela, now Catalyst SD-WAN). Captures tunnel health metrics (jitter, latency, packet loss), SLA violations, application-aware routing decisions, DPI application classification, IPS/IDS events, URL filtering, malware protection, control plane events (OMP, BFD), and device health. Delivered via vManage syslog, NetFlow/IPFIX, or Streaming Telemetry (gRPC/YANG).',
+        status: 'available',
+        useCases: ['WAN Link Health Monitoring', 'SLA Violation Detection', 'Application Performance', 'Tunnel Failover Tracking', 'Branch Security Events', 'Routing Anomaly Detection', 'Bandwidth Utilization', 'Zero Trust Network Access', 'Device Compliance', 'Change Impact Analysis'],
+        personas: ['NOC', 'Network Engineering', 'SRE', 'Security Engineering', 'SOC', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor WAN tunnel health (BFD sessions) across all branch sites with real-time jitter, latency, and packet loss metrics — detect SLA violations within 60 seconds and validate automatic path switching decisions' },
+            { persona: 'Data End User / Analyst', job: 'Track application-aware routing decisions to verify that business-critical applications (voice, video, SaaS) are consistently placed on optimal WAN paths based on SLA policy and measured performance' },
+            { persona: 'NOC', job: 'Detect branch site degradation by correlating tunnel loss metrics with application DPI classification to identify when failover to backup links causes quality degradation for latency-sensitive applications' }
+          ]},
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build detections for unauthorized route injection by identifying OMP route advertisements from unexpected originating sites, indicating compromised edge devices or route hijacking attempts' },
+            { persona: 'Data End User / Analyst', job: 'Investigate policy violations by correlating SD-WAN URL filtering and IPS events with user identity (SAML integration) and branch location to identify targeted attacks against specific offices' },
+            { persona: 'Data Content Creator', job: 'Detect tunnel manipulation attacks by identifying BFD flap patterns, unusual DTLS renegotiation rates, or control connection resets that could indicate man-in-the-middle or denial-of-service attacks against the WAN fabric' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter per-second BFD probe telemetry and routine OMP keep-alive events (often 70-80% of SD-WAN event volume) while preserving SLA violations, tunnel state changes, security events, and application routing decisions' },
+            { persona: 'Data Engineer', job: 'Aggregate tunnel health metrics into 1-minute summaries for trend analysis while routing security events and SLA violations to SIEM for real-time alerting — reducing SIEM volume by 75%+' },
+            { persona: 'Team Leader', job: 'Correlate SD-WAN bandwidth utilization with carrier billing data to identify over-provisioned links at sites where traffic patterns have shifted to direct internet access (DIA) via SASE' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure vManage syslog export to Cribl Stream with structured data parsing, or set up streaming telemetry (gRPC dial-out) for real-time metrics collection within 30 minutes per vManage instance' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'Datadog', 'Dynatrace', 'ThousandEyes', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'vManage Syslog / Streaming Telemetry (gRPC/YANG) / NetFlow/IPFIX / vManage REST API (Cribl REST Collector) / SNMP traps',
+        logFormat: 'Structured syslog (vManage) or JSON (REST API/Streaming). Key event types: bfd-state-change, sla-violation, app-route-change, omp-peer-state-change, control-connection-state-change, security-event (utd), ipsec-tunnel-state. Telemetry fields: system-ip, host-name, site-id, tunnel-color, latency, jitter, loss, vqe-score, app-name, dscp, local-system-ip, remote-system-ip.',
+        avgEPS: '5,000-500,000 EPS depending on site count, BFD interval, and telemetry granularity (per-second probes × site pairs generate high volume)',
+        sampleEvent: '{"eventname":"sla-violation","system_ip":"10.10.1.1","host_name":"branch-nyc-01","site_id":"100","vmanage_system_ip":"10.10.0.1","entry_time":"2026-06-17T14:32:08Z","severity_level":"critical","rule_name_display":"Business-Critical-SLA","color":"mpls","remote_system_ip":"10.10.2.1","remote_color":"mpls","mean_latency":"185","mean_jitter":"42","mean_loss":"3.5","vqe_score":"2.1","sla_classes":"Bulk-Data","app_route_policy":"Production-Apps","local_color":"mpls","remote_site_id":"200"}\n{"eventname":"bfd-state-change","system_ip":"10.10.1.1","host_name":"branch-nyc-01","site_id":"100","entry_time":"2026-06-17T14:30:00Z","severity_level":"major","src_ip":"198.51.100.1","dst_ip":"203.0.113.1","color":"internet","new_state":"down","proto":"ipsec","local_system_ip":"10.10.1.1","remote_system_ip":"10.10.2.1"}'
       }
     ]
   },
