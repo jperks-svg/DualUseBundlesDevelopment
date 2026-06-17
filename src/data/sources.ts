@@ -492,6 +492,40 @@ export const dataSources = [
         logFormat: 'Squid native: timestamp.ms duration client_ip result_code/status bytes method URL user hierarchy/peer content_type. Blue Coat ELFF: date, time, time-taken, c-ip, cs-username, s-action, sc-status, cs-method, cs-uri-scheme, cs-host, cs-uri-path, cs-uri-query, sc-bytes, cs-bytes, cs-categories, cs-threat-risk.',
         avgEPS: '10,000-500,000 EPS (every outbound web request from every endpoint; HTTPS CONNECT logs add volume)',
         sampleEvent: '1718544728.234    145 10.0.1.50 TCP_MISS/200 89234 CONNECT login.microsoftonline.com:443 jperks@corp HIER_DIRECT/20.190.159.0 -\n1718544728.567     23 10.0.1.51 TCP_DENIED/407 3821 GET http://suspicious-domain.xyz/beacon.php - HIER_NONE/- text/html\n1718544728.891   2345 10.0.1.52 TCP_TUNNEL/200 15234567 CONNECT mega.nz:443 mthompson@corp HIER_DIRECT/31.216.148.0 -'
+      },
+      {
+        id: 'aws-waf-logs',
+        name: 'AWS WAF Logs',
+        vendor: 'Amazon Web Services',
+        description: 'Web Application Firewall logs from AWS WAF capturing every request evaluated against WAF rules attached to ALBs, CloudFront distributions, API Gateway, and AppSync. Includes full HTTP request metadata, matched rule details, rate-based rule counts, Bot Control classifications, and action taken (ALLOW, BLOCK, COUNT, CAPTCHA). Delivers granular visibility into web application attack attempts and bot traffic.',
+        status: 'available',
+        useCases: ['SQL Injection Detection', 'XSS Attack Blocking', 'Bot Management', 'Rate Limiting', 'Geo-Blocking', 'API Abuse Prevention', 'False Positive Tuning', 'DDoS Layer 7', 'OWASP Top 10 Protection', 'IP Reputation Filtering'],
+        personas: ['Security Engineering', 'SOC', 'Application Security', 'Platform Engineering', 'DevSecOps', 'SRE'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Build multi-signal detections correlating AWS WAF BLOCK actions with ALB access logs to identify persistent attackers rotating IPs — match on URI patterns, User-Agent fingerprints, and request timing across rule group matches' },
+            { persona: 'Data End User / Analyst', job: 'Investigate web application attacks by analyzing WAF rule match details including the specific rule group (SQLi, XSS, known-bad-inputs) and terminating rule to assess attack sophistication and intent' },
+            { persona: 'Data Content Creator', job: 'Detect API abuse by combining WAF rate-based rule triggers with Bot Control classifications to differentiate legitimate high-volume clients from credential stuffing bots and scrapers' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor WAF request volume and rule evaluation counts to detect capacity issues, and track CAPTCHA challenge completion rates to measure bot mitigation effectiveness per WebACL' },
+            { persona: 'Data End User / Analyst', job: 'Analyze false positive rates by rule group to tune managed rule sets — identify legitimate traffic blocked by overly aggressive SQL injection or XSS rules and create targeted exceptions' },
+            { persona: 'SRE', job: 'Correlate WAF BLOCK spike events with application availability metrics to ensure WAF rules are not inadvertently blocking legitimate users during traffic surges' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter WAF ALLOW logs for known-good traffic (authenticated users, internal health checks) — typically 70-85% of volume — while preserving all BLOCK, COUNT, and CAPTCHA events for security analysis' },
+            { persona: 'Data Engineer', job: 'Route WAF BLOCK and high-confidence bot events to SIEM for real-time alerting while batching full WAF logs (including ALLOW) to Lake for false positive tuning and compliance retention' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Enable WAF logging to Kinesis Data Firehose (prefix aws-waf-logs-) and configure Cribl Stream HTTP source to receive, or use S3 delivery with SQS notification — operational within 20 minutes per WebACL' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Kinesis Data Firehose (HTTP endpoint or S3) / S3 direct delivery / CloudWatch Logs',
+        logFormat: 'JSON (NDJSON). Key fields: timestamp, formatVersion, webaclId, terminatingRuleId, terminatingRuleType, action (ALLOW/BLOCK/COUNT/CAPTCHA), httpSourceName (ALB/CF/APIGW), httpSourceId, ruleGroupList[].terminatingRule, rateBasedRuleList[], httpRequest (clientIp, country, uri, method, httpVersion, headers[]), labels[] (awswaf:managed:bot:verified, etc).',
+        avgEPS: '10,000-5,000,000 EPS (every request evaluated by WAF generates a log; high-traffic ALBs with Bot Control produce millions per hour)',
+        sampleEvent: '{"timestamp":1718544728234,"formatVersion":1,"webaclId":"arn:aws:wafv2:us-east-1:123456789012:regional/webacl/prod-api-waf/abc123","terminatingRuleId":"AWS-AWSManagedRulesSQLiRuleSet","terminatingRuleType":"MANAGED_RULE_GROUP","action":"BLOCK","terminatingRuleMatchDetails":[{"conditionType":"SQL_INJECTION","location":"QUERY_STRING","matchedData":["1 OR 1=1","UNION SELECT"]}],"httpSourceName":"ALB","httpSourceId":"app/prod-api-alb/abc123","ruleGroupList":[{"ruleGroupId":"AWS#AWSManagedRulesSQLiRuleSet","terminatingRule":{"ruleId":"SQLi_QUERYARGUMENTS","action":"BLOCK"},"excludedRules":[]}],"rateBasedRuleList":[],"nonTerminatingMatchingRules":[],"httpRequest":{"clientIp":"203.0.113.42","country":"RU","uri":"/api/v2/users","args":"id=1%20OR%201%3D1%20UNION%20SELECT%20username%2Cpassword%20FROM%20users--","httpMethod":"GET","requestId":"abc-123-def","headers":[{"name":"User-Agent","value":"sqlmap/1.7"},{"name":"Host","value":"api.example.com"}]},"labels":[{"name":"awswaf:managed:aws:sql-database:SQLi_QueryArguments"}]}'
       }
     ]
   },
@@ -2816,6 +2850,127 @@ export const dataSources = [
         logFormat: 'CSV or syslog — pgAudit appends structured fields to PostgreSQL log_line_prefix: AUDIT: <audit_type>,<statement_id>,<substatement_id>,<class>,<command>,<object_type>,<object_name>,<statement>,<parameter>. Classes: READ, WRITE, DDL, ROLE, FUNCTION, MISC.',
         avgEPS: '5,000-100,000 EPS (READ logging on busy OLTP systems generates massive volume; DDL/ROLE events are very low)',
         sampleEvent: '2026-06-16 14:32:08.234 UTC [12345] mthompson@production LOG:  AUDIT: SESSION,1,1,WRITE,UPDATE,TABLE,public.users,"UPDATE users SET password_hash = $1 WHERE email = $2",<hidden>'
+      },
+      {
+        id: 'snowflake-audit',
+        name: 'Snowflake Access History & Query Logs',
+        vendor: 'Snowflake',
+        description: 'Audit and operational telemetry from Snowflake Data Cloud via the ACCOUNT_USAGE and INFORMATION_SCHEMA views. Captures ACCESS_HISTORY (who accessed what data, column-level lineage), QUERY_HISTORY (every SQL statement with execution metrics), LOGIN_HISTORY (authentication events), WAREHOUSE_EVENTS_HISTORY (scaling, suspend/resume), and SESSION_HISTORY. Provides both security audit and FinOps/performance visibility into the modern cloud data warehouse.',
+        status: 'available',
+        useCases: ['Data Access Auditing', 'Sensitive Data Access Monitoring', 'Credential Compromise Detection', 'Query Performance Analysis', 'Warehouse Credit Optimization', 'Data Exfiltration Detection', 'Compliance Reporting', 'Cost Attribution', 'Anomalous Query Detection', 'Role Privilege Escalation'],
+        personas: ['Security Engineering', 'SOC', 'Data Engineering', 'DBA', 'FinOps', 'Compliance', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect data exfiltration by identifying queries selecting from tables tagged as PII/PHI with COPY INTO or GET commands to external stages, or abnormally large result sets from non-service-account users outside business hours' },
+            { persona: 'Data End User / Analyst', job: 'Investigate credential compromise by correlating LOGIN_HISTORY anomalies (new client IP, unusual client application, geographic impossibility) with subsequent ACCESS_HISTORY showing first-time access to sensitive databases' },
+            { persona: 'Data Content Creator', job: 'Build privilege escalation detections by monitoring GRANT statements in QUERY_HISTORY that elevate roles to ACCOUNTADMIN or SYSADMIN, or create new users with broad database access' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor warehouse auto-scaling events, query queuing, and credit consumption trends to detect runaway queries or misconfigured auto-suspend policies burning credits unnecessarily' },
+            { persona: 'Data End User / Analyst', job: 'Identify slow queries by analyzing QUERY_HISTORY execution times, bytes scanned, and partition pruning effectiveness to optimize data pipeline performance' },
+            { persona: 'NOC', job: 'Track warehouse credit consumption by team/department using resource monitors and alert when weekly spend exceeds allocated budgets by 20%+' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume SELECT query completions on non-sensitive internal tables (often 80%+ of QUERY_HISTORY volume) while preserving DDL, GRANT, COPY, and queries touching tagged PII tables for security and compliance' },
+            { persona: 'Data Engineer', job: 'Route LOGIN_HISTORY failures, GRANT operations, and external stage access to SIEM for real-time detection while batching full QUERY_HISTORY to Lake for FinOps credit attribution and query optimization' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain column-level access audit trail via ACCESS_HISTORY showing exactly which users and roles accessed PII columns, satisfying GDPR Article 30 and CCPA data processing requirements' },
+            { persona: 'Data End User / Analyst', job: 'Generate data governance reports showing access patterns to sensitive datasets by role, user, and time period for quarterly privacy reviews and SOC 2 evidence collection' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Snowflake event table sharing or ACCOUNT_USAGE view polling via Cribl REST Collector (Snowflake SQL API) with role-based access to audit views within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3', 'Datadog'],
+        collectionMethod: 'Snowflake SQL API (REST Collector) / Event Table (share to external account) / Snowpipe Streaming / ACCOUNT_USAGE view polling',
+        logFormat: 'JSON (from SQL API or Event Table). Key views: QUERY_HISTORY (query_id, query_text, user_name, role_name, warehouse_name, execution_status, bytes_scanned, rows_produced, credits_used, start_time, end_time), LOGIN_HISTORY (event_timestamp, user_name, client_ip, reported_client_type, first_authentication_factor, is_success, error_code), ACCESS_HISTORY (query_id, user_name, direct_objects_accessed[].objectName, base_objects_accessed[].columns[].columnName).',
+        avgEPS: '1,000-100,000 EPS depending on warehouse activity and query volume (ACCESS_HISTORY generates records per query per accessed object)',
+        sampleEvent: '{"query_id":"01b23c45-0001-abcd-0000-000123456789","query_text":"SELECT ssn, full_name, email FROM production.customers.pii_table WHERE state = \'CA\' LIMIT 50000","user_name":"MTHOMPSON","role_name":"DATA_ANALYST","warehouse_name":"ANALYTICS_WH","database_name":"PRODUCTION","schema_name":"CUSTOMERS","execution_status":"SUCCESS","bytes_scanned":15234567890,"rows_produced":50000,"total_elapsed_time":12345,"credits_used_cloud_services":0.023,"start_time":"2026-06-17T14:32:08.234Z","end_time":"2026-06-17T14:32:20.579Z","client_application_id":"Tableau","session_id":"98765432"}'
+      },
+      {
+        id: 'mssql-audit',
+        name: 'Microsoft SQL Server Audit',
+        vendor: 'Microsoft',
+        description: 'SQL Server Audit events captured via server-level and database-level audit specifications. Covers login events, permission changes, schema modifications (DDL), data access (SELECT/INSERT/UPDATE/DELETE on sensitive tables), stored procedure execution, backup/restore operations, and security principal changes. Available on SQL Server on-premises, Azure SQL Database, and Azure SQL Managed Instance.',
+        status: 'available',
+        useCases: ['SQL Injection Detection', 'Privilege Escalation Monitoring', 'Unauthorized Data Access', 'Schema Change Tracking', 'Backup Exfiltration Detection', 'Login Brute Force', 'Compliance Auditing', 'Deadlock Monitoring', 'Connection Pool Health', 'Query Performance Degradation'],
+        personas: ['SOC', 'Security Engineering', 'DBA', 'Compliance', 'Platform Engineering', 'Application Development'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect SQL injection by monitoring audit events for dynamic SQL execution with suspicious patterns — EXEC(xp_cmdshell), OPENROWSET to external sources, or information_schema enumeration from application service accounts' },
+            { persona: 'Data End User / Analyst', job: 'Identify privilege escalation by tracking ALTER ROLE, sp_addsrvrolemember, and GRANT WITH GRANT OPTION events that add users to sysadmin or db_owner roles outside change windows' },
+            { persona: 'Data Content Creator', job: 'Detect backup exfiltration by alerting on BACKUP DATABASE commands targeting non-standard paths (UNC paths, unusual drives) or backup operations initiated by non-DBA accounts' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor login failure rates, connection counts, and deadlock events to detect application connectivity issues and database resource contention before they cascade into outages' },
+            { persona: 'Data End User / Analyst', job: 'Track query execution statistics via Extended Events to identify regressed query plans, blocking chains, and tempdb contention affecting application response times' },
+            { persona: 'DBA', job: 'Detect long-running transactions and open cursors that are holding locks and causing blocking cascades across dependent applications' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter successful SELECT audit events on non-sensitive tables and routine health check logins (typically 75-90% of SQL Server audit volume) while preserving DDL, failed logins, permission changes, and access to PII/PHI tables' },
+            { persona: 'Data Engineer', job: 'Route failed logins, DDL changes, and sensitive table access to SIEM for real-time detection while streaming full audit trail and Extended Events to Lake for compliance retention and performance analysis' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX Section 404 and PCI-DSS Requirement 10 with complete database access audit trail covering all privileged operations on financial and cardholder data tables' },
+            { persona: 'Data End User / Analyst', job: 'Generate periodic access review reports showing all users who accessed sensitive tables (dynamic data masking exceptions, unmasked column reads) for data privacy compliance' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure SQL Server Audit with server and database specifications targeting security-relevant event groups, output to file or Windows Event Log, and connect to Cribl Stream via file monitor or WEF within 30 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'File monitor (.sqlaudit files) / Windows Event Log (Application) / Extended Events (XEL files) / Azure Diagnostic Logs / Syslog (Linux SQL Server)',
+        logFormat: 'Binary .sqlaudit (fn_get_audit_file reads as tabular) or XML (Extended Events). Key fields: event_time, action_id (AUSC, LGIF, LGIS, AL, DL, IN, UP, SL, EX, DBCC), server_principal_name, database_name, schema_name, object_name, statement, succeeded, session_id, client_ip, application_name, host_name. Azure SQL: JSON via Diagnostic Logs.',
+        avgEPS: '5,000-500,000 EPS (SELECT auditing on busy OLTP systems generates extreme volume; DDL/login events are much lower)',
+        sampleEvent: '{"event_time":"2026-06-17T14:32:08.234Z","action_id":"SL","action_name":"SELECT","succeeded":true,"server_principal_name":"app_svc_web","database_name":"Production","schema_name":"dbo","object_name":"Customers","statement":"SELECT TOP 50000 SSN, FullName, Email, CreditCardNumber FROM dbo.Customers WHERE State = \'CA\'","additional_information":"","client_ip":"10.0.1.55","application_name":"WebAPI-Prod","host_name":"APP-SERVER-03","session_id":567,"transaction_id":12345678,"sequence_number":1,"is_column_permission":true,"object_id":1234567890}'
+      }
+    ]
+  },
+  {
+    category: 'SaaS Applications',
+    icon: '📱',
+    sources: [
+      {
+        id: 'salesforce-events',
+        name: 'Salesforce Event Monitoring',
+        vendor: 'Salesforce',
+        description: 'Enterprise event monitoring logs from the Salesforce platform capturing Login events, API calls, Report Exports, Lightning page views, URI events, Bulk API operations, Apex execution, SOQL queries, and data export/download events. Delivered via the EventLogFile API (hourly/daily files) or Real-Time Event Monitoring (streaming). Provides complete visibility into who is accessing what data and how across the Salesforce org.',
+        status: 'available',
+        useCases: ['Data Exfiltration Detection', 'Account Takeover Detection', 'API Abuse Monitoring', 'Report Export Surveillance', 'Excessive Data Access', 'Login Anomaly Detection', 'Permission Escalation', 'Shadow Admin Detection', 'License Utilization', 'API Limit Monitoring', 'Compliance Auditing'],
+        personas: ['SOC', 'Security Engineering', 'Salesforce Administration', 'Compliance', 'Data Protection', 'IT Operations', 'RevOps'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect data exfiltration by identifying mass report exports (>10K rows), Bulk API data downloads, or Data Loader extractions from users whose role does not require bulk data access — correlate with login anomalies for high-confidence alerts' },
+            { persona: 'Data End User / Analyst', job: 'Investigate account takeover by correlating Salesforce login events showing unusual client IP, browser fingerprint, or geographic location with subsequent permission set assignments or connected app authorizations' },
+            { persona: 'Data Content Creator', job: 'Build shadow admin detection by monitoring SetupAuditTrail and Login events for users accessing Setup pages or modifying profiles/permission sets without the System Administrator profile' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor API usage against org limits by tracking total API calls, concurrent API requests, and Bulk API batch counts — alert when consumption exceeds 80% of daily limits with 4+ hours remaining in the window' },
+            { persona: 'Data End User / Analyst', job: 'Track Lightning Experience page load performance using Lightning Performance events and identify slow components or integrations degrading user experience across the org' },
+            { persona: 'NOC', job: 'Detect Salesforce service degradation by monitoring login failure rates, API timeout events, and Apex governor limit exceptions before users report issues' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume Lightning page view and URI events (often 70-80% of EventLogFile volume) while preserving Login, API, ReportExport, BulkAPI, and ApexExecution events for security analysis — reducing Salesforce event log ingest by 65-75%' },
+            { persona: 'Data Engineer', job: 'Route ReportExport, BulkAPI, LoginAs, and permission change events to SIEM for real-time detection while batching full EventLogFile data to Lake for compliance retention and usage analytics' },
+            { persona: 'Team Leader', job: 'Justify Salesforce Shield Event Monitoring license cost by demonstrating security detections and compliance reporting enabled by the event data across multiple downstream analytics platforms' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Maintain complete audit trail of all data access, exports, and permission changes to satisfy SOC 2, HIPAA, and financial services regulatory requirements for CRM data governance' },
+            { persona: 'Data End User / Analyst', job: 'Generate quarterly access review reports showing all users who accessed Opportunity Amount fields, exported Contact PII, or ran reports on financial objects with row counts and export formats' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Salesforce EventLogFile API collection via Cribl REST Collector with OAuth 2.0 JWT bearer flow authentication, or Real-Time Event Monitoring via CometD streaming — operational within 45 minutes' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'EventLogFile REST API (Cribl REST Collector with OAuth 2.0 JWT) / Real-Time Event Monitoring (CometD/Pub-Sub API) / Event Bus (Platform Events)',
+        logFormat: 'CSV (EventLogFile hourly/daily downloads) or JSON (Real-Time Event Monitoring streaming). Key event types: Login, API, ReportExport, BulkAPI, URI, LightningPageView, ApexExecution, ContentTransfer, LoginAs, WaveChange. Fields vary by type but include TIMESTAMP, USER_ID, USER_NAME, SOURCE_IP, URI, OPERATION, ENTITY_NAME, ROWS_PROCESSED, CLIENT_ID, LOGIN_STATUS, API_TYPE, REQUEST_SIZE, RESPONSE_SIZE, RUN_TIME.',
+        avgEPS: '5,000-500,000 EPS depending on org size and licensed event types (Login and API events are always highest volume; LightningPageView adds significantly when enabled)',
+        sampleEvent: '{"EVENT_TYPE":"ReportExport","TIMESTAMP":"2026-06-17T14:32:08.000Z","USER_ID":"005xx000001abcDEF","USER_NAME":"mthompson@cribl.io","SOURCE_IP":"203.0.113.42","URI":"/00Oxx000000abcDEF","OPERATION":"ReportExported","ENTITY_NAME":"All Customers with Revenue > 1M","ROWS_PROCESSED":"47523","DISPLAY_TYPE":"csv","CLIENT_ID":"Dataloader-Batch","LOGIN_KEY":"abcdef123456","SESSION_KEY":"WvtsJ1234567","ORGANIZATION_ID":"00Dxx0000001gER","REQUEST_ID":"4abc-def-7890","RUN_TIME":"3456","CPU_TIME":"2100","DB_TOTAL_TIME":"15000000","REQUEST_SIZE":"245","RESPONSE_SIZE":"15234567"}'
       }
     ]
   }
