@@ -11,6 +11,7 @@ import { stripUnresolvedTokens } from '../utils/queryClean';
 import DashboardDeployModal from '../components/DashboardDeployModal';
 import { SigmaRuleBlock } from '../components/SigmaRuleBlock';
 import { ObservabilityRuleBlock } from '../components/ObservabilityRuleBlock';
+import { GuardPolicyBlock } from '../components/GuardPolicyBlock';
 import { buildSearchPack, buildStreamPack } from '../utils/packBuilder';
 
 
@@ -547,6 +548,8 @@ export default function SourceDetailPage() {
             <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, marginBottom: 10 }}>Collection Method</h3>
             <p style={{ color: 'var(--cds-color-fg-muted)' }}>{source.collectionMethod}</p>
           </div>
+
+          <GuardPolicyBlock sourceId={source.id} />
 
           {(sampleLogSets[source.id] || source.sampleEvent) && (
             <div style={{ marginBottom: 20 }}>

@@ -117,7 +117,7 @@ export default function HomePage() {
           <div style={styles.statLabel}>Categories</div>
         </div>
         <div style={styles.statCard}>
-          <div style={styles.statValue}>4</div>
+          <div style={styles.statValue}>5</div>
           <div style={styles.statLabel}>Cribl Products</div>
         </div>
       </div>

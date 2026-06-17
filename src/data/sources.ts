@@ -31,7 +31,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Configure multi-destination routing with per-destination field filtering in a single pipeline' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Google Chronicle', 'Microsoft Sentinel', 'Elastic Security', 'Dynatrace', 'Datadog', 'New Relic', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (UDP/TCP/TLS)',
         sampleEvent: '<14>Sep 20 13:03:58 PA-VM 1,2025/09/20 13:03:58,44A1B3FC68F5304,TRAFFIC,end,2049,2025/09/20 13:03:58,34.217.108.226,10.0.0.102,34.217.108.226,10.0.2.65,splunk,,,incomplete,vsys1,untrusted,trusted,ethernet1/3,ethernet1/2,log-forwarding-default,2025/09/20 13:03:58,574326,1,53722,8088,53722,8088,0x400064,tcp,allow,296,296,0,4,2025/09/20 13:03:45,7,any,0,730277,0x0,United States,10.0.0.0-10.255.255.255,0,4,0,aged-out,0,0,0,0,,PA-VM,from-policy,,,0,,0,,N/A,0,0,0,0'
@@ -64,7 +64,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Enrich web logs with threat intelligence lookups and user department context before routing to destinations' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Nanolog Streaming Service (NSS → Syslog/TCP to Cribl) / Cloud NSS (HTTPS POST to Cribl HTTP source) / S3 Export',
         sampleEvent: '{"datetime":"2026-06-06T14:32:08.000Z","user":"jperks@cribl.io","department":"Customer Success","url":"https://drive.google.com/file/d/1a2b3c4d5e/view","hostname":"drive.google.com","action":"Allowed","urlcategory":"Cloud Storage","urlclass":"Business Use","dlpengine":"None","dlpdictionaries":"None","threatname":"None","threatclass":"None","deviceowner":"jperks","devicehostname":"LAPTOP-JP01","clientpublicIP":"203.0.113.42","clientprivateIP":"192.168.1.105","reqsize":1842,"respsize":34521,"contenttype":"text/html","reqmethod":"GET","respcode":"200","riskscore":0,"location":"Austin, TX","cloudname":"Zscaler Dallas","pagerisk":0,"malwarecategory":"None","malwareclass":"None","obfuscatedclientIP":"","obfuscatedcloudname":"","productversion":"6.2","rulelabel":"Default_Allow","ruletype":"FWD_RULE","sslinspection":"Yes","sslprotocol":"TLSv1.3"}'
@@ -97,7 +97,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Produce audit-ready reports showing all policy changes and rule modifications within configurable time windows' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Log Exporter (Syslog CEF/LEEF/Splunk format) / SmartConsole Open Telemetry Export / OPSEC LEA / Check Point Harmony Connect',
         logFormat: 'CEF/LEEF syslog or semi-colon delimited. Key fields: action, src, dst, service, proto, rule, product (Firewall/IPS/Anti-Bot/URL Filtering/Threat Emulation), severity, confidence_level, protection_name, malware_family.',
@@ -132,7 +132,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize ASA and FTD events into a common firewall schema for cross-vendor correlation in downstream analytics' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (UDP/TCP/TLS) / NSEL (NetFlow Security Event Logging) / Cisco FMC eStreamer / Cisco SecureX integration',
         logFormat: 'Cisco syslog format: %ASA-severity-message_id: message_text. Key message IDs: 302013/302014 (TCP build/teardown), 302015/302016 (UDP), 106001-106023 (denied), 713228 (IKE), 722022-722051 (AnyConnect). Severity 1-7.',
@@ -172,7 +172,7 @@ export const dataSources = [
             { persona: 'Platform Administrator', job: 'Configure Edge collection across 50+ DNS servers with centralized fleet management and health monitoring' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (Windows Event Logs input) / WEF / File Monitor (dns.log)',
         sampleEvent: '6/6/2026 8:15:32 AM 0E64 PACKET  00000000040DBE50 UDP Rcv 192.168.1.105   b4c2   Q [0001   D   NOERROR] A      (7)finance(3)corp(5)local(0)'
@@ -205,7 +205,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize Infoblox DNS events to common DNS schema for cross-vendor correlation with Windows DNS and Umbrella' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (UDP/TCP/TLS from NIOS) / Infoblox Data Connector (BloxOne → S3/HTTP) / SNMP Traps (for RPZ hits)',
         sampleEvent: '06-Jun-2026 14:32:08.123 client 192.168.1.105#54321 (finance.corp.local): query: finance.corp.local IN A + (10.0.1.53)\n06-Jun-2026 14:32:08.456 rpz QNAME NXDOMAIN rewrite finance.corp.local/A/IN via finance.corp.local.rpz-nxdomain.malware-block.local [policy: Malware-Block-Policy]\n06-Jun-2026 14:32:09.789 queries: info: client @0x7f8a1c002340 192.168.1.105#54321 (suspicious-domain.xyz): query: suspicious-domain.xyz IN A -EDC (10.0.1.53)'
@@ -237,7 +237,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Parse multi-format Umbrella logs (DNS CSV, proxy CSV, IP logs) into normalized schema for unified security analytics' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cisco Umbrella S3 Log Export (Cribl S3 Collector) / Managed S3 bucket / Umbrella Reporting API / Syslog (via Log Management integration)',
         logFormat: 'CSV (S3 export) with multiple log types: dnslogs (DNS queries), proxylogs (intelligent proxy), iplogs (cloud firewall), cdrlogs (cloud delivered firewall). Key fields: Timestamp, InternalIp, ExternalIp, Action, QueryType, Domain, Categories, PolicyIdentity, Verdict.',
@@ -278,7 +278,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Deploy NetFlow v5/v9 collection on Cribl Stream with template caching and multi-exporter support within 1 hour' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Stream (NetFlow/IPFIX Collector input) / Cribl Edge (flow collector) / UDP receiver on port 2055/9995',
         logFormat: 'Binary NetFlow v5 (fixed 48-byte records) or v9 (template-based). Decoded fields: src_addr, dst_addr, src_port, dst_port, protocol, bytes, packets, tcp_flags, tos, src_as, dst_as, input_snmp, output_snmp, first_switched, last_switched, flow_duration.',
@@ -313,7 +313,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Deploy IPFIX collection with SCTP transport reliability and template auto-discovery within 1 hour for 100+ exporters' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Stream (NetFlow/IPFIX Collector input) / Cribl Edge (flow collector) / UDP/TCP/SCTP on port 4739/4740',
         logFormat: 'Binary IPFIX (RFC 7011) with template and data sets. Supports enterprise IEs (PEN-based), variable-length strings, structured data (basicList, subTemplateList). Common IEs: sourceIPv4Address, destinationIPv4Address, sourceTransportPort, destinationTransportPort, protocolIdentifier, octetDeltaCount, packetDeltaCount, flowStartMilliseconds, flowEndMilliseconds, applicationId.',
@@ -353,7 +353,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Parse custom NGINX log formats and enrich with geo-IP and threat intel lookups before multi-destination routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'New Relic', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor) / Syslog / Container stdout (JSON)',
         sampleEvent: '192.168.1.47 - jperks [06/Jun/2026:14:32:07 -0500] "GET /api/v2/customers/acme/health HTTP/1.1" 200 1534 "https://app.cribl.io/dashboards" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" 0.038 0.036 10.0.5.12:8080 200'
@@ -386,7 +386,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Parse custom Apache LogFormat directives and normalize to common web access schema for cross-server correlation' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'New Relic', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor on /var/log/apache2/ or /var/log/httpd/) / rsyslog / piped logging',
         sampleEvent: '203.0.113.42 - jperks [06/Jun/2026:14:32:08 -0500] "POST /api/v1/accounts/login HTTP/1.1" 200 1247 "https://app.example.com/login" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36" 350ms TLSv1.3 ECDHE-RSA-AES256-GCM-SHA384'
@@ -419,7 +419,7 @@ export const dataSources = [
             { persona: 'Platform Administrator', job: 'Standardize IIS logging fields across 100+ servers using centralized Edge fleet configuration and field normalization' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'New Relic', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor on C:\\inetpub\\logs\\) / Windows Event Forwarding / HTTP Logging module / ETW tracing',
         sampleEvent: '2026-06-06 14:32:08 W3SVC1 WEBSERVER01 10.1.2.50 POST /api/v1/accounts/login - 443 jperks@corp.local 203.0.113.42 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) https://app.example.com/login 200 0 0 1247 2845 350'
@@ -452,7 +452,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Decode base64 attack payloads and enrich WAF events with threat classification before routing to security analytics' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Akamai SIEM Integration API (HTTPS polling) / DataStream 2 (HTTP POST to Cribl) / S3 delivery / Splunk HEC format',
         logFormat: 'JSON (SIEM Integration) or structured key-value (DataStream 2). Includes attack_data object with rule IDs, risk scores, and action taken. Bot events include bot_score, bot_category, and challenge results.',
@@ -486,7 +486,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Squid access.log collection via Cribl Edge file monitor or syslog output, parse native Squid log format (timestamp, duration, client, result/status, bytes, method, URL, hierarchy, content_type) within 15 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (access.log) / Syslog / ICAP integration / Blue Coat ELFF via syslog',
         logFormat: 'Squid native: timestamp.ms duration client_ip result_code/status bytes method URL user hierarchy/peer content_type. Blue Coat ELFF: date, time, time-taken, c-ip, cs-username, s-action, sc-status, cs-method, cs-uri-scheme, cs-host, cs-uri-path, cs-uri-query, sc-bytes, cs-bytes, cs-categories, cs-threat-risk.',
@@ -520,7 +520,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Enable WAF logging to Kinesis Data Firehose (prefix aws-waf-logs-) and configure Cribl Stream HTTP source to receive, or use S3 delivery with SQS notification — operational within 20 minutes per WebACL' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Kinesis Data Firehose (HTTP endpoint or S3) / S3 direct delivery / CloudWatch Logs',
         logFormat: 'JSON (NDJSON). Key fields: timestamp, formatVersion, webaclId, terminatingRuleId, terminatingRuleType, action (ALLOW/BLOCK/COUNT/CAPTCHA), httpSourceName (ALB/CF/APIGW), httpSourceId, ruleGroupList[].terminatingRule, rateBasedRuleList[], httpRequest (clientIp, country, uri, method, httpVersion, headers[]), labels[] (awswaf:managed:bot:verified, etc).',
@@ -561,7 +561,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize Prisma Access traffic/threat/URL logs into unified SASE schema for cross-product correlation with GlobalProtect events' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cortex Data Lake (HTTPS API to Cribl REST Collector) / Syslog (CEF/LEEF via Log Forwarding profile) / HTTPS Log Streaming',
         logFormat: 'CSV (syslog) or JSON (Cortex Data Lake API). Same field structure as PAN-OS TRAFFIC/THREAT/URL logs with additional SASE-specific fields: mobile_user, GlobalProtect_gateway, service_connection, remote_network.',
@@ -596,7 +596,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Correlate GlobalProtect connection events with Prisma Access traffic logs to build complete remote user session timelines' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cortex Data Lake (HTTPS API) / Syslog (GlobalProtect system logs) / HTTPS Log Streaming',
         logFormat: 'Structured syslog or JSON. Key fields: virtual_system, event_type (gp-auth, gp-connect, gp-disconnect, hip-match), user, source_ip, gateway, portal, hip_match_type, client_os, client_version, tunnel_type.',
@@ -628,7 +628,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Netskope Cloud Log Shipper integration and parse JSON events for multi-destination routing within 1 hour' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (Cloud Log Shipper) / Syslog / Cloud-to-Cloud connector',
         logFormat: 'JSON — fields include timestamp, user, src_location, dst_location, app, activity, object, alert_type, dlp_profile, severity, risk_level, category, ccl, cci, url, bytes_uploaded, bytes_downloaded, traffic_type.',
@@ -660,7 +660,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Cloudflare Logpush to S3/GCS and set up Cribl Stream pull to parse and route within 45 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Datadog', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Logpush (S3/GCS/Azure Blob/HTTP endpoint) / REST API',
         logFormat: 'JSON (NDJSON) — fields include ClientIP, ClientRequestHost, ClientRequestURI, EdgeResponseStatus, WAFAction, WAFRuleID, BotScore, BotManagementDecision, CacheCacheStatus, EdgeStartTimestamp, OriginResponseTime.',
@@ -701,7 +701,7 @@ export const dataSources = [
             { persona: 'Jack of All Trades', job: 'Track model usage distribution and token consumption trends to forecast budget impact of new AI feature rollouts' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'OpenAI Organization Audit Log API (Cribl REST Collector) / Usage API polling / Webhook integration / API gateway proxy logs (capturing request/response metadata)',
         logFormat: 'JSON. Key fields: id, type (api_request, content_filter, rate_limit, fine_tune), timestamp, organization_id, project_id, api_key_id, model, endpoint, tokens_input, tokens_output, tokens_total, user, ip_address, status_code, content_filter_results, latency_ms.',
@@ -736,7 +736,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize OpenAI compliance events across ChatGPT Enterprise and API channels into unified AI governance schema for cross-platform reporting' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3', 'CrowdStrike NG SIEM'],
         collectionMethod: 'OpenAI Compliance API (Cribl REST Collector) / ChatGPT Enterprise Admin Audit Export / Data Export API / DLP integration proxy',
         logFormat: 'JSON. Key fields: event_id, event_type (conversation, moderation, retention, policy_violation), timestamp, user_id, user_email, organization_id, model, conversation_id, pii_detected, pii_types[], content_filter_triggered, policy_name, retention_action, data_classification.',
@@ -771,7 +771,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Track model adoption trends and stop_reason distributions to identify integration issues and optimize prompt engineering efforts' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Anthropic Admin API (Cribl REST Collector) / Usage API polling / Webhook notifications / API gateway proxy logs',
         logFormat: 'JSON. Key fields: id, type (api_request, safety_trigger, rate_limit, compliance_event), timestamp, organization_id, workspace_id, api_key_id, model, input_tokens, output_tokens, stop_reason, user_id, ip_address, safety_categories, latency_ms, cost_usd.',
@@ -812,7 +812,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Track IAM permission sprawl trends by identifying service accounts with unused privileges exceeding 90-day inactivity thresholds' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Prisma Cloud Alert API (Cribl REST Collector polling) / Webhook Integration (HTTPS POST) / Amazon SQS / Splunk Integration',
         logFormat: 'JSON alert objects. Key fields: alertId, status, policy.name, policy.severity, policy.complianceMetadata, resource.cloudType, resource.resourceType, resource.name, resource.region, resource.account, riskDetail, remediationCli.',
@@ -847,7 +847,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Deploy Prisma Cloud Compute API collection with webhook failover and deduplication across multi-region deployments within 1 hour' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Prisma Cloud Compute API (Cribl REST Collector) / Webhook Alerts / Syslog (CEF) / Cortex XSIAM integration',
         logFormat: 'JSON. Types: runtime audit (process/network/filesystem), vulnerability scan, compliance check, WAAS event, incident. Key fields: type, hostname, imageName, containerName, namespace, cluster, rule, effect, msg, forensics.',
@@ -882,7 +882,7 @@ export const dataSources = [
             { persona: 'Platform Administrator', job: 'Scale VPC flow collection across 100+ accounts using centralized S3 delivery with cross-account IAM role federation' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'S3 (VPC publishes to S3 bucket) / CloudWatch Logs / Kinesis Data Firehose',
         sampleEvent: '2 123456789012 eni-0a1b2c3d4e5f6g7h8 10.0.1.25 52.94.76.89 49152 443 6 15 12000 1717680000 1717680060 ACCEPT OK'
@@ -915,7 +915,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize M365 audit events across workloads (Exchange, SharePoint, Teams, AzureAD) into unified schema for cross-workload correlation' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Office 365 Management Activity API (Cribl REST Collector polling) / Azure Event Hub / Microsoft Graph Security API / Splunk Add-on for O365',
         logFormat: 'JSON via Management Activity API. Content types: Audit.AzureActiveDirectory, Audit.Exchange, Audit.SharePoint, Audit.General, DLP.All. Each event has Operation, UserId, ClientIP, Workload, and workload-specific extended properties.',
@@ -949,7 +949,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route high-risk alerts and incidents to SIEM in real time while batching sign-in telemetry and audit logs to Lake for investigation' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Microsoft Graph Security API (Cribl REST Collector) / Azure Event Hub (streaming) / Microsoft Graph Activity Logs / Azure Monitor Diagnostic Settings',
         logFormat: 'JSON via Graph API. Entity types: alerts (v2), incidents, signInLogs, auditLogs/directoryAudits, riskDetections, servicePrincipalRiskDetections. Key fields: id, createdDateTime, severity, status, category, userPrincipalName, ipAddress, riskLevel, riskState, conditionalAccessStatus.',
@@ -981,7 +981,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Wiz webhook integration or Issues API polling with proper severity filtering and resource context enrichment' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Webhook (push) / REST API (Issues, Audit) / AWS EventBridge / Azure Event Grid',
         logFormat: 'JSON — fields include id, sourceRule, title, severity (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL), status (OPEN/RESOLVED/REJECTED), entitySnapshot (type, name, cloudPlatform, region, subscriptionId), remediation, firstDetectedAt, resolvedAt, dueAt, notes, projects.',
@@ -1015,7 +1015,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure EventBridge rule for GuardDuty findings → Kinesis Firehose → Cribl Stream with multi-account aggregation via delegated administrator within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'EventBridge → Kinesis Firehose / S3 export / Security Hub aggregation / GuardDuty API (Cribl REST Collector)',
         logFormat: 'JSON (GuardDuty Finding format). Key fields: id, type, severity (0-10 numeric), title, description, accountId, region, resource (instanceDetails, accessKeyDetails, s3BucketDetails, eksClusterDetails), service (action, evidence, additionalInfo), updatedAt, createdAt.',
@@ -1053,7 +1053,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Google Workspace Reports API collection via Cribl REST Collector with service account authentication, or BigQuery export for historical data — operational within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Reports API (Cribl REST Collector) / BigQuery export / Pub/Sub (real-time) / Google Workspace Alert Center API',
         logFormat: 'JSON (Reports API). Key fields: id.time, id.applicationName (login, drive, admin, token, saml, groups_enterprise, chrome), actor.email, actor.profileId, events[].type, events[].name, events[].parameters[]. Application-specific event names: login_success, login_failure, authorize, revoke, change_document_access_scope, CREATE_ROLE, ASSIGN_ROLE.',
@@ -1094,7 +1094,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route authentication failures and posture violations to SIEM while sending successful auth events to Lake for trend analysis' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (TCP/UDP from ISE MnT nodes) / pxGrid (HTTPS pub/sub for real-time context) / ISE REST API / Cisco DNA Center integration',
         logFormat: 'Cisco ISE syslog with CSV-structured attribute-value pairs. Key message codes: 5200 (auth success), 5400 (auth failure), 5440 (endpoint profiled), 3000-3999 (posture), 60000+ (admin audit). Fields: UserName, CallingStationID (MAC), FramedIPAddress, NAS-IP, NetworkDeviceName, AuthorizationPolicyMatchedRule, PostureStatus, EndpointProfile, SGT.',
@@ -1128,7 +1128,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route authentication failures and high-risk events to SIEM while sending successful SSO transactions to Lake for capacity planning' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'PingOne Webhook (HTTPS POST to Cribl HTTP source) / PingFederate Audit Log API / S3 Export / Syslog (CEF)',
         sampleEvent: '{"id":"evt-a1b2c3d4","recordedAt":"2026-06-06T14:32:08.000Z","action":{"type":"USER.LOGIN","description":"User authentication"},"actors":{"user":{"id":"usr-123","name":"jperks@cribl.io","type":"USER"}},"resources":[{"id":"app-456","name":"Salesforce","type":"APPLICATION"}],"result":{"status":"SUCCESS","description":"Authentication successful"},"riskLevel":"LOW","riskScore":15,"authenticationMethod":"MFA_PUSH","ipAddress":"203.0.113.42","userAgent":"Mozilla/5.0","geolocation":{"city":"Austin","state":"Texas","country":"US","latitude":30.2672,"longitude":-97.7431}}'
@@ -1161,7 +1161,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route denied authentications and Trust Monitor alerts to SIEM while sending successful auth telemetry to Lake for trend analysis' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Duo Admin API (Polling via Cribl REST Collector) / Duo Trust Monitor Webhook / SIEM Connector',
         sampleEvent: '{"timestamp":1717680008,"device":"555-123-4567","factor":"duo_push","integration":"VPN Gateway","ip":"203.0.113.42","location":{"city":"Austin","state":"Texas","country":"United States"},"new_enrollment":false,"reason":"user_approved","result":"success","txid":"tx-abc123","user":{"name":"jperks@cribl.io","key":"DUSR1234567890"},"access_device":{"os":"Windows 10","browser":"Chrome 125.0","is_encryption_enabled":true,"is_firewall_enabled":true},"application":{"name":"Corporate VPN","key":"DAPP1234567890"},"auth_device":{"name":"iPhone 15","os":"iOS 18.1"},"email":"jperks@cribl.io","event_type":"authentication","isotimestamp":"2026-06-06T14:32:08+00:00"}'
@@ -1193,7 +1193,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route authentication failures, policy changes, and admin events to SIEM while sending successful auth events to Lake for usage analytics' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Okta System Log API (Polling) / Okta Log Streaming (AWS EventBridge) / Cribl HTTP Collector (Webhook)',
         sampleEvent: '{"actor":{"id":"00u1a2b3c4d5e6f7g8","type":"User","alternateId":"jperks@cribl.io","displayName":"Jordan Perks"},"client":{"userAgent":{"rawUserAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64)","os":"Windows 10","browser":"CHROME"},"zone":"null","device":"Computer","id":null,"ipAddress":"203.0.113.42","geographicalContext":{"city":"Austin","state":"Texas","country":"United States","geolocation":{"lat":30.2672,"lon":-97.7431}}},"authenticationContext":{"authenticationStep":0,"externalSessionId":"idx1a2b3c4d5"},"displayMessage":"User login to Okta","eventType":"user.session.start","outcome":{"result":"SUCCESS"},"published":"2026-06-06T14:32:01.123Z","severity":"INFO","debugContext":{"debugData":{"requestUri":"/api/v1/authn","dtHash":"abc123","requestId":"req-id-xyz"}},"legacyEventType":"core.user_auth.login_success","transaction":{"type":"WEB","id":"txn-abc-123"},"uuid":"evt-a1b2c3d4-e5f6-7890-abcd-ef1234567890","version":"0","request":{"ipChain":[{"ip":"203.0.113.42","geographicalContext":{"city":"Austin","state":"Texas","country":"United States"}}]},"target":[{"id":"00u1a2b3c4d5e6f7g8","type":"User","alternateId":"jperks@cribl.io","displayName":"Jordan Perks"}]}'
@@ -1223,7 +1223,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Event Hub or Diagnostic Settings export from Entra ID into Cribl Stream with proper tenant context and schema normalization' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Azure Event Hub / Diagnostic Settings / Microsoft Graph API',
         logFormat: 'JSON — fields include correlationId, userPrincipalName, appDisplayName, ipAddress, location, status, conditionalAccessStatus, riskLevelAggregated, riskState, mfaDetail, deviceDetail, authenticationRequirement.',
@@ -1255,7 +1255,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure CyberArk SIEM integration (syslog CEF or REST API) and normalize vault/safe/account hierarchy into searchable fields' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (CEF) / REST API / SIEM Integration (Vault Conjur)',
         logFormat: 'CEF or JSON — fields include timestamp, user, safe, target, action (retrieve, checkin, checkout, logon), reason, source_address, session_id, policy_id, severity, vault_name.',
@@ -1296,7 +1296,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Monitor endpoint health telemetry to detect sensor tampering attempts and resource exhaustion impacting detection capability' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Falcon Data Replicator (FDR via S3) / Streaming API (HTTP) / SIEM Connector',
         sampleEvent: '{"event_simpleName":"ProcessRollup2","timestamp":"1717680000123","aid":"abcdef1234567890abcdef1234567890","ComputerName":"WORKSTATION-01","ImageFileName":"\\\\Device\\\\HarddiskVolume3\\\\Windows\\\\System32\\\\cmd.exe","CommandLine":"cmd.exe /c whoami","ParentBaseFileName":"explorer.exe","UserName":"CORP\\\\jperks","SHA256HashData":"b99d61d874728edc0918ca0eb10eab93d381e7367e377406e65963366c874714"}'
@@ -1329,7 +1329,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize Trellix HX alerts into unified endpoint detection schema for cross-EDR correlation with CrowdStrike and Carbon Black events' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Trellix HX API (Cribl REST Collector) / Syslog (CEF) / STIX/TAXII feed / Trellix ePO integration',
         logFormat: 'JSON (API) or CEF (syslog). Alert types: malware-object, exploit-detection, ioc-match, containment, acquisition-completed. Key fields: alert_id, host.hostname, host.ip, indicator.name, indicator.category, matched_source_alerts, resolution.',
@@ -1364,7 +1364,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize Trellix NX network alerts into unified threat detection schema for cross-platform correlation with endpoint and email security events' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Trellix NX API (Cribl REST Collector) / Syslog (CEF) / SMTP notifications / STIX/TAXII export',
         logFormat: 'JSON (API) or CEF (syslog). Alert types: malware-object, malware-callback, domain-match, infection-match, web-infection. Key fields: alert.id, alert.severity, src.ip, dst.ip, malware.name, explanation.cncServices, explanation.osChanges.',
@@ -1399,7 +1399,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize Carbon Black process events into unified endpoint schema for cross-EDR correlation with CrowdStrike and Trellix HX telemetry' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'CB Cloud Data Forwarder (S3/Azure Event Hub) / CB EDR Event Forwarder (Syslog/JSON) / Platform API (Cribl REST Collector) / SIEM Connector',
         logFormat: 'JSON (Data Forwarder and API). Event types: endpoint.event.procstart, endpoint.event.netconn, endpoint.event.filemod, endpoint.event.regmod, endpoint.event.crossproc, endpoint.event.modload, alert. Key fields: process_name, process_hash, process_cmdline, parent_name, parent_hash, device_name, device_os, event_type, alert_severity.',
@@ -1430,7 +1430,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Microsoft 365 Defender streaming API to Event Hub and connect to Cribl Stream for multi-destination routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Microsoft Sentinel', 'CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Microsoft 365 Defender Streaming API → Event Hub / REST API (Advanced Hunting) / SIEM Agent',
         logFormat: 'JSON — tables include AlertInfo, AlertEvidence, DeviceProcessEvents, DeviceNetworkEvents, DeviceFileEvents, DeviceRegistryEvents, DeviceLogonEvents. Key fields: Timestamp, DeviceName, ActionType, FileName, ProcessCommandLine, RemoteIP.',
@@ -1464,7 +1464,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure SentinelOne Singularity Data Lake export via Cloud Funnel 2.0 (S3/Azure Blob) or Streaming API (HTTP POST) to Cribl Stream with event-type filtering within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3', 'Google Chronicle'],
         collectionMethod: 'Cloud Funnel 2.0 (S3/Azure Blob) / Streaming API (HTTP POST) / SIEM Connector / REST API (Cribl REST Collector)',
         logFormat: 'JSON (Cloud Funnel NDJSON). Key event types: process, file, network, registry, dns, login, indicator, threat. Fields include: trueContext (Storyline), src.process.name, src.process.cmdline, src.process.user, endpoint.name, endpoint.os, event.type, event.category, threat.classification, threat.mitreTechnique, indicator.category.',
@@ -1505,7 +1505,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Track sender reputation score trends and outbreak filter activation frequency to measure email security effectiveness and tune policies' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (TCP/TLS from ESA/CES) / Cisco SMA centralized tracking / API (AsyncOS REST) / Consolidated Event Logs (CEL)',
         logFormat: 'Structured syslog with multiple log types: mail_logs (message tracking), amp (AMP verdicts), authentication (SPF/DKIM/DMARC), content_filter, anti_spam, antivirus, dlp. Key fields: MID, ICID, DCID, from, to, subject, action, verdict, score, attachment_name.',
@@ -1537,7 +1537,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Proofpoint SIEM API (TAP + Message Trace) integration with proper deduplication across multiple log streams' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (TAP SIEM API) / Syslog / Log streaming',
         logFormat: 'JSON — fields include GUID, sender, recipient, subject, messageTime, threatsInfoMap (threat, classification, url), clickTime, clickIP, classification, quarantineFolder, policyRoutes, phishScore, spamScore, impostorScore.',
@@ -1569,7 +1569,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Mimecast SIEM Integration API polling with proper pagination and checkpoint management for reliable log collection' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (SIEM Integration API — /api/audit/get-siem-logs) / Syslog',
         logFormat: 'JSON — separate log types: ttp-url (url, scanResult, userOverride, action), ttp-impersonation (senderAddress, similarDomain, impersonatedUser), receipt (senderAddress, recipientAddress, subject, spamScore, rejectionType). Key shared fields: datetime, aCode, acc, id.',
@@ -1610,7 +1610,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route create/delete/exec operations and RBAC changes to SIEM while sending full audit trail to Lake for forensic investigation' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Datadog', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Webhook Backend (HTTP/S to Cribl) / File Monitor (Cribl Edge on audit.log) / CloudWatch Logs (EKS) / Pub/Sub (GKE) / Event Hub (AKS)',
         sampleEvent: '{"apiVersion":"audit.k8s.io/v1","kind":"Event","level":"Metadata","auditID":"7e3c4a2b-1f8d-4e5c-9a6b-3d2c1e0f8a7b","stage":"ResponseComplete","requestURI":"/api/v1/namespaces/production/pods/data-processor-7b4f8c6d9-xk2mz/exec?command=sh&stdin=true&stdout=true&tty=true","verb":"create","user":{"username":"jordan.perks@cribl.io","groups":["engineering","system:authenticated"]},"sourceIPs":["10.128.0.45"],"userAgent":"kubectl/v1.29.2 (linux/amd64)","objectRef":{"resource":"pods","namespace":"production","name":"data-processor-7b4f8c6d9-xk2mz","apiVersion":"v1","subresource":"exec"},"responseStatus":{"code":101,"status":"Success"},"requestReceivedTimestamp":"2026-06-06T14:22:01.234567Z","stageTimestamp":"2026-06-06T14:22:01.298432Z","annotations":{"authorization.k8s.io/decision":"allow","authorization.k8s.io/reason":"RBAC: allowed by ClusterRoleBinding \\"engineering-deploy\\" of ClusterRole \\"deploy-manager\\" to Group \\"engineering\\""}}'
@@ -1649,7 +1649,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Parse auditd key=value format into structured fields and correlate multi-record audit events by audit ID for complete execution context' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor on /var/log/audit/audit.log) / audisp-remote plugin (syslog forwarding) / auditd log shipping via rsyslog',
         sampleEvent: 'type=SYSCALL msg=audit(1717680001.234:28764): arch=c000003e syscall=59 success=yes exit=0 a0=55b3a1c2e340 a1=55b3a1c2e3a0 a2=55b3a1c2e3b0 a3=7ffd4a2b1c80 items=2 ppid=4521 pid=4522 auid=1000 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=3 comm="curl" exe="/usr/bin/curl" subj=unconfined_u:unconfined_r:unconfined_t:s0 key="exec_monitor"\ntype=EXECVE msg=audit(1717680001.234:28764): argc=3 a0="curl" a1="-s" a2="http://suspicious-domain.xyz/payload"\ntype=PATH msg=audit(1717680001.234:28764): item=0 name="/usr/bin/curl" inode=1048721 dev=fd:00 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL'
@@ -1682,7 +1682,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Track account lockout patterns and password change frequency to identify service accounts with credential rotation failures' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor on /var/log/secure or /var/log/auth.log) / rsyslog TCP/TLS forwarding / journald export',
         sampleEvent: 'Jun  6 14:32:08 prod-web-01 sshd[24601]: Accepted publickey for jperks from 10.0.1.42 port 52341 ssh2: RSA SHA256:abc123def456\nJun  6 14:32:15 prod-web-01 sudo: jperks : TTY=pts/0 ; PWD=/home/jperks ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx\nJun  6 14:33:01 prod-web-01 sshd[24890]: Failed password for invalid user admin from 203.0.113.99 port 44521 ssh2'
@@ -1715,7 +1715,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Deploy Cribl Edge file monitor on /var/log/messages with facility-based routing to multiple destinations within 15 minutes per host group' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'New Relic', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (File Monitor on /var/log/messages or /var/log/syslog) / rsyslog TCP/TLS / journald-upload / systemd-journal-remote',
         sampleEvent: 'Jun  6 14:32:08 prod-db-01 kernel: [4521678.123] Out of memory: Killed process 8921 (java) total-vm:8234567kB, anon-rss:4125678kB, file-rss:0kB, shmem-rss:0kB, UID:1001 pgtables:16384kB oom_score_adj:0\nJun  6 14:32:09 prod-db-01 systemd[1]: postgresql.service: Main process exited, code=killed, status=9/KILL\nJun  6 14:32:10 prod-db-01 kernel: [4521678.456] EXT4-fs error (device sda1): ext4_lookup:1234: inode #567890: comm systemd-journald: deleted inode referenced'
@@ -1754,7 +1754,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Track service account logon patterns to identify credential rotation failures and unauthorized service account usage across the domain' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (Windows Event Logs input) / Windows Event Forwarding (WEF/WEC) / NXLog / Splunk UF',
         logFormat: 'Windows Event Log XML (EVTX) — structured with EventID, keywords, task category. Key EventIDs: 4624-4625 (logon), 4648 (explicit creds), 4672 (special privs), 4688 (process create), 4720-4738 (account mgmt).',
@@ -1788,7 +1788,7 @@ export const dataSources = [
             { persona: 'Data End User / Analyst', job: 'Generate infrastructure health compliance reports showing uptime metrics, disk health trends, and service availability by server role and criticality tier' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (Windows Event Logs input) / Windows Event Forwarding (WEF/WEC) / NXLog / SNMP traps',
         logFormat: 'Windows Event Log XML (EVTX). Key EventIDs: 6005/6006 (startup/shutdown), 7034-7036 (service control), 41 (unexpected reboot), 1001 (bugcheck), 129 (time sync), 7/11/15/51/153 (disk).',
@@ -1823,7 +1823,7 @@ export const dataSources = [
             { persona: 'Platform Administrator', job: 'Standardize Application log collection across 200+ servers with centralized Edge fleet configuration filtering by provider name and event level' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'Datadog', 'Dynatrace', 'New Relic', 'Cribl Lake', 'Amazon S3', 'Elastic'],
         collectionMethod: 'Cribl Edge (Windows Event Logs input) / Windows Event Forwarding (WEF/WEC) / NXLog / Application Insights bridge',
         logFormat: 'Windows Event Log XML (EVTX). Key EventIDs: 1000 (app crash), 1002 (app hang), 1026 (.NET runtime), 1033/1040 (MSI), plus vendor-specific IDs.',
@@ -1858,7 +1858,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Enrich Sysmon process events with hash reputation lookups and MITRE ATT&CK technique tagging before routing to detection platforms' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge (Windows Event Logs input - Microsoft-Windows-Sysmon/Operational) / Windows Event Forwarding (WEF/WEC) / NXLog',
         logFormat: 'Windows Event Log XML (EVTX) under Microsoft-Windows-Sysmon/Operational. Key EventIDs: 1 (Process Create), 3 (Network), 7 (Image Load), 8 (CreateRemoteThread), 10 (ProcessAccess), 11 (FileCreate), 12-14 (Registry), 22 (DNS Query).',
@@ -1892,7 +1892,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route high-value Security and Sysmon events to SIEM while sending System and Application events to Lake, splitting WEF traffic by channel and severity' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Cribl Edge on WEC servers (Windows Event Logs input - ForwardedEvents channel) / Cribl Stream HTTP source (WEC → HTTP POST) / Direct WinRM collection',
         logFormat: 'Windows Event Log XML (EVTX) from ForwardedEvents channel. Each event retains original channel, provider, and computer name. Subscription metadata appended by WEC infrastructure.',
@@ -1933,7 +1933,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Normalize F5 LTM access logs into common load balancer schema for cross-platform correlation with AWS ALB and NGINX upstream metrics' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Datadog', 'Dynatrace', 'Cribl Lake', 'Elastic'],
         collectionMethod: 'Syslog (HSL) / iRule logging / REST API / SNMP traps',
         logFormat: 'Syslog (RFC 3164/5424) with configurable HSL (High-Speed Logging) profiles. iRule-generated logs follow custom key=value or JSON format. Management plane uses structured audit logging.',
@@ -1967,7 +1967,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Enable ALB access logging to S3, configure Cribl Stream S3 source with SQS notification trigger, and parse space-delimited ALB log format within 20 minutes per account' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Datadog', 'Elastic', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'S3 (with SQS/SNS notification) / Kinesis Data Firehose / CloudWatch Logs',
         logFormat: 'Space-delimited text — fields: type, timestamp, elb, client:port, target:port, request_processing_time, target_processing_time, response_processing_time, elb_status_code, target_status_code, received_bytes, sent_bytes, request (method url protocol), user_agent, ssl_cipher, ssl_protocol, target_group_arn, trace_id, domain_name, chosen_cert_arn, matched_rule_priority, request_creation_time, actions_executed, redirect_url, error_reason, target:port_list, target_status_code_list, classification, classification_reason, conn_trace_id.',
@@ -2008,7 +2008,7 @@ export const dataSources = [
             { persona: 'Data Engineer', job: 'Route Kerberos anomalies, group changes, and replication events to SIEM while sending routine authentication success events to Lake for baseline and forensic analysis' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Elastic'],
         collectionMethod: 'Windows Event Forwarding (WEF) / Cribl Edge agent / NXLog / Splunk UF',
         logFormat: 'Windows Event Log XML (EVTX) — structured with EventID, Provider, Correlation, EventData. Critical channels: Security (4624-4634, 4648, 4672, 4720-4738, 4768-4776), Directory Service (1566, 1988, 2887), DNS Server.',
@@ -2046,7 +2046,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Parse FortiGate key=value syslog format and route to multiple destinations within 30 minutes using pre-built pack pipelines' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (UDP/TCP/TLS) / FortiAnalyzer / REST API',
         logFormat: 'Key=value pair format: date=YYYY-MM-DD time=HH:MM:SS devname=hostname devid=serial logid=ID type=traffic/utm subtype=forward/ips/webfilter. Critical fields: srcip, dstip, srcport, dstport, action, service, policyid, app, utmaction.',
@@ -2080,7 +2080,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure FMC eStreamer API or syslog output (RFC 5424) to Cribl Stream. Parse the Firepower unified event format with protocol-specific field extraction within 30 minutes per FMC' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'eStreamer API / Syslog (RFC 5424) / Cisco Security Analytics and Logging (SAL) / Secure Network Analytics',
         logFormat: 'JSON or CEF via syslog. Key event types: intrusion (SID, classification, priority, impact_flag), connection (initiator_ip, responder_ip, protocol, app_proto, web_app, url, bytes_sent/recv, action), file_event (file_name, file_type, sha256, disposition, malware_name), SI (indicator, type, block_type).',
@@ -2114,7 +2114,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure SRX structured syslog (log-mode stream) to Cribl Stream with security-log-source-address, enable RT_FLOW and IDP log types, and parse structured key-value format within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Structured Syslog (stream mode) / Security Log stream / Juniper Security Director / SNMP traps',
         logFormat: 'Structured syslog (RFC 5424) with key=value pairs. Key message types: RT_FLOW_SESSION_OPEN, RT_FLOW_SESSION_CLOSE, RT_FLOW_SESSION_DENY, IDP_ATTACK_LOG_EVENT, APPTRACK_SESSION_CLOSE, KMD_VPN_UP_ALARM, KMD_VPN_DOWN_ALARM, CHASSISD_SNMP_TRAP*. Fields: source-address, destination-address, source-port, destination-port, service-name, nat-source-address, application, nested-application, policy-name, source-zone-name, destination-zone-name, elapsed-time, bytes-from-client, bytes-from-server, packets-from-client, packets-from-server.',
@@ -2151,7 +2151,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Parse Zeek TSV and JSON output formats and configure per-log-type routing rules within 30 minutes using pack pipelines' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (Cribl Edge) / Syslog / Kafka / Direct file ingest',
         logFormat: 'TSV (tab-separated) or JSON. Key log types: conn.log (uid, id.orig_h, id.resp_h, id.resp_p, proto, duration, orig_bytes, resp_bytes), dns.log (query, qtype, answers), http.log (method, host, uri, status_code), ssl.log (server_name, subject, ja3, ja3s), notice.log (note, msg, src, dst).',
@@ -2182,7 +2182,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Ingest Suricata EVE JSON via file monitor or syslog and configure alert-priority routing within 20 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Elastic Security', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (eve.json) / Syslog / Redis / Kafka',
         logFormat: 'EVE JSON — event_type field determines schema: alert (signature, severity, category), dns (rrname, rrtype, rcode), tls (subject, issuer, ja3), http (hostname, url, method), flow (bytes_toserver, bytes_toclient, pkts).',
@@ -2214,7 +2214,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure ZPA Log Streaming Service (LSS) to Cribl Stream and map application segments to business context for enrichment' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Log Streaming Service (LSS) / Nanolog Streaming Service (NSS)',
         logFormat: 'JSON — fields include LogTimestamp, Customer, SessionID, ConnectionID, InternalReason, ConnectionStatus, ClientPublicIP, ClientPrivateIP, ApplicationSegment, ServerIP, Connector, Policy, User.',
@@ -2246,7 +2246,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure NetScaler syslog/NSLOG and AppFlow export to Cribl Stream with proper parsing of the multi-format event types' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Datadog', 'Amazon S3', 'Elastic'],
         collectionMethod: 'Syslog / NSLOG / AppFlow (IPFIX) / Management REST API',
         logFormat: 'Citrix syslog format: <date> <hostname> <module> <feature> <severity> <event_id> <message>. Key modules: SSLVPN (gateway), APPFW (WAF), TCP, HTTP, AAA (auth).',
@@ -2278,7 +2278,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Darktrace syslog CEF output or webhook integration and map model breach categories to common threat taxonomy' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (CEF) / Webhook (JSON) / Darktrace API',
         logFormat: 'JSON (webhook) or CEF (syslog) — fields include model breach ID, model name/type, severity score (0-100), device info (hostname, IP, MAC), threat category, MITRE mapping, connection details, Antigena action taken.',
@@ -2316,7 +2316,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure S3-SQS source for CloudTrail ingestion and set up event-type-based routing within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Google Chronicle', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'S3 + SQS / CloudWatch Logs / EventBridge / Direct S3 pull',
         logFormat: 'JSON — fields include eventTime, eventSource, eventName, awsRegion, sourceIPAddress, userIdentity (type, arn, accountId), requestParameters, responseElements, errorCode, errorMessage, readOnly, eventType.',
@@ -2347,7 +2347,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure CloudWatch Logs subscription filter to Kinesis Firehose and connect to Cribl Stream for multi-destination routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'Datadog', 'New Relic', 'Dynatrace', 'Elastic', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'CloudWatch Logs Subscription Filter → Kinesis Firehose / S3 + SQS / Lambda forwarder',
         logFormat: 'Mixed — JSON (structured app logs, API Gateway), plain text (Lambda stdout), CloudWatch Logs Insights format. Key metadata: logGroup, logStream, timestamp, message.',
@@ -2381,7 +2381,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure CloudWatch Metric Stream → Kinesis Firehose → Cribl Stream HTTP source in JSON format with namespace filtering within 20 minutes per AWS account' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Datadog', 'Dynatrace', 'New Relic', 'Splunk', 'Cribl Lake', 'Amazon S3', 'Prometheus Remote Write'],
         collectionMethod: 'CloudWatch Metric Stream → Kinesis Data Firehose (HTTP endpoint) / S3 delivery',
         logFormat: 'JSON (OpenTelemetry 0.7.0 format) — fields: metric_stream_name, account_id, region, namespace, metric_name, dimensions (key-value pairs), timestamp, value (min, max, sum, count, p99, etc.), unit. Each record is a single metric data point with statistical values.',
@@ -2412,7 +2412,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Azure Event Hub export for Activity Logs and connect to Cribl Stream for parsing and routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Microsoft Sentinel', 'Splunk', 'CrowdStrike NG SIEM', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Azure Event Hub / Azure Monitor Diagnostic Settings / REST API',
         logFormat: 'JSON — fields include time, resourceId, operationName, category, resultType, callerIpAddress, identity, properties. Categories: Administrative, Security, ServiceHealth, Alert, Recommendation, Policy, Autoscale, ResourceHealth.',
@@ -2443,7 +2443,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure GCP log sink to Pub/Sub and connect Cribl Stream pull source for parsing and multi-destination routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Google Chronicle', 'Splunk', 'CrowdStrike NG SIEM', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Pub/Sub subscription / Cloud Storage sink / BigQuery export',
         logFormat: 'JSON — fields include protoPayload.methodName, protoPayload.serviceName, protoPayload.authenticationInfo.principalEmail, protoPayload.requestMetadata.callerIp, resource.type, resource.labels, severity, logName.',
@@ -2480,7 +2480,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Meraki syslog export and parse space-delimited event format for multi-destination routing within 20 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Datadog', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (UDP/TCP) / Meraki API / Webhook',
         logFormat: 'Syslog — space-delimited fields with epoch timestamp. Format: <timestamp> <device_serial> <log_type> <event_data>. Log types: security_event, urls, flows, ids-alerts, air_marshal, events.',
@@ -2515,7 +2515,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure vManage syslog export to Cribl Stream with structured data parsing, or set up streaming telemetry (gRPC dial-out) for real-time metrics collection within 30 minutes per vManage instance' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'Datadog', 'Dynatrace', 'ThousandEyes', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'vManage Syslog / Streaming Telemetry (gRPC/YANG) / NetFlow/IPFIX / vManage REST API (Cribl REST Collector) / SNMP traps',
         logFormat: 'Structured syslog (vManage) or JSON (REST API/Streaming). Key event types: bfd-state-change, sla-violation, app-route-change, omp-peer-state-change, control-connection-state-change, security-event (utd), ipsec-tunnel-state. Telemetry fields: system-ip, host-name, site-id, tunnel-color, latency, jitter, loss, vqe-score, app-name, dscp, local-system-ip, remote-system-ip.',
@@ -2553,7 +2553,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Qualys/Tenable API integration to pull scan results on schedule and normalize to common vulnerability schema' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'ServiceNow', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (scheduled pull) / Webhook / File export (CSV/XML)',
         logFormat: 'JSON or XML — fields include host_ip, hostname, os, qid/plugin_id, cve, cvss_base, cvss_temporal, severity, title, solution, first_found, last_found, status, port, protocol, service.',
@@ -2590,7 +2590,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure ServiceNow REST API integration for CMDB and incident table exports to Cribl Stream for enrichment and routing' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (Table API / CMDB API) / MID Server / Event-driven webhook',
         logFormat: 'JSON — fields include sys_id, number, state, priority, assignment_group, cmdb_ci, short_description, sys_created_on, sys_updated_on, caller_id, category, subcategory, impact, urgency.',
@@ -2628,7 +2628,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure vCenter syslog forwarding and/or vRealize Log Insight webhook to Cribl Stream with proper event categorization by severity and type' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Datadog', 'Amazon S3', 'Elastic'],
         collectionMethod: 'Syslog / vRealize Log Insight webhook / vCenter REST API',
         logFormat: 'Syslog (RFC 5424) or JSON — fields include vmw_timestamp, vmw_host, vmw_cluster, vmw_vcenter, vmw_vm, vmw_user, vmw_event_type, vmw_datacenter, vmw_datastore, vmw_message.',
@@ -2666,7 +2666,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Enable Vault audit device (file or syslog backend) with HMAC on sensitive fields and configure Cribl Stream to parse the nested JSON auth/request/response structure' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Cribl Lake', 'Elastic', 'Amazon S3'],
         collectionMethod: 'File audit device / Syslog audit device / Socket audit device',
         logFormat: 'JSON (NDJSON) — fields include type (request/response), auth.client_token (HMAC), auth.policies, request.path, request.operation, request.remote_address, response.data (HMAC if sensitive), error.',
@@ -2704,7 +2704,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure GitHub audit log streaming to Cribl Stream via webhook or S3 export with proper enterprise/org/repo hierarchy normalization' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Audit log streaming (webhook/S3/Azure Event Hub) / REST API',
         logFormat: 'JSON — fields include @timestamp, action, actor, actor_location, org, repo, user, data, created_at, business, operation_type.',
@@ -2736,7 +2736,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Atlassian Organization Audit Log API integration with Cribl Stream for continuous pull of admin and security events' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (Organization Audit Log API) / Webhook',
         logFormat: 'JSON — fields include id, summary, created, category, author (accountId, displayName), context (ip, location), actor, objectItem (id, name, typeName), container, associatedItems.',
@@ -2774,7 +2774,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Cortex XDR syslog forwarding or API-based log collection and normalize alert severity/category into common schema alongside other detection tools' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Google Chronicle', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (CEF) / REST API (Incidents & Alerts) / XDR Broker',
         logFormat: 'CEF or JSON — fields include alert_id, alert_name, severity, category, mitre_tactic, mitre_technique, host_name, host_ip, user_name, action_taken, causality_chain_id, incident_id, agent_version.',
@@ -2812,7 +2812,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure mongod auditLog destination (file or syslog) and set up collection-level audit filters to capture security-relevant events without overwhelming log volume' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (auditLog JSON) / Syslog / MongoDB Atlas API (Database Auditing)',
         logFormat: 'JSON (mongo schema) — fields include atype (authenticate, authCheck, createCollection, dropDatabase, createUser, etc), ts ($date ISO 8601), uuid, local (ip, port), remote (ip, port), users [{user, db}], roles [{role, db}], param (operation-specific), result (0=success, error code otherwise).',
@@ -2844,7 +2844,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure pgAudit extension (shared_preload_libraries), set pgaudit.log classes, and connect PostgreSQL log output (csvlog or syslog) to Cribl Stream within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (PostgreSQL csvlog) / Syslog / CloudWatch Logs (RDS) / Azure Diagnostic Logs (Azure DB for PostgreSQL)',
         logFormat: 'CSV or syslog — pgAudit appends structured fields to PostgreSQL log_line_prefix: AUDIT: <audit_type>,<statement_id>,<substatement_id>,<class>,<command>,<object_type>,<object_name>,<statement>,<parameter>. Classes: READ, WRITE, DDL, ROLE, FUNCTION, MISC.',
@@ -2882,7 +2882,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Snowflake event table sharing or ACCOUNT_USAGE view polling via Cribl REST Collector (Snowflake SQL API) with role-based access to audit views within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3', 'Datadog'],
         collectionMethod: 'Snowflake SQL API (REST Collector) / Event Table (share to external account) / Snowpipe Streaming / ACCOUNT_USAGE view polling',
         logFormat: 'JSON (from SQL API or Event Table). Key views: QUERY_HISTORY (query_id, query_text, user_name, role_name, warehouse_name, execution_status, bytes_scanned, rows_produced, credits_used, start_time, end_time), LOGIN_HISTORY (event_timestamp, user_name, client_ip, reported_client_type, first_authentication_factor, is_success, error_code), ACCESS_HISTORY (query_id, user_name, direct_objects_accessed[].objectName, base_objects_accessed[].columns[].columnName).',
@@ -2920,7 +2920,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure SQL Server Audit with server and database specifications targeting security-relevant event groups, output to file or Windows Event Log, and connect to Cribl Stream via file monitor or WEF within 30 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'File monitor (.sqlaudit files) / Windows Event Log (Application) / Extended Events (XEL files) / Azure Diagnostic Logs / Syslog (Linux SQL Server)',
         logFormat: 'Binary .sqlaudit (fn_get_audit_file reads as tabular) or XML (Extended Events). Key fields: event_time, action_id (AUSC, LGIF, LGIS, AL, DL, IN, UP, SL, EX, DBCC), server_principal_name, database_name, schema_name, object_name, statement, succeeded, session_id, client_ip, application_name, host_name. Azure SQL: JSON via Diagnostic Logs.',
@@ -2958,7 +2958,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Unified Audit policies (CREATE AUDIT POLICY), enable audit trail write mode (QUEUED/IMMEDIATE), and set up syslog or file-based export to Cribl Stream within 30 minutes per database' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (DBMS_AUDIT_MGMT) / File monitor (OS audit trail) / Oracle Audit Vault / OCI Audit service / JDBC query (UNIFIED_AUDIT_TRAIL view)',
         logFormat: 'Structured records from UNIFIED_AUDIT_TRAIL view — key columns: EVENT_TIMESTAMP, DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME, SQL_TEXT, RETURN_CODE, OS_USERNAME, USERHOST, TERMINAL, AUTHENTICATION_TYPE, DBPROXY_USERNAME, CURRENT_USER, FGA_POLICY_NAME, UNIFIED_AUDIT_POLICIES. OCI delivers JSON.',
@@ -3003,7 +3003,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Salesforce EventLogFile API collection via Cribl REST Collector with OAuth 2.0 JWT bearer flow authentication, or Real-Time Event Monitoring via CometD streaming — operational within 45 minutes' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'EventLogFile REST API (Cribl REST Collector with OAuth 2.0 JWT) / Real-Time Event Monitoring (CometD/Pub-Sub API) / Event Bus (Platform Events)',
         logFormat: 'CSV (EventLogFile hourly/daily downloads) or JSON (Real-Time Event Monitoring streaming). Key event types: Login, API, ReportExport, BulkAPI, URI, LightningPageView, ApexExecution, ContentTransfer, LoginAs, WaveChange. Fields vary by type but include TIMESTAMP, USER_ID, USER_NAME, SOURCE_IP, URI, OPERATION, ENTITY_NAME, ROWS_PROCESSED, CLIENT_ID, LOGIN_STATUS, API_TYPE, REQUEST_SIZE, RESPONSE_SIZE, RUN_TIME.',
@@ -3041,7 +3041,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure Workday RaaS (Report-as-a-Service) custom report extraction via Cribl REST Collector with WS-Security or OAuth 2.0 authentication — polling User Activity and System Auditing data sources on 5-minute intervals' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'REST API (Report-as-a-Service / RaaS) via Cribl REST Collector / Workday Prism Analytics API / Workday SIEM Integration (preview)',
         logFormat: 'JSON or XML (RaaS output). Key fields: System_Account, Target_Worker, Task_Display_Name, Business_Process_Type, Activity_Action (LOGIN, CHANGE, VIEW, REPORT_RUN), Session_ID, IP_Address, Device_Type, Security_Group, Object_Type, Field_Changes (before/after values), Row_Count_Returned, Report_Name, Timestamp.',
@@ -3079,7 +3079,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure integration event collection via Workday RaaS reports targeting Integration Event data source (polling) or enable Workday Activity Logging API for near-real-time integration audit streaming to Cribl Stream' }
           ]}
         ],
-        criblProducts: ['Stream', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3', 'Snowflake'],
         collectionMethod: 'REST API (RaaS - Integration Events report / Prism Analytics API) via Cribl REST Collector / Workday Activity Logging API (streaming)',
         logFormat: 'JSON (RaaS/API output). Integration events: Integration_Name, Integration_System_User, Execution_Status (Completed/Failed/Running), Start_Time, End_Time, Records_Processed, Records_Failed, Output_Endpoint, Error_Message, Integration_Type (EIB/Studio/Cloud_Connect). Prism events: Dataset_Name, Pipeline_Name, Execution_Duration_ms, Records_Ingested, User, Action (VIEW/REFRESH/CREATE/SHARE), Data_Source_Type.',
@@ -3123,7 +3123,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure SM20 extraction via SAP RFC connector (function module RSAU_READ_AUDITLOG_EXT) with Cribl Stream RFC source, or forward from SAP Enterprise Threat Detection (ETD) via syslog/CEF — filter profiles configured at SAP kernel level (rslg/audit_*)' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'SAP RFC connector (RSAU_READ_AUDITLOG_EXT / BAPI_XMI_LOGON) / SAP Enterprise Threat Detection (ETD) syslog/CEF forward / SAP Audit Management (SM21/RSAU_CONFIG) file export / SAP Cloud Connector for S/4HANA Cloud',
         logFormat: 'Structured SAP audit record — key fields: Date, Time, Client, User, Terminal (source IP/hostname), Transaction_Code, Report_Name, Message_Class (AU1=logon, AU2=logon_fail, AU3=auth_check, AUF=user_change, AUW=transaction_start, AUK=RFC), Message_Number, Message_Text, Audit_Class (Dialog/RFC/System), Event_Severity (0-3). SAP ETD normalizes to CEF format.',
@@ -3161,7 +3161,7 @@ export const dataSources = [
             { persona: 'Data Onboarder', job: 'Configure HANA audit trail forwarding via syslog target (ALTER SYSTEM ALTER AUDIT LOG ... SET SYSLOG), CSV file export (audit_trail_type = CSVTEXTFILE), or HANA cockpit API — define audit policies per schema/user/action matching security requirements' }
           ]}
         ],
-        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
         destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
         collectionMethod: 'Syslog (HANA audit target type SYSLOG) / CSV file monitor (CSVTEXTFILE audit trail) / HANA SQL connector (AUDIT_LOG system view) / SAP Enterprise Threat Detection (ETD) integration',
         logFormat: 'Structured audit record — key fields: TIMESTAMP, CLIENT_IP, CLIENT_PORT, CONNECTION_ID, STATEMENT_STRING, USER_NAME, SCHEMA_NAME, OBJECT_NAME, ACTION (SELECT/INSERT/UPDATE/DELETE/DDL/CONNECT/GRANT/REVOKE), AUDIT_POLICY_NAME, EXECUTED_STATEMENT, AUDIT_LEVEL (INFO/WARNING/ALERT/EMERGENCY), APPLICATION_NAME, HOST, PORT, SERVICE_NAME, SESSION_USER, CURRENT_SCHEMA. Syslog format follows RFC 5424 with structured data.',
