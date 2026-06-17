@@ -40,9 +40,11 @@ export function calculateCostSavings(
   costPerGB: number,
   fieldReduction: FieldReduction,
   lakeCostPerGB = 0.023,
+  dailyGBOverride?: number,
 ): CostResult {
-  const dailyEvents = eps * 86400;
-  const dailyGB = (dailyEvents * avgEventSizeBytes) / (1024 ** 3);
+  const dailyGB = dailyGBOverride != null && dailyGBOverride > 0
+    ? dailyGBOverride
+    : (eps * 86400 * avgEventSizeBytes) / (1024 ** 3);
   const monthlyGB = dailyGB * 30;
   const monthlyCostRaw = monthlyGB * costPerGB;
 

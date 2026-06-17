@@ -41,6 +41,8 @@ export default function CostSimulatorPage() {
   const [eps, setEps] = useState('5000');
   const [costPerGB, setCostPerGB] = useState('3.50');
   const [avgEventSize, setAvgEventSize] = useState('800');
+  const [dailyVolume, setDailyVolume] = useState('');
+  const [volumeMode, setVolumeMode] = useState<'eps' | 'daily'>('eps');
 
   const [datasetName, setDatasetName] = useState('');
   const [datasetLoading, setDatasetLoading] = useState(false);
@@ -84,8 +86,9 @@ export default function CostSimulatorPage() {
     const cost = parseFloat(costPerGB) || 3.50;
     const eventBytes = parseInt(avgEventSize, 10) || 800;
     const fieldReduction = calculateFieldReduction(fields);
-    return calculateCostSavings(epsVal, eventBytes, cost, fieldReduction);
-  }, [source, eps, costPerGB, avgEventSize, fields]);
+    const dailyGBOverride = volumeMode === 'daily' ? parseFloat(dailyVolume) || 0 : undefined;
+    return calculateCostSavings(epsVal, eventBytes, cost, fieldReduction, 0.023, dailyGBOverride);
+  }, [source, eps, costPerGB, avgEventSize, fields, volumeMode, dailyVolume]);
 
   return (
     <div>
@@ -112,19 +115,36 @@ export default function CostSimulatorPage() {
             </select>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, marginBottom: 6 }}>Events Per Second (EPS)</label>
-            <input type="text" value={eps} onChange={e => setEps(e.target.value)} placeholder="e.g. 5000" style={inputStyle} />
+          {/* Volume Input Mode Toggle */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', borderRadius: 'var(--cds-radius-md)', overflow: 'hidden', border: '1px solid var(--cds-color-border)' }}>
+              <button onClick={() => setVolumeMode('eps')} style={{ flex: 1, padding: '6px 0', border: 'none', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, cursor: 'pointer', background: volumeMode === 'eps' ? 'var(--cds-color-primary)' : 'var(--cds-color-bg)', color: volumeMode === 'eps' ? 'var(--cds-color-primary-fg)' : 'var(--cds-color-fg-muted)' }}>EPS + Event Size</button>
+              <button onClick={() => setVolumeMode('daily')} style={{ flex: 1, padding: '6px 0', border: 'none', borderLeft: '1px solid var(--cds-color-border)', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, cursor: 'pointer', background: volumeMode === 'daily' ? 'var(--cds-color-primary)' : 'var(--cds-color-bg)', color: volumeMode === 'daily' ? 'var(--cds-color-primary-fg)' : 'var(--cds-color-fg-muted)' }}>Daily Volume (GB)</button>
+            </div>
           </div>
 
+          {volumeMode === 'eps' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, marginBottom: 4 }}>Events/Second</label>
+                <input type="text" value={eps} onChange={e => setEps(e.target.value)} placeholder="5000" style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, marginBottom: 4 }}>Avg Event Size (B)</label>
+                <input type="text" value={avgEventSize} onChange={e => setAvgEventSize(e.target.value)} placeholder="800" style={inputStyle} />
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, marginBottom: 4 }}>Total Volume per Day (GB)</label>
+              <input type="text" value={dailyVolume} onChange={e => setDailyVolume(e.target.value)} placeholder="e.g. 150" style={inputStyle} />
+              <div style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)', marginTop: 4 }}>Enter the total GB/day this source produces</div>
+            </div>
+          )}
+
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, marginBottom: 6 }}>SIEM Cost per GB ($/GB/month)</label>
+            <label style={{ display: 'block', fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, marginBottom: 4 }}>SIEM Cost ($/GB/month)</label>
             <input type="text" value={costPerGB} onChange={e => setCostPerGB(e.target.value)} style={inputStyle} />
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 'var(--cds-font-size-sm)', fontWeight: 600, marginBottom: 6 }}>Average Event Size (bytes)</label>
-            <input type="text" value={avgEventSize} onChange={e => setAvgEventSize(e.target.value)} style={inputStyle} />
           </div>
 
           <div style={{ borderTop: '1px solid var(--cds-color-border-subtle)', paddingTop: 16 }}>
