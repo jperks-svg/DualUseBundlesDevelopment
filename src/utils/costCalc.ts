@@ -1,22 +1,43 @@
+export interface FieldReduction {
+  totalFields: number;
+  droppableFields: number;
+  securityRequiredFields: number;
+  observabilityFields: number;
+  guardProtectedFields: number;
+  maskableFields: number;
+}
+
 export interface CostResult {
   eps: number;
   dailyGB: number;
   monthlyGB: number;
   monthlyCostRaw: number;
-  reductionPct: number;
+  fieldDropPct: number;
+  routingReductionPct: number;
   siemGB: number;
   siemCost: number;
   lakeCost: number;
   optimizedTotal: number;
   savings: number;
   savingsPct: number;
+  fieldReduction: FieldReduction;
+}
+
+export function calculateFieldReduction(fields: any[]): FieldReduction {
+  const totalFields = fields.length;
+  const droppableFields = fields.filter(f => f.canDrop === 'Yes').length;
+  const securityRequiredFields = fields.filter(f => f.securitySiem === 'Yes').length;
+  const observabilityFields = fields.filter(f => f.observability === 'Yes' || f.observability === 'Sometimes').length;
+  const guardProtectedFields = fields.filter(f => f.guardAction && f.guardAction !== 'None').length;
+  const maskableFields = fields.filter(f => f.canMask === 'Yes' || f.canMask === 'Sometimes').length;
+  return { totalFields, droppableFields, securityRequiredFields, observabilityFields, guardProtectedFields, maskableFields };
 }
 
 export function calculateCostSavings(
   eps: number,
   avgEventSizeBytes: number,
   costPerGB: number,
-  reductionPct: number,
+  fieldReduction: FieldReduction,
   lakeCostPerGB = 0.023,
 ): CostResult {
   const dailyEvents = eps * 86400;
@@ -24,7 +45,17 @@ export function calculateCostSavings(
   const monthlyGB = dailyGB * 30;
   const monthlyCostRaw = monthlyGB * costPerGB;
 
-  const siemGB = monthlyGB * (1 - reductionPct / 100);
+  const fieldDropPct = fieldReduction.totalFields > 0
+    ? Math.round((fieldReduction.droppableFields / fieldReduction.totalFields) * 100)
+    : 0;
+
+  const routingReductionPct = fieldReduction.totalFields > 0
+    ? Math.round(((fieldReduction.totalFields - fieldReduction.securityRequiredFields) / fieldReduction.totalFields) * 100)
+    : 50;
+
+  const effectiveReduction = Math.min(fieldDropPct + routingReductionPct * 0.6, 85);
+
+  const siemGB = monthlyGB * (1 - effectiveReduction / 100);
   const siemCost = siemGB * costPerGB;
   const lakeCost = monthlyGB * lakeCostPerGB;
   const optimizedTotal = siemCost + lakeCost;
@@ -33,6 +64,8 @@ export function calculateCostSavings(
 
   return {
     eps, dailyGB, monthlyGB, monthlyCostRaw,
-    reductionPct, siemGB, siemCost, lakeCost, optimizedTotal, savings, savingsPct,
+    fieldDropPct, routingReductionPct,
+    siemGB, siemCost, lakeCost, optimizedTotal, savings, savingsPct,
+    fieldReduction,
   };
 }
