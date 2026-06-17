@@ -14,6 +14,7 @@ export interface CostResult {
   monthlyCostRaw: number;
   fieldDropPct: number;
   routingReductionPct: number;
+  obsRoutingReductionPct: number;
   siemGB: number;
   siemCost: number;
   lakeCost: number;
@@ -53,6 +54,10 @@ export function calculateCostSavings(
     ? Math.round(((fieldReduction.totalFields - fieldReduction.securityRequiredFields) / fieldReduction.totalFields) * 100)
     : 50;
 
+  const obsRoutingReductionPct = fieldReduction.totalFields > 0
+    ? Math.round(((fieldReduction.totalFields - fieldReduction.observabilityFields) / fieldReduction.totalFields) * 100)
+    : 40;
+
   const effectiveReduction = Math.min(fieldDropPct + routingReductionPct * 0.6, 85);
 
   const siemGB = monthlyGB * (1 - effectiveReduction / 100);
@@ -64,7 +69,7 @@ export function calculateCostSavings(
 
   return {
     eps, dailyGB, monthlyGB, monthlyCostRaw,
-    fieldDropPct, routingReductionPct,
+    fieldDropPct, routingReductionPct, obsRoutingReductionPct,
     siemGB, siemCost, lakeCost, optimizedTotal, savings, savingsPct,
     fieldReduction,
   };

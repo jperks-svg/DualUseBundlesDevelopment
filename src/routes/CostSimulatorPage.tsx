@@ -187,18 +187,46 @@ export default function CostSimulatorPage() {
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--cds-brand-teal)', display: 'inline-block' }} />
                         <span style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600 }}>Intelligent Routing</span>
                       </div>
-                      <span style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 700, color: 'var(--cds-brand-teal)' }}>{results.routingReductionPct}% to Lake tier</span>
+                      <span style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 700, color: 'var(--cds-brand-teal)' }}>Route by destination need</span>
                     </div>
-                    <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', lineHeight: 1.5 }}>
-                      Only {results.fieldReduction.securityRequiredFields} of {results.fieldReduction.totalFields} fields are required for Security SIEM. Remaining events route to Cribl Lake at $0.023/GB instead of ${costPerGB}/GB.
+                    <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', lineHeight: 1.5, marginBottom: 12 }}>
+                      Each destination only needs a subset of fields. Route reduced events to expensive tools, full fidelity to Cribl Lake at $0.023/GB.
                     </div>
-                    <div style={{ marginTop: 8, display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: 'var(--cds-color-bg-muted)' }}>
-                      <div style={{ height: '100%', width: `${100 - results.routingReductionPct}%`, background: 'var(--cds-color-warning)' }} title="To SIEM" />
-                      <div style={{ height: '100%', width: `${results.routingReductionPct}%`, background: 'var(--cds-brand-teal)' }} title="To Lake" />
+
+                    {/* SIEM bar */}
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--cds-color-fg)' }}>Security SIEM</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--cds-color-warning)' }}>
+                          {results.fieldReduction.securityRequiredFields} of {results.fieldReduction.totalFields} fields needed — {results.routingReductionPct}% reducible
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--cds-color-bg-muted)' }}>
+                        <div style={{ height: '100%', width: `${100 - results.routingReductionPct}%`, background: 'var(--cds-color-warning)' }} title="Required for SIEM" />
+                        <div style={{ height: '100%', width: `${results.routingReductionPct}%`, background: 'var(--cds-brand-teal)' }} title="To Lake only" />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+                        <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>Required ({100 - results.routingReductionPct}%)</span>
+                        <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>Lake only ({results.routingReductionPct}%)</span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                      <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>SIEM ({100 - results.routingReductionPct}%)</span>
-                      <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>Lake ({results.routingReductionPct}%)</span>
+
+                    {/* Observability bar */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--cds-color-fg)' }}>Observability Tools</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#3b82f6' }}>
+                          {results.fieldReduction.observabilityFields} of {results.fieldReduction.totalFields} fields needed — {results.obsRoutingReductionPct}% reducible
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: 'var(--cds-color-bg-muted)' }}>
+                        <div style={{ height: '100%', width: `${100 - results.obsRoutingReductionPct}%`, background: '#3b82f6' }} title="Required for Observability" />
+                        <div style={{ height: '100%', width: `${results.obsRoutingReductionPct}%`, background: 'var(--cds-brand-teal)' }} title="To Lake only" />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+                        <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>Required ({100 - results.obsRoutingReductionPct}%)</span>
+                        <span style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>Lake only ({results.obsRoutingReductionPct}%)</span>
+                      </div>
                     </div>
                   </div>
 
