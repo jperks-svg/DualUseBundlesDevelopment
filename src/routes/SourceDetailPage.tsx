@@ -135,7 +135,8 @@ export default function SourceDetailPage() {
     obsDetections.filter((d: any) => enabledObsDetections.has(d.id)).forEach((d: any) => d.requiredFields.forEach((f: string) => obsRequired.add(f)));
     const allRequired = new Set([...secRequired, ...obsRequired]);
     const notNeeded = fields.map((f: any) => f.field).filter((f: string) => !allRequired.has(f));
-    return { secRequired, obsRequired, allRequired, notNeeded };
+    const guardProtected = fields.filter((f: any) => f.guardAction && f.guardAction !== 'None').length;
+    return { secRequired, obsRequired, allRequired, notNeeded, guardProtected };
   }, [enabledSecDetections, enabledObsDetections, secDetections, obsDetections, fields]);
 
 
@@ -398,6 +399,7 @@ export default function SourceDetailPage() {
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     <span style={tag('var(--cds-color-accent-subtle)', 'var(--cds-color-accent)')}>{fieldAnalysis.allRequired.size} fields required</span>
                     <span style={tag('var(--cds-color-danger-subtle)', 'var(--cds-color-danger)')}>{fieldAnalysis.notNeeded.length} droppable</span>
+                    {fieldAnalysis.guardProtected > 0 && <span style={tag('rgba(168, 85, 247, 0.1)', '#a855f7')}>{fieldAnalysis.guardProtected} Guard protected</span>}
                     <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>{enabledStreamEnrichments.size} stream enrichments</span>
                   </div>
                 </div>
@@ -603,7 +605,7 @@ export default function SourceDetailPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--cds-font-size-sm)' }}>
                 <thead>
                   <tr style={{ background: 'var(--cds-color-bg-subtle)' }}>
-                    {['Field', 'Description', 'Security', 'Observability', 'Full Fidelity', 'Can Drop', 'Can Mask'].map(h => (
+                    {['Field', 'Description', 'Security', 'Observability', 'Full Fidelity', 'Can Drop', 'Can Mask', 'Guard'].map(h => (
                       <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--cds-color-border)', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -618,6 +620,7 @@ export default function SourceDetailPage() {
                       <td style={{ padding: '8px 12px', color: f.fullFidelity === 'Yes' ? 'var(--cds-color-success)' : 'var(--cds-color-fg-subtle)' }}>{f.fullFidelity}</td>
                       <td style={{ padding: '8px 12px', color: f.canDrop === 'Yes' ? 'var(--cds-color-danger)' : 'var(--cds-color-fg-subtle)' }}>{f.canDrop}</td>
                       <td style={{ padding: '8px 12px', color: f.canMask === 'Yes' ? 'var(--cds-color-warning)' : 'var(--cds-color-fg-subtle)' }}>{f.canMask}</td>
+                      <td style={{ padding: '8px 12px', color: f.guardAction === 'Redact' ? '#ef4444' : f.guardAction === 'Mask' ? '#f59e0b' : f.guardAction === 'Encrypt' ? '#a855f7' : f.guardAction === 'Tag' ? '#6b7280' : 'var(--cds-color-fg-subtle)' }}>{f.guardAction || 'None'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -641,6 +644,7 @@ export default function SourceDetailPage() {
               <span style={tag('var(--cds-color-danger-subtle)', 'var(--cds-color-danger)')}>{fieldAnalysis.notNeeded.length} fields can drop</span>
               <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-brand-teal)')}>{fieldAnalysis.secRequired.size} security fields</span>
               <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-accent)')}>{fieldAnalysis.obsRequired.size} observability fields</span>
+              {fieldAnalysis.guardProtected > 0 && <span style={tag('rgba(168, 85, 247, 0.1)', '#a855f7')}>{fieldAnalysis.guardProtected} Guard protected</span>}
             </div>
           )}
 

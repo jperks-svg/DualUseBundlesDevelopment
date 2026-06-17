@@ -33,6 +33,7 @@ export default function FieldMatrixPage() {
   const [search, setSearch] = useState('');
   const [filterDest, setFilterDest] = useState('all');
   const [filterDroppable, setFilterDroppable] = useState('all');
+  const [filterGuard, setFilterGuard] = useState('all');
 
   const fields: any[] = (fieldMatrix as any)[selectedSource] || [];
 
@@ -44,14 +45,19 @@ export default function FieldMatrixPage() {
       if (filterDest === 'both' && !(f.securitySiem === 'Yes' && (f.observability === 'Yes' || f.observability === 'Sometimes'))) return false;
       if (filterDroppable === 'droppable' && f.canDrop !== 'Yes') return false;
       if (filterDroppable === 'required' && f.canDrop !== 'No') return false;
+      if (filterGuard === 'protected' && (!f.guardAction || f.guardAction === 'None')) return false;
+      if (filterGuard === 'mask' && f.guardAction !== 'Mask') return false;
+      if (filterGuard === 'redact' && f.guardAction !== 'Redact') return false;
+      if (filterGuard === 'none' && f.guardAction && f.guardAction !== 'None') return false;
       return true;
     });
-  }, [fields, search, filterDest, filterDroppable]);
+  }, [fields, search, filterDest, filterDroppable, filterGuard]);
 
   const securityCount = fields.filter((f: any) => f.securitySiem === 'Yes').length;
   const obsCount = fields.filter((f: any) => f.observability === 'Yes' || f.observability === 'Sometimes').length;
   const droppableCount = fields.filter((f: any) => f.canDrop === 'Yes').length;
   const maskableCount = fields.filter((f: any) => f.canMask === 'Yes' || f.canMask === 'Sometimes').length;
+  const guardCount = fields.filter((f: any) => f.guardAction && f.guardAction !== 'None').length;
 
   return (
     <div>
@@ -85,12 +91,13 @@ export default function FieldMatrixPage() {
       {fields.length > 0 && (
         <>
           {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 20 }}>
             <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: 'var(--cds-brand-teal)' }}>{fields.length}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Total Fields</div></div>
             <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: 'var(--cds-brand-teal)' }}>{securityCount}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Security SIEM</div></div>
             <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: 'var(--cds-color-accent)' }}>{obsCount}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Observability</div></div>
             <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: 'var(--cds-color-danger)' }}>{droppableCount}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Can Drop</div></div>
             <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: 'var(--cds-color-warning)' }}>{maskableCount}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Can Mask</div></div>
+            <div style={statCard}><div style={{ fontSize: 'var(--cds-font-size-xl)', fontWeight: 600, color: '#a855f7' }}>{guardCount}</div><div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>Guard Protected</div></div>
           </div>
 
           {/* Filters */}
@@ -113,6 +120,13 @@ export default function FieldMatrixPage() {
               <option value="droppable">Can Drop</option>
               <option value="required">Cannot Drop</option>
             </select>
+            <select value={filterGuard} onChange={e => setFilterGuard(e.target.value)} style={selectStyle}>
+              <option value="all">All Guard Actions</option>
+              <option value="protected">Guard Protected</option>
+              <option value="mask">Guard: Mask</option>
+              <option value="redact">Guard: Redact</option>
+              <option value="none">No Guard Action</option>
+            </select>
             <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>
               {filteredFields.length} of {fields.length} fields
             </span>
@@ -123,7 +137,7 @@ export default function FieldMatrixPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--cds-font-size-sm)' }}>
               <thead>
                 <tr style={{ background: 'var(--cds-color-bg-subtle)' }}>
-                  {['Field', 'Description', 'Security SIEM', 'Observability', 'Full Fidelity', 'Can Drop', 'Can Mask', 'Notes'].map(h => (
+                  {['Field', 'Description', 'Security SIEM', 'Observability', 'Full Fidelity', 'Can Drop', 'Can Mask', 'Guard Action', 'Notes'].map(h => (
                     <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--cds-color-border)', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -138,6 +152,7 @@ export default function FieldMatrixPage() {
                     <td style={{ padding: '8px 12px', color: f.fullFidelity === 'Yes' ? 'var(--cds-color-success)' : 'var(--cds-color-fg-subtle)' }}>{f.fullFidelity}</td>
                     <td style={{ padding: '8px 12px', color: f.canDrop === 'Yes' ? 'var(--cds-color-danger)' : f.canDrop === 'Sometimes' ? 'var(--cds-color-warning)' : 'var(--cds-color-fg-subtle)' }}>{f.canDrop}</td>
                     <td style={{ padding: '8px 12px', color: f.canMask === 'Yes' ? 'var(--cds-color-warning)' : f.canMask === 'Sometimes' ? 'var(--cds-color-warning)' : 'var(--cds-color-fg-subtle)' }}>{f.canMask}</td>
+                    <td style={{ padding: '8px 12px', color: f.guardAction === 'Redact' ? '#ef4444' : f.guardAction === 'Mask' ? '#f59e0b' : f.guardAction === 'Encrypt' ? '#a855f7' : f.guardAction === 'Tag' ? '#6b7280' : 'var(--cds-color-fg-subtle)' }}>{f.guardAction || 'None'}</td>
                     <td style={{ padding: '8px 12px', color: 'var(--cds-color-fg-subtle)', maxWidth: 160 }}>{f.notes}</td>
                   </tr>
                 ))}
