@@ -1,503 +1,6 @@
-// @ts-nocheck
-export interface GuardPolicy {
-  sensitiveDataTypes: Array<{
-    type: string;
-    category: 'PII' | 'PCI' | 'PHI' | 'Secrets' | 'Infrastructure';
-    fields: string[];
-    recommendedAction: 'mask' | 'redact' | 'encrypt' | 'reroute' | 'tag';
-    confidence: 'high' | 'medium' | 'low';
-  }>;
-  complianceFrameworks: string[];
-  estimatedSensitivePercent: number;
-  guardNotes: string;
-  recommendedPlacement: 'pre-processing' | 'post-processing';
-}
+import fs from 'fs';
 
-export const guardPolicies: Record<string, GuardPolicy> = {
-
-  'windows-security': {
-    sensitiveDataTypes: [
-      { type: 'Username / SamAccountName', category: 'PII', fields: ['TargetUserName', 'SubjectUserName'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['IpAddress', 'SourceAddress'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Computer Name', category: 'Infrastructure', fields: ['Computer', 'TargetServerName'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA'],
-    estimatedSensitivePercent: 15,
-    guardNotes: 'Windows Security logs contain usernames and IPs in nearly every event. Mask IP addresses when forwarding to non-security teams. Tag usernames for privacy review when routing to 3rd party analytics.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'active-directory': {
-    sensitiveDataTypes: [
-      { type: 'Username / Distinguished Name', category: 'PII', fields: ['TargetUserName', 'SubjectUserName', 'ObjectDN'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Email Address', category: 'PII', fields: ['mail', 'userPrincipalName'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Phone Number', category: 'PII', fields: ['telephoneNumber', 'mobile'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['IpAddress', 'ClientAddress'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'SOX'],
-    estimatedSensitivePercent: 35,
-    guardNotes: 'AD change logs contain PII in attribute values (phone, email, address). High-value target for Guard — attribute change events (4738/4720) include before/after values that may contain PII even in field names not typically expected.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'sysmon': {
-    sensitiveDataTypes: [
-      { type: 'Command Line Arguments', category: 'Secrets', fields: ['CommandLine', 'ParentCommandLine'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['SourceIp', 'DestinationIp'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'Username', category: 'PII', fields: ['User'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'SOC 2'],
-    estimatedSensitivePercent: 25,
-    guardNotes: 'CommandLine fields frequently contain embedded credentials, API keys, and connection strings passed as arguments. Guard AI model excels here — regex alone misses base64-encoded secrets and non-standard key formats.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'linux-auditd': {
-    sensitiveDataTypes: [
-      { type: 'Command Arguments', category: 'Secrets', fields: ['a0', 'a1', 'a2', 'a3', 'exe', 'proctitle'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username / UID', category: 'PII', fields: ['uid', 'auid', 'euid', 'acct'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'File Path', category: 'Infrastructure', fields: ['name', 'cwd'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'HIPAA', 'SOC 2'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'Auditd EXECVE records encode full command lines including passwords passed via CLI flags. The proctitle field can contain credentials in hex-encoded form. Guard pattern matching catches common secret patterns; AI model catches obfuscated ones.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'linux-auth': {
-    sensitiveDataTypes: [
-      { type: 'Username', category: 'PII', fields: ['user', 'ruser', 'acct'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['rhost', 'addr'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'SSH Key Fingerprint', category: 'Secrets', fields: ['key_fingerprint'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'SOC 2'],
-    estimatedSensitivePercent: 30,
-    guardNotes: 'Auth logs contain source IPs and usernames on every line. PAM modules may log additional context including geolocation or device identifiers. Mask IPs before routing to non-SOC destinations.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'crowdstrike-fdr': {
-    sensitiveDataTypes: [
-      { type: 'Command Line', category: 'Secrets', fields: ['CommandLine', 'GrandparentCommandLine'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['UserName', 'UserPrincipal'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['LocalAddressIP4', 'RemoteAddressIP4', 'aip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'MAC Address', category: 'PII', fields: ['MacAddress'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'PCI-DSS'],
-    estimatedSensitivePercent: 40,
-    guardNotes: 'CrowdStrike FDR is extremely rich in PII — every process event carries username, hostname, IP, and MAC. CommandLine fields are the highest-risk for embedded secrets. Recommended: Guard on post-processing pipeline before non-SOC destinations.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'okta-system-log': {
-    sensitiveDataTypes: [
-      { type: 'Email Address', category: 'PII', fields: ['actor.alternateId', 'target[].alternateId'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['client.ipAddress', 'request.ipChain[].ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'User Agent', category: 'PII', fields: ['client.userAgent.rawUserAgent'], recommendedAction: 'tag', confidence: 'low' },
-      { type: 'Geographic Location', category: 'PII', fields: ['client.geographicalContext'], recommendedAction: 'redact', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'SOC 2'],
-    estimatedSensitivePercent: 60,
-    guardNotes: 'Okta logs use email as the primary identifier — every event contains PII by design. Geographic context reveals user location. Guard is critical when routing Okta events to teams outside of Security/IT for operational analytics.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'palo-alto-traffic': {
-    sensitiveDataTypes: [
-      { type: 'IP Address (Internal)', category: 'Infrastructure', fields: ['src', 'dst', 'natSrc', 'natDst'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['srcUser', 'dstUser'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'URL / Domain', category: 'PII', fields: ['misc', 'url_filename'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'PCI-DSS', 'HIPAA'],
-    estimatedSensitivePercent: 25,
-    guardNotes: 'Firewall traffic logs map users to IPs to destinations — powerful for correlation but high-PII when combined. URL fields in threat logs may contain query parameters with tokens or PII. Guard pattern matching handles IP/username; AI catches URLs with embedded credentials.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'palo-alto-threat': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['src', 'dst'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['srcUser'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'URL with Parameters', category: 'Secrets', fields: ['misc', 'url_filename'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'File Hash / Name', category: 'Infrastructure', fields: ['filedigest', 'misc'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'GDPR'],
-    estimatedSensitivePercent: 30,
-    guardNotes: 'Threat logs capture malicious URLs which may contain victim PII in query strings (email, SSN in phishing URLs). The misc field can contain full HTTP request bodies on certain threat types. Guard AI model particularly effective on URL parameter scanning.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'nginx-access': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'PII', fields: ['remote_addr', 'http_x_forwarded_for'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'URL Query Parameters', category: 'Secrets', fields: ['request_uri', 'args'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Auth Token in Header', category: 'Secrets', fields: ['http_authorization', 'http_cookie'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'User Agent', category: 'PII', fields: ['http_user_agent'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'PCI-DSS'],
-    estimatedSensitivePercent: 45,
-    guardNotes: 'Web access logs are PII-dense: every request has an IP, and query strings frequently contain session tokens, API keys, email addresses, and search terms. Authorization headers logged at debug level contain bearer tokens. Guard is essential before routing to observability platforms.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'vpc-flow-logs': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['srcaddr', 'dstaddr'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Account ID', category: 'Infrastructure', fields: ['account-id'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'PCI-DSS'],
-    estimatedSensitivePercent: 10,
-    guardNotes: 'VPC flow logs are lower-PII than most sources (no usernames, no content). IP addresses are the primary concern — internal IPs reveal infrastructure topology. Mask when routing to external SIEMs or third-party analytics.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'aws-cloudtrail': {
-    sensitiveDataTypes: [
-      { type: 'IAM Principal / ARN', category: 'PII', fields: ['userIdentity.arn', 'userIdentity.userName'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['sourceIPAddress'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Access Key ID', category: 'Secrets', fields: ['userIdentity.accessKeyId', 'requestParameters.accessKeyId'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Resource ARN', category: 'Infrastructure', fields: ['resources[].ARN', 'requestParameters'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOC 2', 'PCI-DSS', 'HIPAA', 'FedRAMP'],
-    estimatedSensitivePercent: 35,
-    guardNotes: 'CloudTrail requestParameters and responseElements can contain arbitrary API payloads — S3 PutObject metadata, EC2 UserData (often base64 secrets), IAM policy documents. Guard AI model catches secrets in nested JSON structures that pattern matching misses.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'k8s-audit': {
-    sensitiveDataTypes: [
-      { type: 'Service Account Token', category: 'Secrets', fields: ['requestObject.data', 'responseObject.data'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['sourceIPs[]'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Secret Values', category: 'Secrets', fields: ['requestObject.data', 'requestObject.stringData'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['user.username', 'impersonatedUser.username'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOC 2', 'PCI-DSS', 'HIPAA'],
-    estimatedSensitivePercent: 30,
-    guardNotes: 'K8s audit logs at RequestResponse level include full Secret object contents (TLS certs, DB passwords, API keys) in base64. This is the #1 source of credential leaks into SIEM. Guard MUST be applied before any non-platform destination. Use redact action on requestObject.data for Secret resources.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'windows-dns': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['Source', 'QNAME_response'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'DNS Query (Browsing History)', category: 'PII', fields: ['QNAME'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA'],
-    estimatedSensitivePercent: 15,
-    guardNotes: 'DNS query logs reveal browsing behavior (which constitutes PII under GDPR). Internal hostname queries may reveal infrastructure naming conventions. Mask client IPs and consider hashing query names when routing to analytics teams.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'f5-ltm': {
-    sensitiveDataTypes: [
-      { type: 'IP Address (Client)', category: 'PII', fields: ['client_ip', 'source_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'HTTP Headers', category: 'Secrets', fields: ['request_headers', 'cookie'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'SSL Certificate CN', category: 'PII', fields: ['ssl_client_cn', 'ssl_server_cn'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'GDPR'],
-    estimatedSensitivePercent: 30,
-    guardNotes: 'F5 LTM request logging may capture full HTTP headers including Authorization, Cookie, and X-Forwarded-For chains. iRule logging can expose application-layer secrets. Apply Guard before routing to non-security destinations.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'cisco-asa': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['src_ip', 'dst_ip', 'mapped_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['user', 'aaa_user'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'VPN Group Policy', category: 'Infrastructure', fields: ['group_policy', 'tunnel_group'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'SOC 2'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'ASA logs map VPN users to internal IPs, creating a user-to-resource correlation trail. Mask IPs and tag usernames when forwarding to operational teams who don\'t need identity context.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'workday-audit': {
-    sensitiveDataTypes: [
-      { type: 'Employee Name / Worker ID', category: 'PII', fields: ['System_Account', 'Target_Worker'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'SSN / National ID', category: 'PII', fields: ['Field_Path'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'Compensation Data', category: 'PII', fields: ['Field_Path', 'Report_Name'], recommendedAction: 'encrypt', confidence: 'high' },
-      { type: 'Banking / Direct Deposit', category: 'PCI', fields: ['Field_Path'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['IP_Address'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'SOX', 'HIPAA'],
-    estimatedSensitivePercent: 75,
-    guardNotes: 'Workday audit logs are extremely PII-dense — nearly every event references an employee by name/ID and the Field_Path column may reference SSN, salary, bank accounts, and health elections. Guard is CRITICAL on this source. Encrypt compensation fields, redact SSN/banking, mask names when routing outside HR Security.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'workday-integration-prism': {
-    sensitiveDataTypes: [
-      { type: 'Integration Credentials', category: 'Secrets', fields: ['Integration_System_User', 'Output_Endpoint'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Employee Record Counts', category: 'PII', fields: ['Records_Processed'], recommendedAction: 'tag', confidence: 'low' },
-      { type: 'SFTP Endpoints', category: 'Infrastructure', fields: ['Output_Endpoint'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOX', 'SOC 2'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'Integration logs are lower-PII than audit logs but may expose ISU credentials in error messages, SFTP paths with embedded credentials, and endpoint URLs revealing partner integrations. Guard catches secrets in error stack traces.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'sap-sm20-audit': {
-    sensitiveDataTypes: [
-      { type: 'SAP Username', category: 'PII', fields: ['User', 'Terminal'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Transaction Data in Messages', category: 'PII', fields: ['Message_Text'], recommendedAction: 'mask', confidence: 'medium' },
-      { type: 'Client IP / Terminal', category: 'Infrastructure', fields: ['Terminal'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['SOX', 'GDPR', 'GxP'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'SM20 message text fields may contain variable data from transactions including customer names, financial amounts, and material numbers. The Terminal field maps users to workstations. Lower PII density than application-layer SAP logs but still requires Guard when routing to non-GRC teams.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'sap-hana-audit': {
-    sensitiveDataTypes: [
-      { type: 'SQL Statement (Full Text)', category: 'Secrets', fields: ['STATEMENT_STRING', 'EXECUTED_STATEMENT'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Database Username', category: 'PII', fields: ['USER_NAME', 'SESSION_USER'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Client IP', category: 'Infrastructure', fields: ['CLIENT_IP'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'PII in WHERE Clauses', category: 'PII', fields: ['STATEMENT_STRING'], recommendedAction: 'redact', confidence: 'high' },
-    ],
-    complianceFrameworks: ['SOX', 'PCI-DSS', 'GDPR', 'GxP'],
-    estimatedSensitivePercent: 55,
-    guardNotes: 'HANA audit trail captures full SQL statements which frequently contain PII in WHERE clauses (SELECT ... WHERE SSN = \'123-45-6789\'), literal values in INSERT statements, and connection strings with passwords. Guard AI model is critical here — SQL statement parsing requires contextual understanding beyond regex.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'oracle-unified-audit': {
-    sensitiveDataTypes: [
-      { type: 'SQL Statement Text', category: 'Secrets', fields: ['SQL_TEXT'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Database Username', category: 'PII', fields: ['DBUSERNAME', 'OS_USERNAME'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Client Hostname', category: 'Infrastructure', fields: ['USERHOST', 'TERMINAL'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'PII in Query Predicates', category: 'PII', fields: ['SQL_TEXT'], recommendedAction: 'redact', confidence: 'high' },
-    ],
-    complianceFrameworks: ['SOX', 'PCI-DSS', 'HIPAA', 'GDPR'],
-    estimatedSensitivePercent: 50,
-    guardNotes: 'Oracle Unified Audit captures SQL_TEXT which contains literal values from application queries — SSNs, credit card numbers, account numbers in WHERE clauses. Fine-Grained Auditing (FGA) policies target sensitive columns but the audit record itself then contains the sensitive predicate values. Guard is essential.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'salesforce-events': {
-    sensitiveDataTypes: [
-      { type: 'Username / Email', category: 'PII', fields: ['USER_NAME', 'USER_ID'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['SOURCE_IP'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Report Data (Row Counts)', category: 'PII', fields: ['ENTITY_NAME', 'ROWS_PROCESSED'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'Session/Login Keys', category: 'Secrets', fields: ['SESSION_KEY', 'LOGIN_KEY'], recommendedAction: 'redact', confidence: 'high' },
-    ],
-    complianceFrameworks: ['SOC 2', 'GDPR', 'CCPA', 'HIPAA'],
-    estimatedSensitivePercent: 45,
-    guardNotes: 'Salesforce EventLogFile data uses email as primary identifier and includes session tokens. ReportExport events reveal what customer data was accessed. BulkAPI events may include query SOQL with customer identifiers. Guard catches session tokens and email patterns reliably.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'mimecast-email': {
-    sensitiveDataTypes: [
-      { type: 'Email Address (Sender/Recipient)', category: 'PII', fields: ['from', 'to', 'envelope_from', 'envelope_to'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Subject Line', category: 'PII', fields: ['subject'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['source_ip', 'sender_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Attachment Names', category: 'PII', fields: ['attachment_filename'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'HIPAA'],
-    estimatedSensitivePercent: 85,
-    guardNotes: 'Email security logs are the highest-PII source in most environments. Every event contains sender/recipient email addresses, subject lines (which may contain PII like "Invoice for John Smith #12345"), and attachment names. Guard is MANDATORY before any non-security routing.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'mongodb-audit': {
-    sensitiveDataTypes: [
-      { type: 'Query Parameters', category: 'PII', fields: ['param.command', 'param.query'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['users[].user', 'param.user'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['local.ip', 'remote.ip'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'HIPAA', 'SOC 2'],
-    estimatedSensitivePercent: 40,
-    guardNotes: 'MongoDB audit logs capture full query documents which may contain PII in filter predicates ({email: "user@company.com"}) and update values. Aggregation pipelines in command field can reference sensitive fields. Guard AI model handles nested JSON document scanning effectively.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'postgresql-audit': {
-    sensitiveDataTypes: [
-      { type: 'SQL Statement', category: 'Secrets', fields: ['statement', 'detail'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username / Role', category: 'PII', fields: ['user_name', 'session_user_name'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Client IP', category: 'Infrastructure', fields: ['connection_from'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'PII in Parameters', category: 'PII', fields: ['detail'], recommendedAction: 'redact', confidence: 'high' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'HIPAA', 'SOX', 'GDPR'],
-    estimatedSensitivePercent: 50,
-    guardNotes: 'pgAudit logs capture parameterized queries with bound values in the detail field — PII appears as literal parameters. COPY commands expose bulk data paths. Guard catches PII patterns in SQL text and parameter bindings.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'snowflake-audit': {
-    sensitiveDataTypes: [
-      { type: 'SQL Query Text', category: 'Secrets', fields: ['QUERY_TEXT'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username / Role', category: 'PII', fields: ['USER_NAME', 'ROLE_NAME'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Client IP', category: 'Infrastructure', fields: ['CLIENT_IP'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Connection Parameters', category: 'Secrets', fields: ['CLIENT_ENVIRONMENT'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOC 2', 'PCI-DSS', 'HIPAA', 'GDPR'],
-    estimatedSensitivePercent: 40,
-    guardNotes: 'Snowflake QUERY_HISTORY captures full SQL text including COPY INTO commands with S3 credentials, CREATE STAGE with cloud keys, and SELECT with PII filter values. CLIENT_ENVIRONMENT may contain OS username and application secrets.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'mssql-audit': {
-    sensitiveDataTypes: [
-      { type: 'SQL Statement', category: 'Secrets', fields: ['statement'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username / Principal', category: 'PII', fields: ['server_principal_name', 'database_principal_name'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Client IP', category: 'Infrastructure', fields: ['client_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Application Name', category: 'Infrastructure', fields: ['application_name'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['SOX', 'PCI-DSS', 'HIPAA'],
-    estimatedSensitivePercent: 45,
-    guardNotes: 'SQL Server audit captures full statement text. Dynamic SQL and ad-hoc queries contain literal PII values. Linked server queries may expose cross-database credentials. Column-level auditing means the captured statement references the exact sensitive columns accessed.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'google-workspace-audit': {
-    sensitiveDataTypes: [
-      { type: 'Email Address', category: 'PII', fields: ['actor.email', 'parameters[].value'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['ipAddress'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Document Title', category: 'PII', fields: ['events[].parameters[].value'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'OAuth Token Scopes', category: 'Secrets', fields: ['events[].parameters[].value'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'SOC 2', 'HIPAA'],
-    estimatedSensitivePercent: 55,
-    guardNotes: 'Google Workspace Admin logs use email as primary identifier throughout. Document titles may contain project names, customer names, or sensitive topics. OAuth token grant events expose scopes and client secrets. Drive sharing events reveal collaborator networks.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'sentinelone-edr': {
-    sensitiveDataTypes: [
-      { type: 'Command Line', category: 'Secrets', fields: ['threatInfo.commandLineArguments', 'processInfo.commandLine'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['agentDetectionInfo.agentLastLoggedInUserName'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['agentDetectionInfo.agentIpV4', 'networkInfo.remoteIp'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'File Path', category: 'PII', fields: ['threatInfo.filePath'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'PCI-DSS'],
-    estimatedSensitivePercent: 35,
-    guardNotes: 'SentinelOne Deep Visibility data mirrors CrowdStrike in PII density — process trees carry usernames, IPs, and command lines with embedded secrets. File path fields may reveal user home directory structures (/home/jsmith/).',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'aws-guardduty': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['service.action.networkConnectionAction.remoteIpDetails.ipAddressV4'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'IAM Principal', category: 'PII', fields: ['resource.accessKeyDetails.userName', 'resource.instanceDetails.iamInstanceProfile.arn'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'Instance ID / DNS', category: 'Infrastructure', fields: ['resource.instanceDetails.instanceId', 'service.action.dnsRequestAction.domain'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOC 2', 'PCI-DSS'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'GuardDuty findings contain IAM principals, IPs, and DNS queries. Lower PII density than raw CloudTrail since findings are pre-aggregated. Tag IAM users when routing to non-security ops teams.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'aws-waf-logs': {
-    sensitiveDataTypes: [
-      { type: 'Client IP', category: 'PII', fields: ['httpRequest.clientIp'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'HTTP Headers (Cookies/Auth)', category: 'Secrets', fields: ['httpRequest.headers[]'], recommendedAction: 'redact', confidence: 'high' },
-      { type: 'URI / Query String', category: 'PII', fields: ['httpRequest.uri', 'httpRequest.args'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Country / Geo', category: 'PII', fields: ['httpRequest.country'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['GDPR', 'PCI-DSS', 'CCPA'],
-    estimatedSensitivePercent: 50,
-    guardNotes: 'WAF logs capture full HTTP request metadata including headers (Authorization, Cookie, X-API-Key) and URI with query parameters containing user credentials, tokens, and PII. This is one of the richest sources for secret leaks. Guard MUST scan headers array.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'aws-alb-logs': {
-    sensitiveDataTypes: [
-      { type: 'Client IP', category: 'PII', fields: ['client:port', 'client_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'URL with Parameters', category: 'Secrets', fields: ['request_url'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'User Agent', category: 'PII', fields: ['user_agent'], recommendedAction: 'tag', confidence: 'low' },
-      { type: 'SSL Cipher / Certificate', category: 'Infrastructure', fields: ['ssl_cipher', 'ssl_protocol'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA', 'PCI-DSS'],
-    estimatedSensitivePercent: 35,
-    guardNotes: 'ALB access logs capture request URLs with full query strings. OAuth callback URLs contain authorization codes, API endpoints contain API keys in query params, and health check endpoints may expose internal naming.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'cisco-firepower': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['InitiatorIP', 'ResponderIP'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['User'], recommendedAction: 'tag', confidence: 'high' },
-      { type: 'URL / Domain', category: 'PII', fields: ['URL', 'DNSQuery'], recommendedAction: 'mask', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'SOC 2'],
-    estimatedSensitivePercent: 25,
-    guardNotes: 'Firepower connection and intrusion events map users to network flows. URL logging in file/malware events may expose browsing history. Mask IPs and URLs when routing to non-SOC operational dashboards.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'squid-proxy': {
-    sensitiveDataTypes: [
-      { type: 'Client IP', category: 'PII', fields: ['client_ip', 'src_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Full URL (Browsing History)', category: 'PII', fields: ['url', 'request_url'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username (NTLM/Kerberos)', category: 'PII', fields: ['ident', 'user'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['GDPR', 'CCPA'],
-    estimatedSensitivePercent: 70,
-    guardNotes: 'Proxy logs are essentially browsing history mapped to users — high PII by nature. Every line contains an IP, often a username (if auth is enabled), and the full URL including query strings. Guard is essential when these logs are used for anything beyond security monitoring.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'darktrace-ndr': {
-    sensitiveDataTypes: [
-      { type: 'IP Address (Internal)', category: 'Infrastructure', fields: ['device.ip', 'source.ip', 'destination.ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Hostname / Device Name', category: 'PII', fields: ['device.hostname', 'device.label'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'Username (from traffic)', category: 'PII', fields: ['device.credentials[]'], recommendedAction: 'mask', confidence: 'high' },
-    ],
-    complianceFrameworks: ['GDPR', 'PCI-DSS'],
-    estimatedSensitivePercent: 25,
-    guardNotes: 'Darktrace model breach alerts contain internal IPs, hostnames, and sometimes credentials observed in cleartext traffic. Device labels may include user assignments. Mask when forwarding to third-party correlation platforms.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'wiz-cloud-security': {
-    sensitiveDataTypes: [
-      { type: 'Resource ARN / ID', category: 'Infrastructure', fields: ['resource.id', 'resource.nativeType'], recommendedAction: 'tag', confidence: 'medium' },
-      { type: 'IP Address', category: 'Infrastructure', fields: ['resource.ipAddresses[]'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Cloud Account ID', category: 'Infrastructure', fields: ['resource.subscription.externalId'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['SOC 2', 'CIS'],
-    estimatedSensitivePercent: 15,
-    guardNotes: 'Wiz findings are pre-processed security posture data — lower PII than raw cloud logs. May contain resource IPs and cloud account identifiers. Tag rather than mask when routing to remediation workflows.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'juniper-srx': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['source-address', 'destination-address', 'nat-source-address'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Username', category: 'PII', fields: ['username', 'source-identity'], recommendedAction: 'tag', confidence: 'high' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'SOC 2'],
-    estimatedSensitivePercent: 20,
-    guardNotes: 'Juniper SRX flow logs follow similar patterns to Palo Alto — IPs and usernames in session logs. NAT translation reveals internal topology. Mask when routing to external MSSPs or cloud analytics.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'cisco-sdwan': {
-    sensitiveDataTypes: [
-      { type: 'IP Address', category: 'Infrastructure', fields: ['src_ip', 'dst_ip', 'local_tloc_ip'], recommendedAction: 'mask', confidence: 'high' },
-      { type: 'Site / Branch Name', category: 'Infrastructure', fields: ['site_name', 'system_ip'], recommendedAction: 'tag', confidence: 'medium' },
-    ],
-    complianceFrameworks: ['PCI-DSS', 'SOC 2'],
-    estimatedSensitivePercent: 15,
-    guardNotes: 'SD-WAN telemetry reveals branch topology and site naming. TLOC IPs and system IPs expose WAN architecture. Lower PII than user-level logs but important for infrastructure confidentiality.',
-    recommendedPlacement: 'post-processing',
-  },
-
-  'aws-cloudwatch-metrics': {
-    sensitiveDataTypes: [
-      { type: 'Account / Resource ID', category: 'Infrastructure', fields: ['dimensions.InstanceId', 'dimensions.FunctionName'], recommendedAction: 'tag', confidence: 'low' },
-    ],
-    complianceFrameworks: [],
-    estimatedSensitivePercent: 5,
-    guardNotes: 'CloudWatch metrics are the lowest-PII source — numeric values with dimension labels. Resource IDs may reveal naming conventions but contain no personal data. Guard adds minimal value here unless custom metrics embed user identifiers in dimension names.',
-    recommendedPlacement: 'post-processing',
-  },
-
-
+const newPolicies = {
   'zscaler-web-logs': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['user', 'department', 'location'], recommendedAction: 'mask', confidence: 'high' },
@@ -509,7 +12,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Web proxy logs contain full browsing history tied to user identity — high-PII by nature. URLs may embed session tokens, OAuth codes, and personal identifiers in query strings. Guard AI model valuable for detecting credentials in URL parameters.',
     recommendedPlacement: 'post-processing',
   },
-
   'checkpoint-fw': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['src', 'dst', 'xlatesrc', 'xlatedst'], recommendedAction: 'mask', confidence: 'high' },
@@ -520,7 +22,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Check Point firewall logs contain source/destination IPs and NAT translations. Identity awareness blade adds usernames to connection events. Standard rule-based Guard detection covers the structured IP and user fields well.',
     recommendedPlacement: 'post-processing',
   },
-
   'infoblox-dns': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'Infrastructure', fields: ['client_ip', 'source_ip'], recommendedAction: 'mask', confidence: 'high' },
@@ -531,7 +32,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'DNS query logs correlate browsing behavior to client IPs. Individual queries are low risk but aggregation reveals user activity patterns. Tag query names for privacy review; mask client IPs when forwarding to analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'cisco-umbrella': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['identities', 'externalIp', 'internalIp'], recommendedAction: 'mask', confidence: 'high' },
@@ -542,7 +42,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Umbrella logs correlate user identities (AD-integrated) to DNS queries and web activity. Identity field is directly PII. Domain access patterns reveal user behavior over time.',
     recommendedPlacement: 'post-processing',
   },
-
   'netflow': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['IPV4_SRC_ADDR', 'IPV4_DST_ADDR', 'IPV6_SRC_ADDR', 'IPV6_DST_ADDR'], recommendedAction: 'mask', confidence: 'high' },
@@ -552,7 +51,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'NetFlow is metadata-only — no payload content, no usernames. IP addresses are the primary sensitive element. Low PII risk overall but IPs may need masking for non-security analytics destinations.',
     recommendedPlacement: 'post-processing',
   },
-
   'ipfix': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['sourceIPv4Address', 'destinationIPv4Address'], recommendedAction: 'mask', confidence: 'high' },
@@ -562,7 +60,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'IPFIX flow records are purely network metadata. Similar to NetFlow — IP addresses are the only sensitive data type. Mask IPs when routing to non-security observability destinations.',
     recommendedPlacement: 'post-processing',
   },
-
   'apache-access': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['remote_host', 'clientip'], recommendedAction: 'mask', confidence: 'high' },
@@ -574,7 +71,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Apache access logs tie client IPs to URLs. Query parameters often contain user IDs, session tokens, and search terms. Guard pattern matching catches embedded credentials in request URIs.',
     recommendedPlacement: 'post-processing',
   },
-
   'iis-access': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['c-ip', 'cs-host'], recommendedAction: 'mask', confidence: 'high' },
@@ -587,7 +83,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'IIS logs with advanced fields include cookies and auth headers — high sensitivity. Query strings frequently contain form data (login, PII). Guard AI model valuable for detecting base64-encoded tokens in header fields.',
     recommendedPlacement: 'post-processing',
   },
-
   'akamai-waf': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['clientIP', 'attackData.clientIP'], recommendedAction: 'mask', confidence: 'high' },
@@ -599,7 +94,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Akamai WAF events include attack payloads which may contain credentials attackers attempted to exfiltrate or exploit. Request headers contain auth tokens. Guard catches embedded secrets in attack payloads.',
     recommendedPlacement: 'post-processing',
   },
-
   'prisma-access-traffic': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['src', 'dst', 'natSrc', 'natDst'], recommendedAction: 'mask', confidence: 'high' },
@@ -611,7 +105,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Prisma Access traffic logs include User-ID integration tying network sessions to named users. URLs in the misc field may contain tokens and PII. Same pattern as on-prem Palo Alto but with remote user context added.',
     recommendedPlacement: 'post-processing',
   },
-
   'prisma-access-gp': {
     sensitiveDataTypes: [
       { type: 'Username', category: 'PII', fields: ['user', 'srcUser'], recommendedAction: 'mask', confidence: 'high' },
@@ -623,7 +116,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'GlobalProtect connection logs directly identify users with their home/remote IPs and device details. Every event is a user-session correlation. High PII density — Guard masking essential before forwarding to non-security analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'netskope': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['user', 'from_user', 'to_user'], recommendedAction: 'mask', confidence: 'high' },
@@ -635,7 +127,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Netskope CASB logs correlate users to cloud application activity including file operations. DLP events by definition contain or reference sensitive content. Guard AI model excels at detecting PII in object/file names and URLs.',
     recommendedPlacement: 'post-processing',
   },
-
   'cloudflare': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['ClientIP', 'EdgeServerIP'], recommendedAction: 'mask', confidence: 'high' },
@@ -647,7 +138,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Cloudflare HTTP logs expose visitor IPs and request URIs. Origin IP exposure is an infrastructure security concern. URIs may contain session tokens in query parameters. Standard Guard pattern matching handles these well.',
     recommendedPlacement: 'post-processing',
   },
-
   'openai-usage': {
     sensitiveDataTypes: [
       { type: 'API Key', category: 'Secrets', fields: ['api_key_id', 'organization_id'], recommendedAction: 'redact', confidence: 'high' },
@@ -658,7 +148,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'OpenAI usage logs contain API key references and optional end-user IDs. Prompt/completion content is not typically in usage logs but may appear in error responses. Redact any API key values.',
     recommendedPlacement: 'post-processing',
   },
-
   'openai-compliance': {
     sensitiveDataTypes: [
       { type: 'Prompt/Completion Content', category: 'PII', fields: ['input', 'output', 'messages'], recommendedAction: 'mask', confidence: 'high' },
@@ -670,7 +159,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'AI compliance logs contain full prompt and completion text which frequently includes PII, PHI, credentials, and proprietary data submitted by end users. Guard AI model critical here — unstructured text with unpredictable sensitive content patterns.',
     recommendedPlacement: 'pre-processing',
   },
-
   'anthropic-compliance': {
     sensitiveDataTypes: [
       { type: 'Prompt/Completion Content', category: 'PII', fields: ['input', 'output', 'messages'], recommendedAction: 'mask', confidence: 'high' },
@@ -682,7 +170,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Anthropic compliance logs mirror OpenAI — full conversation content with unpredictable PII in prompts/completions. Guard AI model essential for detecting embedded secrets, PHI, and PII in freeform user input.',
     recommendedPlacement: 'pre-processing',
   },
-
   'prisma-cloud-cspm': {
     sensitiveDataTypes: [
       { type: 'Cloud Resource IDs', category: 'Infrastructure', fields: ['resourceId', 'accountId', 'rrn'], recommendedAction: 'tag', confidence: 'medium' },
@@ -693,7 +180,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'CSPM posture findings are primarily infrastructure metadata. Low PII content — resource IDs and misconfigurations. Tag resource identifiers that could reveal internal naming conventions.',
     recommendedPlacement: 'post-processing',
   },
-
   'prisma-cloud-cwp': {
     sensitiveDataTypes: [
       { type: 'Container / Image Name', category: 'Infrastructure', fields: ['imageName', 'containerName', 'hostname'], recommendedAction: 'tag', confidence: 'medium' },
@@ -704,7 +190,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'CWP runtime events capture process executions in containers — command lines may embed secrets (env vars, connection strings). Guard AI model catches base64-encoded credentials in container startup commands.',
     recommendedPlacement: 'post-processing',
   },
-
   'aws-vpc-flow': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['srcaddr', 'dstaddr', 'pkt-srcaddr', 'pkt-dstaddr'], recommendedAction: 'mask', confidence: 'high' },
@@ -714,7 +199,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'VPC Flow Logs are pure network metadata — IPs, ports, bytes, action. No usernames, no payload. IP addresses are the only sensitive element. Low Guard value unless masking IPs for non-security destinations.',
     recommendedPlacement: 'post-processing',
   },
-
   'o365-activity': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['UserId', 'UserKey', 'ClientIP'], recommendedAction: 'mask', confidence: 'high' },
@@ -726,7 +210,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Office 365 activity logs span Exchange, SharePoint, OneDrive, Teams — every event tied to a user. Mailbox operations reference email subjects and file names that may contain PII. Guard masking essential for non-security forwarding.',
     recommendedPlacement: 'post-processing',
   },
-
   'microsoft-graph': {
     sensitiveDataTypes: [
       { type: 'User Profile Data', category: 'PII', fields: ['userPrincipalName', 'displayName', 'mail', 'mobilePhone'], recommendedAction: 'mask', confidence: 'high' },
@@ -737,7 +220,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Microsoft Graph API responses contain rich user profile data including names, emails, phone numbers. Every query response potentially contains PII. Guard masking critical when syncing Graph data to analytics platforms.',
     recommendedPlacement: 'pre-processing',
   },
-
   'cisco-ise': {
     sensitiveDataTypes: [
       { type: 'Username / Identity', category: 'PII', fields: ['UserName', 'CallingStationID'], recommendedAction: 'mask', confidence: 'high' },
@@ -749,7 +231,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'ISE authentication logs tie usernames to MAC addresses and IPs — direct device-to-user correlation. CallingStationID is often a MAC address uniquely identifying personal devices. High privacy impact when forwarding to analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'ping-identity': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['subject', 'userName', 'email'], recommendedAction: 'mask', confidence: 'high' },
@@ -761,7 +242,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'PingIdentity logs are inherently identity-rich — every event references a user principal. Token values in debug/verbose logs are high-risk secrets. Redact any token references; mask user identifiers for non-security destinations.',
     recommendedPlacement: 'post-processing',
   },
-
   'duo-mfa': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['user.name', 'user.email'], recommendedAction: 'mask', confidence: 'high' },
@@ -773,7 +253,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Duo MFA logs contain names, emails, phone numbers, and precise geolocation for every auth attempt. Highest PII density among identity sources — every event directly identifies a person with location context. Guard masking essential.',
     recommendedPlacement: 'post-processing',
   },
-
   'okta-system-logs': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['actor.displayName', 'actor.alternateId', 'target.displayName'], recommendedAction: 'mask', confidence: 'high' },
@@ -785,7 +264,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Okta System Log events tie user identities to every action with rich context (device, geo, app). alternateId is typically an email address. Guard masking critical for privacy when forwarding to analytics or observability platforms.',
     recommendedPlacement: 'post-processing',
   },
-
   'microsoft-entra-id': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['userPrincipalName', 'userDisplayName'], recommendedAction: 'mask', confidence: 'high' },
@@ -797,7 +275,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Entra ID sign-in logs contain UPNs (email addresses), display names, IPs, and city-level geolocation for every authentication. High PII density — Guard masking essential before non-security destinations.',
     recommendedPlacement: 'post-processing',
   },
-
   'cyberark-pam': {
     sensitiveDataTypes: [
       { type: 'Privileged Credentials', category: 'Secrets', fields: ['target_account', 'safe'], recommendedAction: 'redact', confidence: 'high' },
@@ -809,7 +286,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'PAM logs reveal who accessed which privileged accounts on which systems — security crown jewels. Session recordings reference paths may contain credentials. Guard should redact credential references and mask operator identities for non-SOC destinations.',
     recommendedPlacement: 'pre-processing',
   },
-
   'crowdstrike-edr': {
     sensitiveDataTypes: [
       { type: 'Command Line', category: 'Secrets', fields: ['CommandLine', 'ParentBaseFileName'], recommendedAction: 'mask', confidence: 'high' },
@@ -821,7 +297,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'CrowdStrike EDR telemetry captures full command lines which frequently embed secrets (API keys, passwords in scripts). Guard AI model excels at detecting base64-encoded and obfuscated credentials in process arguments.',
     recommendedPlacement: 'post-processing',
   },
-
   'trellix-hx': {
     sensitiveDataTypes: [
       { type: 'Username', category: 'PII', fields: ['username', 'hostname'], recommendedAction: 'mask', confidence: 'medium' },
@@ -833,7 +308,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Trellix HX endpoint alerts include process execution details and user context. Command line arguments are the primary secrets risk. Standard Guard pattern matching covers structured fields; AI model adds value for process args.',
     recommendedPlacement: 'post-processing',
   },
-
   'trellix-nx': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['srcIp', 'dstIp', 'sensorIp'], recommendedAction: 'mask', confidence: 'high' },
@@ -844,7 +318,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Trellix NX network detection events are primarily network metadata with IPs and detected malware URLs. Lower PII than endpoint sources. URLs may contain tokens if capturing HTTP traffic. Standard Guard pattern matching sufficient.',
     recommendedPlacement: 'post-processing',
   },
-
   'carbon-black': {
     sensitiveDataTypes: [
       { type: 'Command Line', category: 'Secrets', fields: ['process_cmdline', 'parent_cmdline'], recommendedAction: 'mask', confidence: 'high' },
@@ -856,7 +329,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Carbon Black process events capture full command lines — same secrets risk as CrowdStrike/Sysmon. Device usernames directly identify individuals. Guard AI model valuable for command line secrets detection.',
     recommendedPlacement: 'post-processing',
   },
-
   'microsoft-defender-endpoint': {
     sensitiveDataTypes: [
       { type: 'Command Line', category: 'Secrets', fields: ['ProcessCommandLine', 'InitiatingProcessCommandLine'], recommendedAction: 'mask', confidence: 'high' },
@@ -868,7 +340,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'MDE advanced hunting data includes command lines (secrets risk), account names, and network connections. ProcessCommandLine is the highest-value Guard target — frequently contains embedded credentials in enterprise environments.',
     recommendedPlacement: 'post-processing',
   },
-
   'cisco-secure-email': {
     sensitiveDataTypes: [
       { type: 'Email Addresses', category: 'PII', fields: ['sender', 'recipient', 'envelopeFrom'], recommendedAction: 'mask', confidence: 'high' },
@@ -880,7 +351,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Email security logs contain sender/recipient addresses (PII) and subject lines that may reference sensitive matters (legal, HR, medical). Redact subjects; mask addresses when forwarding to analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'proofpoint-email': {
     sensitiveDataTypes: [
       { type: 'Email Addresses', category: 'PII', fields: ['sender', 'recipient'], recommendedAction: 'mask', confidence: 'high' },
@@ -892,7 +362,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Proofpoint message logs include sender/recipient PII and subject lines. Threat classification adds IOC context but doesn\'t reduce PII exposure. Guard masking for email addresses; redact subjects that may reference sensitive content.',
     recommendedPlacement: 'post-processing',
   },
-
   'k8s-audit-logs': {
     sensitiveDataTypes: [
       { type: 'Service Account / User', category: 'PII', fields: ['user.username', 'impersonatedUser.username'], recommendedAction: 'tag', confidence: 'medium' },
@@ -903,7 +372,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'K8s audit logs may contain Secret objects in requestObject/responseObject when Secrets are created or updated. Guard AI model critical for detecting base64-encoded secrets in request bodies. Tag service accounts for attribution.',
     recommendedPlacement: 'post-processing',
   },
-
   'linux-syslog': {
     sensitiveDataTypes: [
       { type: 'Username', category: 'PII', fields: ['user', 'uid'], recommendedAction: 'tag', confidence: 'medium' },
@@ -915,7 +383,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Syslog is highly variable — structured daemon logs are low-PII but application messages may embed credentials, stack traces with PII, or error messages with user data. Guard AI model adds value for unstructured message field scanning.',
     recommendedPlacement: 'post-processing',
   },
-
   'windows-system': {
     sensitiveDataTypes: [
       { type: 'Computer Name', category: 'Infrastructure', fields: ['Computer', 'MachineName'], recommendedAction: 'tag', confidence: 'low' },
@@ -925,7 +392,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Windows System log events are primarily service lifecycle and driver events — extremely low PII. Computer names reveal infrastructure naming but contain no personal data. Minimal Guard value.',
     recommendedPlacement: 'post-processing',
   },
-
   'windows-application': {
     sensitiveDataTypes: [
       { type: 'Username', category: 'PII', fields: ['UserName', 'AccountName'], recommendedAction: 'tag', confidence: 'low' },
@@ -936,7 +402,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Application event logs contain crash dumps and error messages that occasionally include connection strings, file paths with usernames, or stack traces with PII. Low frequency but Guard AI catches these edge cases.',
     recommendedPlacement: 'post-processing',
   },
-
   'windows-sysmon': {
     sensitiveDataTypes: [
       { type: 'Command Line', category: 'Secrets', fields: ['CommandLine', 'ParentCommandLine'], recommendedAction: 'mask', confidence: 'high' },
@@ -948,7 +413,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Sysmon command line capture is the primary secrets exposure — same as the sysmon source. Process creation events (Event ID 1) with full command lines frequently contain embedded API keys, passwords, and connection strings.',
     recommendedPlacement: 'post-processing',
   },
-
   'windows-wef': {
     sensitiveDataTypes: [
       { type: 'Username / SID', category: 'PII', fields: ['TargetUserName', 'SubjectUserName', 'TargetUserSid'], recommendedAction: 'mask', confidence: 'high' },
@@ -960,7 +424,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Windows Event Forwarding aggregates Security + Sysmon events — combines identity PII with command line secrets risk. Same sensitivity as individual Windows sources but concentrated in a single stream.',
     recommendedPlacement: 'post-processing',
   },
-
   'f5-bigip-ltm': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['client_ip', 'source'], recommendedAction: 'mask', confidence: 'high' },
@@ -972,7 +435,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'F5 BIG-IP LTM traffic logs contain client IPs and HTTP request details. iRule logging may capture headers with auth tokens. Standard Guard pattern matching handles the structured fields; AI model adds value for custom iRule captures.',
     recommendedPlacement: 'post-processing',
   },
-
   'fortinet-fortigate': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['srcip', 'dstip', 'transip'], recommendedAction: 'mask', confidence: 'high' },
@@ -984,7 +446,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'FortiGate traffic and UTM logs contain IPs and authenticated usernames. Web filter logs add URL visibility. Standard Guard pattern matching covers the structured KV format well.',
     recommendedPlacement: 'post-processing',
   },
-
   'zeek-logs': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['id.orig_h', 'id.resp_h'], recommendedAction: 'mask', confidence: 'high' },
@@ -995,7 +456,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Zeek network metadata logs are primarily IPs and connection tuples. HTTP/DNS/SSL logs add application context — URIs may contain tokens but Zeek does not capture payload by default. Standard pattern matching sufficient.',
     recommendedPlacement: 'post-processing',
   },
-
   'suricata-ids': {
     sensitiveDataTypes: [
       { type: 'IP Address', category: 'Infrastructure', fields: ['src_ip', 'dest_ip'], recommendedAction: 'mask', confidence: 'high' },
@@ -1006,7 +466,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Suricata IDS alerts are network metadata with IPs and protocol details. HTTP events may capture URLs with tokens. Alert payloads in pcap mode could contain full packet content — rare in log-mode deployments.',
     recommendedPlacement: 'post-processing',
   },
-
   'zscaler-zpa': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['User', 'ClientPublicIP', 'ClientPrivateIP'], recommendedAction: 'mask', confidence: 'high' },
@@ -1017,7 +476,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'ZPA private access logs directly correlate users to internal applications and infrastructure IPs — reveals internal network topology tied to user identity. Guard masking critical before non-security forwarding.',
     recommendedPlacement: 'post-processing',
   },
-
   'citrix-netscaler': {
     sensitiveDataTypes: [
       { type: 'Client IP', category: 'PII', fields: ['clientIP', 'sourceIP'], recommendedAction: 'mask', confidence: 'high' },
@@ -1029,7 +487,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'NetScaler ADC logs capture authenticated user sessions with client IPs and full request URLs. Gateway mode logs contain VPN session data tying users to internal resources. Guard masking for user/IP when forwarding to analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'aws-cloudwatch': {
     sensitiveDataTypes: [
       { type: 'Log Content', category: 'Secrets', fields: ['message'], recommendedAction: 'mask', confidence: 'medium' },
@@ -1040,7 +497,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'CloudWatch Logs contain arbitrary application output — sensitivity depends entirely on what applications log. Message field may contain credentials, PII, or stack traces. Guard AI model valuable for scanning unstructured message content.',
     recommendedPlacement: 'post-processing',
   },
-
   'azure-activity': {
     sensitiveDataTypes: [
       { type: 'Caller Identity', category: 'PII', fields: ['caller', 'claims.name'], recommendedAction: 'mask', confidence: 'high' },
@@ -1052,7 +508,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Azure Activity Log caller field is a UPN (email) or service principal. Combined with IP geolocation reveals user activity patterns. Guard masking for caller identities when forwarding to non-security analytics.',
     recommendedPlacement: 'post-processing',
   },
-
   'gcp-audit-logs': {
     sensitiveDataTypes: [
       { type: 'Caller Identity', category: 'PII', fields: ['protoPayload.authenticationInfo.principalEmail'], recommendedAction: 'mask', confidence: 'high' },
@@ -1064,7 +519,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'GCP audit logs tie actions to Google identity emails. Request/response bodies for API calls may contain secrets (e.g., creating a service account key). Guard pattern matching for emails; AI model for request body secrets.',
     recommendedPlacement: 'post-processing',
   },
-
   'cisco-meraki': {
     sensitiveDataTypes: [
       { type: 'IP / MAC Address', category: 'PII', fields: ['src', 'dst', 'mac', 'clientMac'], recommendedAction: 'mask', confidence: 'high' },
@@ -1075,7 +529,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Meraki syslog includes client MACs (device fingerprinting) and URLs (browsing activity). In retail/healthcare, MAC tracking creates PII exposure. Guard masking for MACs and IPs when forwarding to non-security platforms.',
     recommendedPlacement: 'post-processing',
   },
-
   'qualys-tenable': {
     sensitiveDataTypes: [
       { type: 'Host IP / FQDN', category: 'Infrastructure', fields: ['host_ip', 'host_fqdn'], recommendedAction: 'mask', confidence: 'medium' },
@@ -1086,7 +539,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Vulnerability scan results are infrastructure metadata — host IPs and CVEs. Low PII but scan output fields may contain credentials found in configuration files. Tag vulnerability proof-of-concept data.',
     recommendedPlacement: 'post-processing',
   },
-
   'servicenow': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['caller_id', 'assigned_to', 'opened_by'], recommendedAction: 'mask', confidence: 'high' },
@@ -1097,7 +549,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'ServiceNow tickets contain user names and free-text descriptions that frequently include passwords, access instructions, and PII from users seeking help. Guard AI model valuable for scanning description/comment fields.',
     recommendedPlacement: 'post-processing',
   },
-
   'vmware-vsphere': {
     sensitiveDataTypes: [
       { type: 'Username', category: 'PII', fields: ['userName', 'logonUserName'], recommendedAction: 'mask', confidence: 'medium' },
@@ -1108,7 +559,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'vSphere events are primarily infrastructure lifecycle — VM power, vMotion, storage. Usernames appear in who-performed-what context. Low PII overall but mask admin usernames for non-infrastructure teams.',
     recommendedPlacement: 'post-processing',
   },
-
   'hashicorp-vault': {
     sensitiveDataTypes: [
       { type: 'Token / Auth Data', category: 'Secrets', fields: ['auth.client_token', 'auth.accessor'], recommendedAction: 'redact', confidence: 'high' },
@@ -1120,7 +570,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Vault audit logs reference secret paths and token values (HMAC in default mode but raw in some configs). Highest secrets-density source in most environments. Guard should redact any token values and tag secret paths.',
     recommendedPlacement: 'pre-processing',
   },
-
   'github-audit': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['actor', 'user', 'actor_ip'], recommendedAction: 'mask', confidence: 'high' },
@@ -1131,7 +580,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'GitHub audit logs identify users by handle and IP. Repo names may reveal project codenames. Low sensitivity overall but mask actor IPs for privacy when forwarding to analytics platforms.',
     recommendedPlacement: 'post-processing',
   },
-
   'atlassian-audit': {
     sensitiveDataTypes: [
       { type: 'User Identity', category: 'PII', fields: ['actor_name', 'actor_email'], recommendedAction: 'mask', confidence: 'high' },
@@ -1143,7 +591,6 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     guardNotes: 'Atlassian audit logs contain user emails, IPs, and references to page/space names that may be sensitive. Change descriptions occasionally include content snippets. Guard masking for email/IP; tag content references.',
     recommendedPlacement: 'post-processing',
   },
-
   'paloalto-cortex-xdr': {
     sensitiveDataTypes: [
       { type: 'Command Line', category: 'Secrets', fields: ['action_process_command_line', 'causality_actor_cmdline'], recommendedAction: 'mask', confidence: 'high' },
@@ -1156,3 +603,28 @@ export const guardPolicies: Record<string, GuardPolicy> = {
     recommendedPlacement: 'post-processing',
   },
 };
+
+let content = fs.readFileSync('src/data/guardPolicies.ts', 'utf8');
+const insertPoint = content.lastIndexOf('};');
+
+let newContent = '';
+for (const [sourceId, policy] of Object.entries(newPolicies)) {
+  newContent += `\n  '${sourceId}': {\n`;
+  newContent += `    sensitiveDataTypes: [\n`;
+  for (const dt of policy.sensitiveDataTypes) {
+    const type = dt.type.replace(/'/g, "\\'");
+    const fields = dt.fields.map(f => `'${f}'`).join(', ');
+    newContent += `      { type: '${type}', category: '${dt.category}', fields: [${fields}], recommendedAction: '${dt.recommendedAction}', confidence: '${dt.confidence}' },\n`;
+  }
+  newContent += `    ],\n`;
+  newContent += `    complianceFrameworks: [${policy.complianceFrameworks.map(f => `'${f}'`).join(', ')}],\n`;
+  newContent += `    estimatedSensitivePercent: ${policy.estimatedSensitivePercent},\n`;
+  const notes = policy.guardNotes.replace(/'/g, "\\'");
+  newContent += `    guardNotes: '${notes}',\n`;
+  newContent += `    recommendedPlacement: '${policy.recommendedPlacement}',\n`;
+  newContent += `  },\n`;
+}
+
+content = content.slice(0, insertPoint) + newContent + '};\n';
+fs.writeFileSync('src/data/guardPolicies.ts', content);
+console.log('Added', Object.keys(newPolicies).length, 'Guard policies');
