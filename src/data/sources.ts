@@ -2926,6 +2926,44 @@ export const dataSources = [
         logFormat: 'Binary .sqlaudit (fn_get_audit_file reads as tabular) or XML (Extended Events). Key fields: event_time, action_id (AUSC, LGIF, LGIS, AL, DL, IN, UP, SL, EX, DBCC), server_principal_name, database_name, schema_name, object_name, statement, succeeded, session_id, client_ip, application_name, host_name. Azure SQL: JSON via Diagnostic Logs.',
         avgEPS: '5,000-500,000 EPS (SELECT auditing on busy OLTP systems generates extreme volume; DDL/login events are much lower)',
         sampleEvent: '{"event_time":"2026-06-17T14:32:08.234Z","action_id":"SL","action_name":"SELECT","succeeded":true,"server_principal_name":"app_svc_web","database_name":"Production","schema_name":"dbo","object_name":"Customers","statement":"SELECT TOP 50000 SSN, FullName, Email, CreditCardNumber FROM dbo.Customers WHERE State = \'CA\'","additional_information":"","client_ip":"10.0.1.55","application_name":"WebAPI-Prod","host_name":"APP-SERVER-03","session_id":567,"transaction_id":12345678,"sequence_number":1,"is_column_permission":true,"object_id":1234567890}'
+      },
+      {
+        id: 'oracle-unified-audit',
+        name: 'Oracle Database Unified Audit',
+        vendor: 'Oracle',
+        description: 'Unified Audit Trail from Oracle Database capturing all auditable activities in a single repository (UNIFIED_AUDIT_TRAIL view). Covers privilege usage, object access (Fine-Grained Auditing), Data Pump exports, RMAN operations, SQL*Loader, Oracle Data Guard, and Real Application Security events. Available on Oracle 12c+ (on-premises), Oracle Autonomous Database, and Oracle Cloud Infrastructure (OCI) Database.',
+        status: 'available',
+        useCases: ['Privileged Access Monitoring', 'Fine-Grained Data Access Auditing', 'Data Pump Export Detection', 'SYSDBA/SYSOPER Tracking', 'SQL Injection Detection', 'Schema Change Auditing', 'Database Link Abuse', 'Tablespace/Capacity Monitoring', 'Session Performance', 'Compliance Reporting'],
+        personas: ['SOC', 'Security Engineering', 'DBA', 'Compliance', 'Platform Engineering', 'Incident Response'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect data exfiltration via Oracle Data Pump (expdp) by alerting on EXPORT operations targeting schemas containing sensitive tables, especially when initiated by non-DBA accounts or targeting non-standard directory objects' },
+            { persona: 'Data End User / Analyst', job: 'Investigate privilege abuse by correlating SYSDBA/SYSOPER logon events with subsequent DDL operations, direct table access bypassing application layer, and ALTER SYSTEM commands outside maintenance windows' },
+            { persona: 'Data Content Creator', job: 'Build Fine-Grained Audit detections for SELECT access to sensitive columns (SSN, credit card, salary) by non-application accounts, with column-level granularity unavailable in standard auditing' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor database health by tracking session counts, tablespace utilization, redo log switches, and Data Guard sync lag from audit trail metadata and alert events' },
+            { persona: 'Data End User / Analyst', job: 'Identify performance-impacting operations by analyzing long-running queries, excessive parse counts, and latch contention indicators from audit trail execution statistics' },
+            { persona: 'DBA', job: 'Track space management events (tablespace autoextend, segment growth, temp space exhaustion) and correlate with application batch windows to predict capacity needs' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter successful SELECT audits on non-sensitive application schemas (typically 80-90% of unified audit volume) while preserving FGA policy triggers, DDL, privilege use, and Data Pump/RMAN events' },
+            { persona: 'Data Engineer', job: 'Route SYSDBA access, FGA alerts, privilege escalation, and Data Pump events to SIEM for real-time detection while streaming full unified audit trail to Lake for SOX/PCI compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX Section 404, PCI-DSS Requirement 10, and HIPAA by maintaining tamper-proof audit trail of all privileged operations, sensitive data access, and schema modifications with 7-year retention' },
+            { persona: 'Data End User / Analyst', job: 'Generate quarterly Privilege Analysis reports showing actual privilege usage versus granted privileges to support least-privilege remediation across database accounts' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Unified Audit policies (CREATE AUDIT POLICY), enable audit trail write mode (QUEUED/IMMEDIATE), and set up syslog or file-based export to Cribl Stream within 30 minutes per database' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (DBMS_AUDIT_MGMT) / File monitor (OS audit trail) / Oracle Audit Vault / OCI Audit service / JDBC query (UNIFIED_AUDIT_TRAIL view)',
+        logFormat: 'Structured records from UNIFIED_AUDIT_TRAIL view — key columns: EVENT_TIMESTAMP, DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME, SQL_TEXT, RETURN_CODE, OS_USERNAME, USERHOST, TERMINAL, AUTHENTICATION_TYPE, DBPROXY_USERNAME, CURRENT_USER, FGA_POLICY_NAME, UNIFIED_AUDIT_POLICIES. OCI delivers JSON.',
+        avgEPS: '5,000-500,000 EPS (Fine-Grained Auditing on busy schemas generates extreme volume; privilege/DDL events are relatively low)',
+        sampleEvent: '{"EVENT_TIMESTAMP":"2026-06-17T14:32:08.234Z","DBUSERNAME":"APP_BATCH_USER","ACTION_NAME":"SELECT","OBJECT_SCHEMA":"HR","OBJECT_NAME":"EMPLOYEES","SQL_TEXT":"SELECT EMPLOYEE_ID, SSN, SALARY, BANK_ACCOUNT FROM HR.EMPLOYEES WHERE DEPARTMENT_ID = 50","RETURN_CODE":0,"OS_USERNAME":"oracle","USERHOST":"batch-server-03.corp.internal","AUTHENTICATION_TYPE":"DATABASE","UNIFIED_AUDIT_POLICIES":"SENSITIVE_DATA_ACCESS","FGA_POLICY_NAME":"HR_PII_ACCESS","CURRENT_USER":"APP_BATCH_USER","SESSION_ID":12345,"INSTANCE_ID":1,"DBID":9876543210}'
       }
     ]
   },
@@ -2971,6 +3009,164 @@ export const dataSources = [
         logFormat: 'CSV (EventLogFile hourly/daily downloads) or JSON (Real-Time Event Monitoring streaming). Key event types: Login, API, ReportExport, BulkAPI, URI, LightningPageView, ApexExecution, ContentTransfer, LoginAs, WaveChange. Fields vary by type but include TIMESTAMP, USER_ID, USER_NAME, SOURCE_IP, URI, OPERATION, ENTITY_NAME, ROWS_PROCESSED, CLIENT_ID, LOGIN_STATUS, API_TYPE, REQUEST_SIZE, RESPONSE_SIZE, RUN_TIME.',
         avgEPS: '5,000-500,000 EPS depending on org size and licensed event types (Login and API events are always highest volume; LightningPageView adds significantly when enabled)',
         sampleEvent: '{"EVENT_TYPE":"ReportExport","TIMESTAMP":"2026-06-17T14:32:08.000Z","USER_ID":"005xx000001abcDEF","USER_NAME":"mthompson@cribl.io","SOURCE_IP":"203.0.113.42","URI":"/00Oxx000000abcDEF","OPERATION":"ReportExported","ENTITY_NAME":"All Customers with Revenue > 1M","ROWS_PROCESSED":"47523","DISPLAY_TYPE":"csv","CLIENT_ID":"Dataloader-Batch","LOGIN_KEY":"abcdef123456","SESSION_KEY":"WvtsJ1234567","ORGANIZATION_ID":"00Dxx0000001gER","REQUEST_ID":"4abc-def-7890","RUN_TIME":"3456","CPU_TIME":"2100","DB_TOTAL_TIME":"15000000","REQUEST_SIZE":"245","RESPONSE_SIZE":"15234567"}'
+      },
+      {
+        id: 'workday-audit',
+        name: 'Workday Audit Logs',
+        vendor: 'Workday',
+        description: 'Workday User Activity Logging captures all system interactions including configuration changes, security policy modifications, business process executions, report runs, and data access events. Includes System Auditing (task-level), User Activity (session and object-level), and Login Audit trails. Available via Workday Report-as-a-Service (RaaS) REST API or Workday Prism Analytics Data Change API.',
+        status: 'available',
+        useCases: ['Privileged Configuration Change Detection', 'Mass Data Export Monitoring', 'Segregation of Duties Violations', 'Unauthorized Report Access', 'Business Process Abuse', 'Account Lifecycle Auditing', 'Session Anomaly Detection', 'Payroll Modification Tracking', 'Integration Credential Usage', 'Compliance Reporting'],
+        personas: ['SOC', 'Security Engineering', 'HR Security', 'Compliance', 'Internal Audit', 'IT Operations'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect unauthorized payroll modifications by alerting on Compensation Change or Payment Election Change business processes initiated by users outside of HR Payroll security groups, especially bulk changes or self-service modifications exceeding thresholds' },
+            { persona: 'Data End User / Analyst', job: 'Investigate data exfiltration patterns by correlating mass report executions, large custom report runs (high row counts), and Worker Data export events from the same user session — especially targeting compensation, SSN, or banking fields' },
+            { persona: 'Data Content Creator', job: 'Build segregation of duties alerting by detecting when users with Hire/Terminate permissions also access Payroll Input or when Security Administrators modify their own access groups' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Monitor Workday integration system user (ISU) activity to detect stalled integrations, excessive API calls approaching rate limits, and authentication failures that may interrupt critical payroll or benefits data flows' },
+            { persona: 'Data End User / Analyst', job: 'Track business process completion rates and cycle times (hire-to-active, promotion approval chains, termination workflows) to identify process bottlenecks and SLA violations' },
+            { persona: 'IT Operations', job: 'Detect Workday configuration drift by monitoring Security Policy changes, Custom Report modifications, and Business Process Definition updates that may impact downstream integrations or compliance posture' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter high-volume successful GET/View operations on non-sensitive objects (typically 85-90% of User Activity logs) while preserving all modification events, report executions, security changes, and access to compensation/PII fields' },
+            { persona: 'Data Engineer', job: 'Route security-relevant events (login anomalies, privilege changes, payroll modifications, mass exports) to SIEM for real-time detection while streaming full audit trail to Lake for SOX/SOC 2 compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX Section 302/404, SOC 2 CC6.1, and GDPR Article 30 by maintaining complete audit trail of all configuration changes, data access, and business process executions with configurable retention exceeding Workday native 30-day window' },
+            { persona: 'Internal Audit', job: 'Generate quarterly access review evidence by reporting all users who accessed Worker objects containing SSN, compensation, or banking data alongside their security group assignments and business justification' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure Workday RaaS (Report-as-a-Service) custom report extraction via Cribl REST Collector with WS-Security or OAuth 2.0 authentication — polling User Activity and System Auditing data sources on 5-minute intervals' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'REST API (Report-as-a-Service / RaaS) via Cribl REST Collector / Workday Prism Analytics API / Workday SIEM Integration (preview)',
+        logFormat: 'JSON or XML (RaaS output). Key fields: System_Account, Target_Worker, Task_Display_Name, Business_Process_Type, Activity_Action (LOGIN, CHANGE, VIEW, REPORT_RUN), Session_ID, IP_Address, Device_Type, Security_Group, Object_Type, Field_Changes (before/after values), Row_Count_Returned, Report_Name, Timestamp.',
+        avgEPS: '2,000-200,000 EPS depending on tenant size and enabled audit categories (User Activity logging on large tenants with compensation access tracking generates highest volume)',
+        sampleEvent: '{"Timestamp":"2026-06-17T14:32:08.000Z","System_Account":"jgarcia@cribl","Activity_Action":"REPORT_RUN","Task_Display_Name":"Run Custom Report","Report_Name":"All Active Workers - Full Compensation","Row_Count_Returned":12847,"Target":"Custom Report","IP_Address":"203.0.113.42","Session_ID":"sess-abc123-def456","Device_Type":"Desktop - Chrome 125","Security_Group":"HR_Compensation_Analyst","Business_Process_Type":"","Object_Type":"Worker","Field_Path":"Worker.Compensation.Total_Base_Pay,Worker.Personal_Data.SSN","Tenant":"cribl-prod-1"}'
+      },
+      {
+        id: 'workday-integration-prism',
+        name: 'Workday Integration & Prism Analytics',
+        vendor: 'Workday',
+        description: 'Workday Integration Events capture execution logs from Enterprise Interface Builder (EIB), Studio Integrations, Cloud Connect, and Document Transformation connectors. Prism Analytics audit logs track dataset access, pipeline executions, dashboard views, and data source ingestion events. Together these provide visibility into all automated data movement in and out of Workday plus analytical workload monitoring.',
+        status: 'available',
+        useCases: ['Integration Failure Detection', 'Data Pipeline Health Monitoring', 'Credential Rotation Compliance', 'Unauthorized Integration Creation', 'Prism Dataset Access Auditing', 'ETL Performance Monitoring', 'Integration Rate Limit Tracking', 'Data Volume Anomaly Detection', 'SLA Compliance for Payroll Feeds', 'Analytics Usage Reporting'],
+        personas: ['Platform Engineering', 'IT Operations', 'Data Engineering', 'Security Engineering', 'Compliance', 'HR Technology'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect unauthorized integration creation by alerting on new Integration System Users (ISUs) or Studio Integration launches initiated outside the Integration team security group, especially those targeting Worker, Payroll, or Compensation business objects' },
+            { persona: 'Data End User / Analyst', job: 'Investigate data exfiltration via integrations by correlating EIB/Studio executions that output to external SFTP endpoints or cloud storage with unusual record counts exceeding historical baselines or targeting fields not previously included' },
+            { persona: 'Security Engineering', job: 'Monitor integration credential usage patterns to detect compromised ISU accounts — alert on integrations running from new IP ranges, outside expected schedules, or with unusual API call sequences' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Platform Operator', job: 'Build real-time integration health dashboard showing success/failure/running status across all scheduled and triggered integrations — highlighting payroll, benefits, and time-tracking critical path integrations that require immediate remediation' },
+            { persona: 'Data Engineer', job: 'Monitor Prism Analytics pipeline execution times, dataset refresh completions, and data source ingestion lag to ensure analytics dashboards reflect current operational data within SLA thresholds' },
+            { persona: 'IT Operations', job: 'Track Workday API rate limit consumption across all ISUs and integration types to prevent throttling that would impact critical HR business processes — alert at 70% utilization threshold' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter repetitive integration heartbeat/polling events and successful no-change executions (often 60-70% of integration log volume) while preserving failure events, record count changes, configuration modifications, and timing data' },
+            { persona: 'Data Engineer', job: 'Route integration failures, credential events, and unauthorized integration creation to SIEM for alerting while streaming full execution history to Lake for trend analysis and capacity planning' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Demonstrate compliance with data processing agreements (DPAs) by maintaining audit trail of all automated data exports from Workday — showing which fields were extracted, record counts, destination systems, and responsible ISU accounts' },
+            { persona: 'Internal Audit', job: 'Verify integration credential rotation compliance by reporting ISUs whose credentials exceed 90-day rotation policy, and correlating with integration execution frequency to assess blast radius of compromised credentials' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure integration event collection via Workday RaaS reports targeting Integration Event data source (polling) or enable Workday Activity Logging API for near-real-time integration audit streaming to Cribl Stream' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Cribl Lake', 'Amazon S3', 'Snowflake'],
+        collectionMethod: 'REST API (RaaS - Integration Events report / Prism Analytics API) via Cribl REST Collector / Workday Activity Logging API (streaming)',
+        logFormat: 'JSON (RaaS/API output). Integration events: Integration_Name, Integration_System_User, Execution_Status (Completed/Failed/Running), Start_Time, End_Time, Records_Processed, Records_Failed, Output_Endpoint, Error_Message, Integration_Type (EIB/Studio/Cloud_Connect). Prism events: Dataset_Name, Pipeline_Name, Execution_Duration_ms, Records_Ingested, User, Action (VIEW/REFRESH/CREATE/SHARE), Data_Source_Type.',
+        avgEPS: '500-50,000 EPS depending on integration count and Prism Analytics adoption (organizations with 100+ active integrations on hourly schedules approach higher range)',
+        sampleEvent: '{"Timestamp":"2026-06-17T06:00:12.000Z","Integration_Name":"Payroll_Feed_to_ADP","Integration_System_User":"ISU_Payroll_ADP","Integration_Type":"EIB","Execution_Status":"Completed","Start_Time":"2026-06-17T05:55:00.000Z","End_Time":"2026-06-17T06:00:12.000Z","Duration_Seconds":312,"Records_Processed":4523,"Records_Failed":2,"Output_Endpoint":"sftp://adp-secure.corp.internal/payroll/","Error_Message":"","Schedule":"Daily 0600 UTC","Launched_By":"Scheduled","Tenant":"cribl-prod-1","API_Calls_Used":47,"Rate_Limit_Remaining":953}'
+      }
+    ]
+  },
+  {
+    category: 'ERP / Business Applications',
+    icon: '🏢',
+    sources: [
+      {
+        id: 'sap-sm20-audit',
+        name: 'SAP Security Audit Log (SM20/SAL)',
+        vendor: 'SAP',
+        description: 'SAP Security Audit Log (transaction SM20 / RSAU* programs) records security-relevant activities across SAP NetWeaver ABAP systems including dialog/RFC logons, transaction starts, report executions, authorization failures, user master changes, and critical system events. SAP S/4HANA uses the enhanced Security Audit Log (SAL) with improved filtering and archiving. Collected via SAP Audit Log connector, RFC-based extraction, or SAP Enterprise Threat Detection (ETD) forwarding.',
+        status: 'available',
+        useCases: ['Privileged Transaction Monitoring', 'SAP_ALL Authorization Abuse', 'RFC/Dialog Logon Anomalies', 'Transaction Code Abuse Detection', 'User Master Record Changes', 'Debug & Replace Attacks', 'Client-Specific Access Violations', 'Critical Table Access (SE16N)', 'Transport System Abuse', 'Emergency Access (Firefighter) Logging'],
+        personas: ['SOC', 'SAP Security', 'Compliance', 'Internal Audit', 'Basis Administration', 'GRC'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect SAP_ALL authorization abuse by alerting on users granted or using SAP_ALL profile outside designated Firefighter/emergency access procedures — correlating SM20 authorization check events with SU01 user master changes and PFCG role modifications' },
+            { persona: 'Data End User / Analyst', job: 'Investigate debug & replace attacks by correlating SM20 events showing /H debugger activation during production transaction execution, especially on financial transactions (FB01, F110, ME21N) where field values were modified at runtime' },
+            { persona: 'Data Content Creator', job: 'Build RFC-based lateral movement detection by alerting on RFC logon events from unexpected source systems, trusted RFC connections used by non-system accounts, or RFC function module calls to sensitive BAPIs (USER_CHANGE, RFC_READ_TABLE)' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'Basis Administration', job: 'Monitor SAP system health by tracking logon failures, expired passwords, locked accounts, and work process consumption from SM20 dialog logon events — correlating with SM66 work process data to identify resource-intensive sessions' },
+            { persona: 'Platform Operator', job: 'Track SAP transport system activity by monitoring STMS transaction executions, transport release events, and import activity across DEV/QAS/PRD landscape to detect unauthorized production transports or bypassed quality gates' },
+            { persona: 'GRC', job: 'Monitor Firefighter/emergency access sessions in real-time by tracking GRC Access Control (formerly Virsa) session initiation, transaction usage during elevated sessions, and session duration compliance against time-boxed approval windows' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter repetitive successful authorization check events (AU3 message class — often 80-90% of SM20 volume on busy systems) while preserving logon events (AU1/AU2), transaction starts (AUW), user changes (AUF), and authorization failures for security analysis' },
+            { persona: 'Data Engineer', job: 'Route critical security events (logon failures, SAP_ALL usage, debug events, Firefighter sessions, SE16N direct table access) to SIEM for real-time alerting while streaming full SM20 archive to Lake for SOX compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX ITGC requirements for SAP change management and access control by maintaining externalized SM20 audit trail exceeding SAP native reorganization schedules — demonstrating segregation of duties enforcement and privileged access controls' },
+            { persona: 'Internal Audit', job: 'Generate quarterly segregation of duties evidence by correlating SM20 transaction usage patterns with role assignments to identify users executing incompatible transaction combinations (e.g., ME21N create PO + MIGO goods receipt + MIRO invoice verification)' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure SM20 extraction via SAP RFC connector (function module RSAU_READ_AUDITLOG_EXT) with Cribl Stream RFC source, or forward from SAP Enterprise Threat Detection (ETD) via syslog/CEF — filter profiles configured at SAP kernel level (rslg/audit_*)' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'SAP RFC connector (RSAU_READ_AUDITLOG_EXT / BAPI_XMI_LOGON) / SAP Enterprise Threat Detection (ETD) syslog/CEF forward / SAP Audit Management (SM21/RSAU_CONFIG) file export / SAP Cloud Connector for S/4HANA Cloud',
+        logFormat: 'Structured SAP audit record — key fields: Date, Time, Client, User, Terminal (source IP/hostname), Transaction_Code, Report_Name, Message_Class (AU1=logon, AU2=logon_fail, AU3=auth_check, AUF=user_change, AUW=transaction_start, AUK=RFC), Message_Number, Message_Text, Audit_Class (Dialog/RFC/System), Event_Severity (0-3). SAP ETD normalizes to CEF format.',
+        avgEPS: '5,000-500,000 EPS per SAP system (large production systems with full AU3 logging enabled; most organizations filter to AU1/AU2/AUF/AUW/AUK reducing to 10-50K EPS)',
+        sampleEvent: '{"Date":"2026-06-17","Time":"14:32:08","Client":"100","User":"JSMITH","Terminal":"10.0.1.55","Transaction_Code":"SE16N","Report_Name":"SAPLSETB","Message_Class":"AUW","Message_Number":"001","Message_Text":"Transaction SE16N started","Audit_Class":"Dialog","Event_Severity":2,"Instance":"PRD_00","SID":"PRD","Source_System":"SAP ERP 6.0 EHP8","SAP_Release":"753"}'
+      },
+      {
+        id: 'sap-hana-audit',
+        name: 'SAP HANA Audit Trail',
+        vendor: 'SAP',
+        description: 'SAP HANA database audit trail captures all auditable activities at the database layer including SQL statement execution, user management, schema changes, data access on sensitive tables, system configuration changes, and license key operations. HANA audit policies define granular capture rules per user, schema, object, and action type. Available in SAP HANA on-premise (1.0/2.0), SAP HANA Cloud, and SAP BW/4HANA environments.',
+        status: 'available',
+        useCases: ['Direct HANA SQL Access Detection', 'Sensitive Table Data Export', 'SYSTEM User Activity Monitoring', 'Schema-Level Access Control Violations', 'HANA User Privilege Escalation', 'Calculation View Data Access', 'HDI Container Security', 'Backup & Recovery Auditing', 'Cross-Database Access Detection', 'SQL Injection Attempt Detection'],
+        personas: ['SOC', 'DBA', 'SAP Security', 'Compliance', 'Data Engineering', 'Platform Engineering'],
+        jobsToBeDone: [
+          { category: 'Security Detection', jobs: [
+            { persona: 'Data Content Creator', job: 'Detect direct HANA database access bypassing SAP application layer by alerting on SQL connections from non-SAP application servers — especially SELECT statements against HR/FI schemas (PA0008 salary, BSEG financial docs) from HANA Studio, DBeaver, or Python/JDBC clients' },
+            { persona: 'Data End User / Analyst', job: 'Investigate SYSTEM account abuse by tracking all activities by HANA SYSTEM user or users with CATALOG READ, DATA ADMIN, or INIFILE ADMIN privileges — especially CREATE USER, GRANT, ALTER SYSTEM, and EXPORT operations' },
+            { persona: 'Data Content Creator', job: 'Build SQL injection detection by analyzing HANA audit trail for unusual SQL patterns — UNION-based extraction, nested SELECT on system views (SYS.M_CONNECTIONS, SYS.USERS), or parameterized queries with excessive WHERE clause complexity targeting multiple schemas' }
+          ]},
+          { category: 'Operational Visibility', jobs: [
+            { persona: 'DBA', job: 'Monitor HANA database health by tracking connection pool utilization, long-running statements (> 60s), memory allocation events (OOM warnings), savepoint durations, and delta merge operations from audit trail and alert log entries' },
+            { persona: 'Platform Operator', job: 'Track HANA system replication status by monitoring SR_TAKEOVER, SR_REGISTER, and SR_UNREGISTER events alongside replication lag indicators from M_SERVICE_REPLICATION view to detect Active/Active read-enabled failover scenarios' },
+            { persona: 'Data Engineer', job: 'Monitor HANA Calculation View performance by tracking execution times, memory consumption, and error rates for critical BW/4HANA queries and embedded analytics scenarios to identify views requiring optimization' }
+          ]},
+          { category: 'Cost Optimization', jobs: [
+            { persona: 'Data Optimizer', job: 'Filter successful SELECT audit events on non-sensitive application schemas and internal SAP system queries (_SYS_BIC, _SYS_REPO) that typically constitute 85-95% of HANA audit volume, while preserving DDL, DCL, admin commands, and access to PII-containing schemas' },
+            { persona: 'Data Engineer', job: 'Route privilege escalation, SYSTEM user activity, direct SQL access, and schema DDL changes to SIEM for real-time detection while streaming full audit trail to Lake for forensic investigation and compliance retention' }
+          ]},
+          { category: 'Compliance & Governance', jobs: [
+            { persona: 'Platform Administrator', job: 'Satisfy SOX/PCI-DSS database-level audit requirements by maintaining externalized HANA audit trail with tamper-evident forwarding — demonstrating that application-layer SAP controls cannot be bypassed via direct database access without detection' },
+            { persona: 'Internal Audit', job: 'Generate evidence of database privilege reviews by reporting all HANA users with elevated privileges (CATALOG READ, DATA ADMIN, EXPORT, IMPORT) alongside their actual SQL statement history to verify least-privilege principle compliance' }
+          ]},
+          { category: 'Data Onboarding', jobs: [
+            { persona: 'Data Onboarder', job: 'Configure HANA audit trail forwarding via syslog target (ALTER SYSTEM ALTER AUDIT LOG ... SET SYSLOG), CSV file export (audit_trail_type = CSVTEXTFILE), or HANA cockpit API — define audit policies per schema/user/action matching security requirements' }
+          ]}
+        ],
+        criblProducts: ['Stream', 'Edge', 'Lake', 'Search'],
+        destinations: ['Splunk', 'CrowdStrike NG SIEM', 'Microsoft Sentinel', 'Elastic Security', 'Cribl Lake', 'Amazon S3'],
+        collectionMethod: 'Syslog (HANA audit target type SYSLOG) / CSV file monitor (CSVTEXTFILE audit trail) / HANA SQL connector (AUDIT_LOG system view) / SAP Enterprise Threat Detection (ETD) integration',
+        logFormat: 'Structured audit record — key fields: TIMESTAMP, CLIENT_IP, CLIENT_PORT, CONNECTION_ID, STATEMENT_STRING, USER_NAME, SCHEMA_NAME, OBJECT_NAME, ACTION (SELECT/INSERT/UPDATE/DELETE/DDL/CONNECT/GRANT/REVOKE), AUDIT_POLICY_NAME, EXECUTED_STATEMENT, AUDIT_LEVEL (INFO/WARNING/ALERT/EMERGENCY), APPLICATION_NAME, HOST, PORT, SERVICE_NAME, SESSION_USER, CURRENT_SCHEMA. Syslog format follows RFC 5424 with structured data.',
+        avgEPS: '10,000-1,000,000 EPS (HANA in-memory speed generates massive SELECT volume; most deployments filter to DDL + DCL + sensitive schema access at policy level, reducing to 5-50K EPS)',
+        sampleEvent: '{"TIMESTAMP":"2026-06-17T14:32:08.234567","USER_NAME":"DBADMIN_EXTERNAL","SCHEMA_NAME":"SAPABAP1","OBJECT_NAME":"PA0008","ACTION":"SELECT","STATEMENT_STRING":"SELECT PERNR, ANSAL, DIVGV, WAESSION FROM SAPABAP1.PA0008 WHERE ENDDA >= 20260617","CLIENT_IP":"10.0.5.99","APPLICATION_NAME":"DBeaver 23.2","CONNECTION_ID":123456,"AUDIT_POLICY_NAME":"SENSITIVE_HR_ACCESS","AUDIT_LEVEL":"WARNING","HOST":"hana-prd-01","PORT":30015,"SERVICE_NAME":"indexserver","SESSION_USER":"DBADMIN_EXTERNAL","CURRENT_SCHEMA":"SAPABAP1"}'
       }
     ]
   }
