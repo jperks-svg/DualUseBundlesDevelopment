@@ -14,6 +14,50 @@ function getApiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
+function getPackId(): string {
+  const basePath: string = (window as any).CRIBL_BASE_PATH || '';
+  // CRIBL_BASE_PATH is like "/app-ui/my-pack-id"
+  const parts = basePath.split('/').filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
+
+// XHR-based KV read — bypasses the fetch proxy which corrupts response bodies
+function kvGet(key: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) { resolve(null); return; }
+
+    const packId = getPackId();
+    const origin = new URL(apiUrl).origin;
+    // The fetch proxy rewrites /kvstore/x to /api/v1/p/{packId}/kvstore/x
+    // We replicate that rewriting manually for XHR
+    const url = packId
+      ? `${origin}/api/v1/p/${packId}/kvstore/${key}`
+      : `${apiUrl}/kvstore/${key}`;
+
+    console.log('[DUB] XHR GET:', url, '(packId:', packId, ')');
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.withCredentials = true;
+    xhr.onload = () => {
+      console.log('[DUB] XHR status:', xhr.status, 'length:', xhr.responseText.length);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.responseText);
+      } else if (xhr.status === 404) {
+        resolve(null);
+      } else {
+        console.warn('[DUB] XHR unexpected status:', xhr.status);
+        resolve(null);
+      }
+    };
+    xhr.onerror = (e) => {
+      console.warn('[DUB] XHR error:', e);
+      resolve(null);
+    };
+    xhr.send();
+  });
+}
+
 // In-memory cache — survives across route changes within the same session
 let profileCache: CustomerProfile[] | null = null;
 let loadPromise: Promise<CustomerProfile[]> | null = null;
@@ -27,56 +71,27 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    const apiUrl = getApiUrl();
-    if (apiUrl) {
+    const raw = await kvGet(KV_KEY);
+    if (raw !== null) {
       try {
-        const url = `${apiUrl}/kvstore/${KV_KEY}`;
-        console.log('[DUB] Loading projects from:', url);
-        const res = await fetch(url);
-        console.log('[DUB] KV load response:', res.status);
-        if (res.ok) {
-          // Cribl's fetch proxy returns a non-standard Response where
-          // .json() throws and .text() after .json() fails (stream consumed).
-          // Strategy: try blob→text (raw bytes), then clone→json, then text.
-          let data: any = null;
-          try {
-            const blob = await res.blob();
-            const raw = await blob.text();
-            console.log('[DUB] KV load via blob, length:', raw.length, 'preview:', raw.slice(0, 100));
-            data = raw ? JSON.parse(raw) : null;
-          } catch (e1) {
-            console.warn('[DUB] KV blob read failed:', e1);
-            // Fallback: try clone().json()
-            try {
-              data = await res.clone().json();
-            } catch (e2) {
-              console.warn('[DUB] KV clone.json() also failed:', e2);
-            }
-          }
-          console.log('[DUB] KV load result type:', typeof data, Array.isArray(data) ? '(array)' : data ? Object.keys(data) : 'null');
-          // Unwrap string envelope
-          let parsed: CustomerProfile[];
-          if (data && typeof data.d === 'string') {
-            parsed = JSON.parse(data.d);
-          } else if (Array.isArray(data)) {
-            parsed = data;
-          } else {
-            parsed = [];
-          }
-          profileCache = parsed;
-          console.log('[DUB] Loaded', parsed.length, 'projects from KV');
-          return parsed;
+        const data = JSON.parse(raw);
+        // Support both envelope format {d:"..."} and direct array
+        let parsed: CustomerProfile[];
+        if (data && typeof data.d === 'string') {
+          parsed = JSON.parse(data.d);
+        } else if (Array.isArray(data)) {
+          parsed = data;
+        } else {
+          parsed = [];
         }
-        if (res.status === 404) {
-          console.log('[DUB] KV key not found (first use)');
-          profileCache = [];
-          return profileCache;
-        }
+        profileCache = parsed;
+        console.log('[DUB] Loaded', parsed.length, 'projects from KV');
+        return parsed;
       } catch (err) {
-        console.warn('[DUB] KV load failed:', err);
+        console.warn('[DUB] KV parse error:', err, 'raw:', raw.slice(0, 200));
       }
     } else {
-      console.log('[DUB] No CRIBL_API_URL — using localStorage only');
+      console.log('[DUB] KV returned null (first use or XHR failed)');
     }
     profileCache = loadFromLocalStorage();
     return profileCache;
@@ -87,14 +102,13 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
 
 export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<void> {
   profileCache = profiles;
-  loadPromise = null; // Reset so next load fetches fresh from KV
+  loadPromise = null;
   saveToLocalStorage(profiles);
 
   const apiUrl = getApiUrl();
   if (!apiUrl) return;
   try {
     const url = `${apiUrl}/kvstore/${KV_KEY}`;
-    // Wrap in string envelope to avoid proxy deserialization issues
     const envelope = JSON.stringify({ d: JSON.stringify(profiles) });
     console.log('[DUB] Saving', profiles.length, 'projects to:', url);
     const res = await fetch(url, {
@@ -104,8 +118,7 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
     });
     console.log('[DUB] KV save response:', res.status);
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn('[DUB] KV save failed:', res.status, text);
+      console.warn('[DUB] KV save failed:', res.status);
     }
   } catch (err) {
     console.warn('[DUB] KV save error:', err);
@@ -122,7 +135,6 @@ export function loadProfiles(): CustomerProfile[] {
 export function saveProfiles(profiles: CustomerProfile[]): void {
   profileCache = profiles;
   saveToLocalStorage(profiles);
-  // Fire KV save in background (string envelope)
   const apiUrl = getApiUrl();
   if (apiUrl) {
     fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
