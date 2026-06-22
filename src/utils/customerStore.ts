@@ -12,13 +12,17 @@ const STORAGE_KEY = 'dub_customer_profiles';
 
 export function loadProfiles(): CustomerProfile[] {
   try {
+    if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
 export function saveProfiles(profiles: CustomerProfile[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+  } catch {}
 }
 
 export function createProfile(name: string, company: string): CustomerProfile {
