@@ -14,50 +14,6 @@ function getApiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
-function getPackId(): string {
-  const basePath: string = (window as any).CRIBL_BASE_PATH || '';
-  // CRIBL_BASE_PATH is like "/app-ui/my-pack-id"
-  const parts = basePath.split('/').filter(Boolean);
-  return parts[parts.length - 1] || '';
-}
-
-// XHR-based KV read — bypasses the fetch proxy which corrupts response bodies
-function kvGet(key: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const apiUrl = getApiUrl();
-    if (!apiUrl) { resolve(null); return; }
-
-    const packId = getPackId();
-    const origin = new URL(apiUrl).origin;
-    // The fetch proxy rewrites /kvstore/x to /api/v1/p/{packId}/kvstore/x
-    // We replicate that rewriting manually for XHR
-    const url = packId
-      ? `${origin}/api/v1/p/${packId}/kvstore/${key}`
-      : `${apiUrl}/kvstore/${key}`;
-
-    console.log('[DUB] XHR GET:', url, '(packId:', packId, ')');
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.withCredentials = true;
-    xhr.onload = () => {
-      console.log('[DUB] XHR status:', xhr.status, 'length:', xhr.responseText.length);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.responseText);
-      } else if (xhr.status === 404) {
-        resolve(null);
-      } else {
-        console.warn('[DUB] XHR unexpected status:', xhr.status);
-        resolve(null);
-      }
-    };
-    xhr.onerror = (e) => {
-      console.warn('[DUB] XHR error:', e);
-      resolve(null);
-    };
-    xhr.send();
-  });
-}
-
 // In-memory cache — survives across route changes within the same session
 let profileCache: CustomerProfile[] | null = null;
 let loadPromise: Promise<CustomerProfile[]> | null = null;
@@ -71,28 +27,45 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    const raw = await kvGet(KV_KEY);
-    if (raw !== null) {
-      try {
-        const data = JSON.parse(raw);
-        // Support both envelope format {d:"..."} and direct array
-        let parsed: CustomerProfile[];
-        if (data && typeof data.d === 'string') {
-          parsed = JSON.parse(data.d);
-        } else if (Array.isArray(data)) {
-          parsed = data;
-        } else {
-          parsed = [];
-        }
-        profileCache = parsed;
-        console.log('[DUB] Loaded', parsed.length, 'projects from KV');
-        return parsed;
-      } catch (err) {
-        console.warn('[DUB] KV parse error:', err, 'raw:', raw.slice(0, 200));
-      }
-    } else {
-      console.log('[DUB] KV returned null (first use or XHR failed)');
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      console.log('[DUB] No CRIBL_API_URL — using localStorage only');
+      profileCache = loadFromLocalStorage();
+      return profileCache;
     }
+
+    try {
+      const url = `${apiUrl}/kvstore/${KV_KEY}`;
+      console.log('[DUB] Loading projects from:', url);
+      const res = await fetch(url);
+      console.log('[DUB] KV load response:', res.status);
+
+      if (res.status === 404) {
+        console.log('[DUB] KV key not found (first use)');
+        profileCache = [];
+        return profileCache;
+      }
+
+      if (res.ok) {
+        // The Cribl fetch proxy pre-parses JSON responses. When the stored
+        // value is a JSON string literal (double-encoded), the proxy parses
+        // it to a JS string primitive. new Response(string) works correctly,
+        // so .text() returns the actual string content we can then parse.
+        const text = await res.text();
+        console.log('[DUB] KV load text length:', text.length, 'first 80:', text.slice(0, 80));
+
+        if (text && text !== '[object Object]' && !text.startsWith('[object')) {
+          profileCache = JSON.parse(text);
+          console.log('[DUB] Loaded', profileCache!.length, 'projects from KV');
+          return profileCache!;
+        }
+        // Fallback: proxy corrupted the response (old format stored as object)
+        console.warn('[DUB] KV response was proxy-corrupted, falling back to localStorage');
+      }
+    } catch (err) {
+      console.warn('[DUB] KV load failed:', err);
+    }
+
     profileCache = loadFromLocalStorage();
     return profileCache;
   })();
@@ -109,12 +82,15 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   if (!apiUrl) return;
   try {
     const url = `${apiUrl}/kvstore/${KV_KEY}`;
-    const envelope = JSON.stringify({ d: JSON.stringify(profiles) });
-    console.log('[DUB] Saving', profiles.length, 'projects to:', url);
+    // Double-encode: store as a JSON string literal so the proxy's
+    // JSON.parse returns a JS string (not an object), making
+    // new Response(string) produce a readable body.
+    const body = JSON.stringify(JSON.stringify(profiles));
+    console.log('[DUB] Saving', profiles.length, 'projects to:', url, 'body length:', body.length);
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: envelope,
+      body,
     });
     console.log('[DUB] KV save response:', res.status);
     if (!res.ok) {
@@ -140,7 +116,7 @@ export function saveProfiles(profiles: CustomerProfile[]): void {
     fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ d: JSON.stringify(profiles) }),
+      body: JSON.stringify(JSON.stringify(profiles)),
     }).catch(() => {});
   }
 }
