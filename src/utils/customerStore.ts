@@ -35,7 +35,9 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
         const res = await fetch(url);
         console.log('[DUB] KV load response:', res.status);
         if (res.ok) {
-          const data = await res.json();
+          const text = await res.text();
+          console.log('[DUB] KV load raw:', text.slice(0, 200));
+          const data = text ? JSON.parse(text) : [];
           profileCache = Array.isArray(data) ? data : [];
           console.log('[DUB] Loaded', profileCache.length, 'projects from KV');
           return profileCache;
