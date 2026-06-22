@@ -231,9 +231,9 @@ export default function CustomerWorkspacePage() {
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 'var(--cds-font-size-xxl)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Customer Workspace</h2>
+        <h2 style={{ fontSize: 'var(--cds-font-size-xxl)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Project Workspace</h2>
         <p style={{ fontSize: 'var(--cds-font-size-base)', color: 'var(--cds-color-fg-muted)', lineHeight: 1.6 }}>
-          Build customer-specific views across multiple sources. Aggregate reduction potential, export combined packs, and identify correlation coverage gaps.
+          Build project-specific views across multiple sources. Aggregate reduction potential, export combined packs, and identify correlation coverage gaps.
         </p>
       </div>
 
@@ -250,18 +250,18 @@ export default function CustomerWorkspacePage() {
             {p.name} {p.company && <span style={{ opacity: 0.6 }}>({p.company})</span>}
           </button>
         ))}
-        <button onClick={() => setShowCreate(true)} style={{ ...btnPrimary, padding: '8px 14px' }}>+ New Customer</button>
+        <button onClick={() => setShowCreate(true)} style={{ ...btnPrimary, padding: '8px 14px' }}>+ New Project</button>
       </div>
 
       {/* Create form */}
       {showCreate && (
         <div style={{ ...card, marginBottom: 24, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Customer Name</label>
-            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Acme Corp" style={inputStyle} />
+            <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Project Name</label>
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Q3 Optimization" style={inputStyle} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Company</label>
+            <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Organization</label>
             <input value={newCompany} onChange={e => setNewCompany(e.target.value)} placeholder="Optional" style={inputStyle} />
           </div>
           <button onClick={handleCreate} style={btnPrimary}>Create</button>
@@ -271,8 +271,8 @@ export default function CustomerWorkspacePage() {
 
       {!activeProfile && !showCreate && (
         <div style={{ textAlign: 'center', padding: 60, color: 'var(--cds-color-fg-muted)' }}>
-          <p style={{ fontSize: 'var(--cds-font-size-lg)', marginBottom: 12 }}>No customer profiles yet</p>
-          <p style={{ fontSize: 'var(--cds-font-size-sm)' }}>Create a customer profile to start building multi-source analysis</p>
+          <p style={{ fontSize: 'var(--cds-font-size-lg)', marginBottom: 12 }}>No projects yet</p>
+          <p style={{ fontSize: 'var(--cds-font-size-sm)' }}>Create a project to start building multi-source analysis</p>
         </div>
       )}
 
@@ -284,7 +284,7 @@ export default function CustomerWorkspacePage() {
               <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>
                 Data Sources ({activeProfile.sourceIds.length} selected)
               </h3>
-              <button onClick={() => handleDelete(activeProfile.id)} style={btnDanger}>Delete Profile</button>
+              <button onClick={() => handleDelete(activeProfile.id)} style={btnDanger}>Delete Project</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
               {allSources.map((s: any) => {
