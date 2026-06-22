@@ -37,18 +37,21 @@ const inputStyle: React.CSSProperties = {
 
 const allSources = dataSources.flatMap((c: any) => c.sources).filter((s: any) => s.status === 'available');
 
-function generateCombinedPackYaml(sourceIds: string[], customerName: string): string {
+function generateCombinedPackYaml(sourceIds: string[], customerName: string, customDrops?: Record<string, Set<string>>): string {
   let yaml = '';
   yaml += `# ============================================================\n`;
   yaml += `# Combined Cribl Stream Pipeline Pack\n`;
-  yaml += `# Customer: ${customerName}\n`;
+  yaml += `# Project: ${customerName}\n`;
   yaml += `# Sources: ${sourceIds.length}\n`;
   yaml += `# ============================================================\n\n`;
 
   sourceIds.forEach(sid => {
     const fields = (fieldMatrix as any)[sid] || [];
     const source = allSources.find(s => s.id === sid);
-    const droppable = fields.filter(f => f.canDrop === 'Yes').map(f => f.field);
+    const userDrops = customDrops?.[sid];
+    const droppable = userDrops && userDrops.size > 0
+      ? [...userDrops]
+      : fields.filter(f => f.canDrop === 'Yes').map(f => f.field);
     const maskable = fields.filter(f => f.guardAction === 'Mask').map(f => f.field);
     const redactable = fields.filter(f => f.guardAction === 'Redact').map(f => f.field);
 
@@ -100,6 +103,10 @@ export default function CustomerWorkspacePage() {
   const [newName, setNewName] = useState('');
   const [newCompany, setNewCompany] = useState('');
   const [editNotes, setEditNotes] = useState(false);
+  const [showFieldTuning, setShowFieldTuning] = useState(false);
+  const [tuningSource, setTuningSource] = useState<string | null>(null);
+  const [droppedFields, setDroppedFields] = useState<Record<string, Set<string>>>({});
+  const [fieldFilter, setFieldFilter] = useState<'all' | 'droppable' | 'security' | 'observability'>('all');
 
   // Set initial active profile after first render
   useEffect(() => {
@@ -152,6 +159,48 @@ export default function CustomerWorkspacePage() {
       p.id === activeProfile.id ? { ...p, notes, updatedAt: new Date().toISOString() } : p
     ));
   }
+
+  function toggleFieldDrop(sourceId: string, fieldName: string) {
+    setDroppedFields(prev => {
+      const current = new Set(prev[sourceId] || []);
+      current.has(fieldName) ? current.delete(fieldName) : current.add(fieldName);
+      return { ...prev, [sourceId]: current };
+    });
+  }
+
+  function dropAllRecommended(sourceId: string) {
+    const fields = (fieldMatrix as any)[sourceId] || [];
+    const droppable = fields.filter((f: any) => f.canDrop === 'Yes').map((f: any) => f.field);
+    setDroppedFields(prev => ({ ...prev, [sourceId]: new Set(droppable) }));
+  }
+
+  function keepAll(sourceId: string) {
+    setDroppedFields(prev => ({ ...prev, [sourceId]: new Set() }));
+  }
+
+  // Field tuning impact for active tuning source
+  const tuningImpact = useMemo(() => {
+    if (!tuningSource) return null;
+    const fields = (fieldMatrix as any)[tuningSource] || [];
+    const dropped = droppedFields[tuningSource] || new Set();
+    const secDets: any[] = (secDetData as any)[tuningSource] || [];
+    const obsDets: any[] = (obsDetData as any)[tuningSource] || [];
+
+    const secImpact = secDets.map((d: any) => {
+      const required = new Set(d.requiredFields || []);
+      const missing = [...required].filter((f: string) => dropped.has(f));
+      return { ...d, missing, broken: missing.length > 0, coverage: required.size > 0 ? Math.round(((required.size - missing.length) / required.size) * 100) : 100 };
+    });
+    const obsImpact = obsDets.map((d: any) => {
+      const required = new Set(d.requiredFields || []);
+      const missing = [...required].filter((f: string) => dropped.has(f));
+      return { ...d, missing, broken: missing.length > 0, coverage: required.size > 0 ? Math.round(((required.size - missing.length) / required.size) * 100) : 100 };
+    });
+
+    const brokenCount = [...secImpact, ...obsImpact].filter(d => d.broken).length;
+    const totalDets = secImpact.length + obsImpact.length;
+    return { secImpact, obsImpact, brokenCount, healthyCount: totalDets - brokenCount, totalDets, droppedCount: dropped.size, totalFields: fields.length };
+  }, [tuningSource, droppedFields]);
 
   // Aggregate analysis for active profile
   const analysis = useMemo(() => {
@@ -238,7 +287,8 @@ export default function CustomerWorkspacePage() {
 
   function downloadCombinedPack() {
     if (!activeProfile || activeProfile.sourceIds.length === 0) return;
-    const yaml = generateCombinedPackYaml(activeProfile.sourceIds, activeProfile.name);
+    const hasCustomDrops = Object.values(droppedFields).some(s => s.size > 0);
+    const yaml = generateCombinedPackYaml(activeProfile.sourceIds, activeProfile.name, hasCustomDrops ? droppedFields : undefined);
     const blob = new Blob([yaml], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -434,6 +484,188 @@ export default function CustomerWorkspacePage() {
                   </table>
                 </div>
               </div>
+
+              {/* Field Tuning */}
+              {activeProfile.sourceIds.length > 0 && (
+                <div style={{ ...card, marginBottom: 24 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <div>
+                      <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>Field Tuning</h3>
+                      <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', margin: '4px 0 0' }}>
+                        Select which fields to keep or drop per source. See detection impact in real-time.
+                      </p>
+                    </div>
+                    <button onClick={() => { setShowFieldTuning(!showFieldTuning); if (!tuningSource) setTuningSource(activeProfile.sourceIds[0]); }}
+                      style={showFieldTuning ? btnPrimary : btnSecondary}>
+                      {showFieldTuning ? 'Hide Field Tuning' : 'Open Field Tuning'}
+                    </button>
+                  </div>
+
+                  {showFieldTuning && (
+                    <div>
+                      {/* Source tabs */}
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+                        {activeProfile.sourceIds.map(sid => {
+                          const src = allSources.find(s => s.id === sid);
+                          const dropped = droppedFields[sid]?.size || 0;
+                          return (
+                            <button key={sid} onClick={() => setTuningSource(sid)} style={{
+                              padding: '6px 12px', borderRadius: 'var(--cds-radius-md)', cursor: 'pointer',
+                              fontSize: 'var(--cds-font-size-xs)', fontWeight: tuningSource === sid ? 600 : 400,
+                              border: tuningSource === sid ? '2px solid var(--cds-brand-teal)' : '1px solid var(--cds-color-border)',
+                              background: tuningSource === sid ? 'var(--cds-color-bg-subtle)' : 'var(--cds-color-bg)',
+                              color: tuningSource === sid ? 'var(--cds-brand-teal)' : 'var(--cds-color-fg-muted)',
+                            }}>
+                              {src?.name || sid} {dropped > 0 && <span style={{ color: '#ef4444' }}>(-{dropped})</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {tuningSource && (() => {
+                        const fields = (fieldMatrix as any)[tuningSource] || [];
+                        const dropped = droppedFields[tuningSource] || new Set();
+                        const filteredFields = fieldFilter === 'all' ? fields
+                          : fieldFilter === 'droppable' ? fields.filter((f: any) => f.canDrop === 'Yes')
+                          : fieldFilter === 'security' ? fields.filter((f: any) => f.securitySiem === 'Yes')
+                          : fields.filter((f: any) => f.observability === 'Yes' || f.observability === 'Sometimes');
+
+                        return (
+                          <div>
+                            {/* Impact summary */}
+                            {tuningImpact && (
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+                                <div style={{ padding: 12, background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)', textAlign: 'center' }}>
+                                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: '#ef4444' }}>{tuningImpact.droppedCount}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Dropped</div>
+                                </div>
+                                <div style={{ padding: 12, background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)', textAlign: 'center' }}>
+                                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: 'var(--cds-brand-teal)' }}>
+                                    {tuningImpact.totalFields > 0 ? Math.round(tuningImpact.droppedCount / tuningImpact.totalFields * 100) : 0}%
+                                  </div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Reduction</div>
+                                </div>
+                                <div style={{ padding: 12, background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)', textAlign: 'center' }}>
+                                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: tuningImpact.brokenCount > 0 ? 'var(--cds-color-warning)' : 'var(--cds-color-success)' }}>
+                                    {tuningImpact.brokenCount}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Detections Affected</div>
+                                </div>
+                                <div style={{ padding: 12, background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)', textAlign: 'center' }}>
+                                  <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: 'var(--cds-color-success)' }}>{tuningImpact.healthyCount}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Detections Healthy</div>
+                                </div>
+                              </div>
+                            )}
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                              {/* Left: field toggles */}
+                              <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                  <div style={{ display: 'flex', gap: 4 }}>
+                                    {(['all', 'droppable', 'security', 'observability'] as const).map(mode => (
+                                      <button key={mode} onClick={() => setFieldFilter(mode)} style={{
+                                        padding: '3px 8px', border: fieldFilter === mode ? '2px solid var(--cds-brand-teal)' : '1px solid var(--cds-color-border)',
+                                        borderRadius: 'var(--cds-radius-sm)', cursor: 'pointer', fontSize: 10,
+                                        fontWeight: fieldFilter === mode ? 600 : 400, background: 'var(--cds-color-bg)',
+                                        color: fieldFilter === mode ? 'var(--cds-brand-teal)' : 'var(--cds-color-fg-muted)',
+                                      }}>
+                                        {mode === 'all' ? 'All' : mode === 'droppable' ? 'Droppable' : mode === 'security' ? 'Security' : 'Obs'}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 4 }}>
+                                    <button onClick={() => dropAllRecommended(tuningSource)} style={{ ...btnSecondary, padding: '3px 8px', fontSize: 10 }}>Drop All Safe</button>
+                                    <button onClick={() => keepAll(tuningSource)} style={{ ...btnSecondary, padding: '3px 8px', fontSize: 10 }}>Keep All</button>
+                                  </div>
+                                </div>
+                                <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--cds-color-border-subtle)', borderRadius: 'var(--cds-radius-md)' }}>
+                                  {filteredFields.map((f: any) => {
+                                    const isDropped = dropped.has(f.field);
+                                    return (
+                                      <div key={f.field} onClick={() => toggleFieldDrop(tuningSource, f.field)} style={{
+                                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer',
+                                        background: isDropped ? 'rgba(239, 68, 68, 0.04)' : 'transparent',
+                                        borderBottom: '1px solid var(--cds-color-border-subtle)',
+                                        opacity: isDropped ? 0.6 : 1,
+                                      }}>
+                                        <input type="checkbox" checked={!isDropped} readOnly
+                                          style={{ width: 12, height: 12, accentColor: 'var(--cds-brand-teal)', pointerEvents: 'none' }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <code style={{ fontSize: 11, fontFamily: 'var(--cds-font-mono)', color: isDropped ? '#ef4444' : 'var(--cds-color-accent)', textDecoration: isDropped ? 'line-through' : 'none' }}>
+                                            {f.field}
+                                          </code>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                                          {f.securitySiem === 'Yes' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cds-color-warning)' }} title="Security" />}
+                                          {(f.observability === 'Yes' || f.observability === 'Sometimes') && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6' }} title="Observability" />}
+                                          {f.canDrop === 'Yes' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444' }} title="Safe to drop" />}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div style={{ display: 'flex', gap: 6, marginTop: 6, fontSize: 10, color: 'var(--cds-color-fg-subtle)' }}>
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cds-color-warning)' }} /> Security</span>
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6' }} /> Obs</span>
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444' }} /> Droppable</span>
+                                </div>
+                              </div>
+
+                              {/* Right: detection impact */}
+                              <div>
+                                {(!tuningImpact || tuningImpact.droppedCount === 0) && (
+                                  <div style={{ padding: 30, textAlign: 'center', color: 'var(--cds-color-fg-muted)', background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)' }}>
+                                    <p style={{ fontSize: 'var(--cds-font-size-sm)', margin: 0 }}>Click fields to drop them and see detection impact</p>
+                                  </div>
+                                )}
+                                {tuningImpact && tuningImpact.droppedCount > 0 && (
+                                  <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                                    {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).length > 0 && (
+                                      <div style={{ marginBottom: 12 }}>
+                                        <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-danger)', marginBottom: 6 }}>
+                                          Affected ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).length})
+                                        </div>
+                                        {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).map(d => (
+                                          <div key={d.id} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 'var(--cds-radius-sm)', border: '1px solid var(--cds-color-danger)', background: 'rgba(239,68,68,0.03)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                              <span style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 500 }}>{d.name}</span>
+                                              <span style={{ fontSize: 10, color: 'var(--cds-color-danger)', fontWeight: 600 }}>{d.coverage}%</span>
+                                            </div>
+                                            <div style={{ height: 3, background: 'var(--cds-color-bg-muted)', borderRadius: 2, marginTop: 4 }}>
+                                              <div style={{ width: `${d.coverage}%`, height: '100%', background: d.coverage > 50 ? 'var(--cds-color-warning)' : 'var(--cds-color-danger)', borderRadius: 2 }} />
+                                            </div>
+                                            <div style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)', marginTop: 3 }}>
+                                              Missing: {d.missing.map((f: string) => <code key={f} style={{ color: '#ef4444', marginRight: 3 }}>{f}</code>)}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length > 0 && (
+                                      <div>
+                                        <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-success)', marginBottom: 6 }}>
+                                          Healthy ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length})
+                                        </div>
+                                        {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).map(d => (
+                                          <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', marginBottom: 2, borderRadius: 'var(--cds-radius-sm)', background: 'var(--cds-color-bg-subtle)' }}>
+                                            <span style={{ color: 'var(--cds-color-success)', fontSize: 10 }}>&#10003;</span>
+                                            <span style={{ fontSize: 11, color: 'var(--cds-color-fg-muted)' }}>{d.name}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Cross-source correlation fields */}
               {correlationCoverage.length > 0 && (
