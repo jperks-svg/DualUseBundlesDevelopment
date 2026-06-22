@@ -7,7 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { routingBlueprints } from '../data/routing';
 import { calculateFieldReduction, calculateCostSavings } from '../utils/costCalc';
-import { getProfilesSync, saveProfiles, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
+import { getProfilesSync, saveProfilesToKV, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -122,10 +122,18 @@ export default function CustomerWorkspacePage() {
   }, []);
 
   // Persist whenever profiles change — writes to in-memory cache + KV + localStorage
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const isInitialMount = React.useRef(true);
   useEffect(() => {
     if (isInitialMount.current) { isInitialMount.current = false; return; }
-    saveProfiles(profiles);
+    setSaveStatus('Saving...');
+    saveProfilesToKV(profiles).then(() => {
+      setSaveStatus('Saved');
+      setTimeout(() => setSaveStatus(null), 2000);
+    }).catch(() => {
+      setSaveStatus('Save failed');
+      setTimeout(() => setSaveStatus(null), 3000);
+    });
   }, [profiles]);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
@@ -313,7 +321,14 @@ export default function CustomerWorkspacePage() {
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 'var(--cds-font-size-xxl)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Project Workspace</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: 'var(--cds-font-size-xxl)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Project Workspace</h2>
+          {saveStatus && (
+            <span style={{ fontSize: 'var(--cds-font-size-xs)', color: saveStatus === 'Save failed' ? 'var(--cds-color-danger)' : 'var(--cds-brand-teal)', fontWeight: 500 }}>
+              {saveStatus}
+            </span>
+          )}
+        </div>
         <p style={{ fontSize: 'var(--cds-font-size-base)', color: 'var(--cds-color-fg-muted)', lineHeight: 1.6 }}>
           Build project-specific views across multiple sources. Aggregate reduction potential, export combined packs, and identify correlation coverage gaps.
         </p>

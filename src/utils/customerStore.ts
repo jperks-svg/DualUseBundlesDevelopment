@@ -30,15 +30,27 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
     const apiUrl = getApiUrl();
     if (apiUrl) {
       try {
-        const res = await fetch(`${apiUrl}/kvstore/${KV_KEY}`);
+        const url = `${apiUrl}/kvstore/${KV_KEY}`;
+        console.log('[DUB] Loading projects from:', url);
+        const res = await fetch(url);
+        console.log('[DUB] KV load response:', res.status);
         if (res.ok) {
           const data = await res.json();
           profileCache = Array.isArray(data) ? data : [];
+          console.log('[DUB] Loaded', profileCache.length, 'projects from KV');
           return profileCache;
         }
-      } catch {}
+        if (res.status === 404) {
+          console.log('[DUB] KV key not found (first use)');
+          profileCache = [];
+          return profileCache;
+        }
+      } catch (err) {
+        console.warn('[DUB] KV load failed:', err);
+      }
+    } else {
+      console.log('[DUB] No CRIBL_API_URL — using localStorage only');
     }
-    // Fallback: try localStorage
     profileCache = loadFromLocalStorage();
     return profileCache;
   })();
@@ -48,17 +60,27 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
 
 export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<void> {
   profileCache = profiles;
+  loadPromise = null; // Reset so next load fetches fresh from KV
   saveToLocalStorage(profiles);
 
   const apiUrl = getApiUrl();
   if (!apiUrl) return;
   try {
-    await fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
+    const url = `${apiUrl}/kvstore/${KV_KEY}`;
+    console.log('[DUB] Saving', profiles.length, 'projects to:', url);
+    const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(profiles),
     });
-  } catch {}
+    console.log('[DUB] KV save response:', res.status);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn('[DUB] KV save failed:', res.status, text);
+    }
+  } catch (err) {
+    console.warn('[DUB] KV save error:', err);
+  }
 }
 
 // Synchronous API — reads/writes the in-memory cache + localStorage
