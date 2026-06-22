@@ -14,6 +14,53 @@ function getApiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
+// Read the response body by consuming the ReadableStream directly.
+// The Cribl fetch proxy enqueues the pre-parsed JS object as a chunk
+// into the Response's ReadableStream. Standard .text()/.json() fail
+// because they expect string/Uint8Array chunks, but reading chunks
+// directly gives us the actual parsed data.
+async function readResponseBody(res: Response): Promise<any> {
+  // First try .body stream reader (gets raw chunks from proxy)
+  if (res.body) {
+    try {
+      const reader = res.body.getReader();
+      const chunks: any[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      console.log('[DUB] Stream chunks:', chunks.length, 'types:', chunks.map(c => typeof c));
+      if (chunks.length === 1 && typeof chunks[0] === 'object' && !(chunks[0] instanceof Uint8Array)) {
+        // Proxy delivered pre-parsed object directly as stream chunk
+        return chunks[0];
+      }
+      if (chunks.length > 0 && chunks[0] instanceof Uint8Array) {
+        // Normal response — decode and parse
+        const text = new TextDecoder().decode(chunks[0]);
+        return JSON.parse(text);
+      }
+      // Multiple object chunks — likely an array split
+      if (chunks.length > 0 && typeof chunks[0] === 'object') {
+        return chunks;
+      }
+    } catch (err) {
+      console.warn('[DUB] Stream read failed:', err);
+    }
+  }
+
+  // Fallback: try .text() in case it works this time
+  try {
+    const text = await res.text();
+    if (text && text[0] === '[' || text[0] === '{') {
+      return JSON.parse(text);
+    }
+  } catch (err) {
+    console.warn('[DUB] .text() fallback failed:', err);
+  }
+
+  return null;
+}
 
 // In-memory cache — survives across route changes within the same session
 let profileCache: CustomerProfile[] | null = null;
@@ -39,7 +86,7 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
       const url = `${apiUrl}/kvstore/${KV_KEY}`;
       console.log('[DUB] Loading projects from:', url);
       const res = await fetch(url);
-      console.log('[DUB] KV load response:', res.status);
+      console.log('[DUB] KV load response:', res.status, 'bodyUsed:', res.bodyUsed);
 
       if (res.status === 404) {
         console.log('[DUB] KV key not found (first use)');
@@ -48,23 +95,15 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
       }
 
       if (res.ok) {
-        const text = await res.text();
-        console.log('[DUB] KV load text length:', text.length, 'first 100:', text.slice(0, 100));
+        const data = await readResponseBody(res);
+        console.log('[DUB] KV parsed data type:', typeof data, 'isArray:', Array.isArray(data));
 
-        if (text && text[0] === '[') {
-          // Direct array format
-          profileCache = JSON.parse(text);
-        } else if (text && text[0] === '{') {
-          // Envelope format {d: "..."}
-          const obj = JSON.parse(text);
-          if (typeof obj.d === 'string') {
-            profileCache = JSON.parse(obj.d);
-          } else {
-            profileCache = [];
-          }
+        if (Array.isArray(data)) {
+          profileCache = data;
+        } else if (data && typeof data.d === 'string') {
+          profileCache = JSON.parse(data.d);
         } else {
-          console.warn('[DUB] KV unexpected format:', text.slice(0, 50));
-          profileCache = loadFromLocalStorage();
+          profileCache = [];
         }
         console.log('[DUB] Loaded', profileCache!.length, 'projects from KV');
         return profileCache!;
@@ -89,7 +128,6 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   if (!apiUrl) return;
   try {
     const url = `${apiUrl}/kvstore/${KV_KEY}`;
-    // Save as plain JSON array — the KV store accepts objects/arrays
     console.log('[DUB] Saving', profiles.length, 'projects to:', url);
     const res = await fetch(url, {
       method: 'PUT',
