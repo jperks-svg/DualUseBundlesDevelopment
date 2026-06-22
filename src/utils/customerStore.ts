@@ -14,6 +14,7 @@ function getApiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
+
 // In-memory cache — survives across route changes within the same session
 let profileCache: CustomerProfile[] | null = null;
 let loadPromise: Promise<CustomerProfile[]> | null = null;
@@ -47,20 +48,26 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
       }
 
       if (res.ok) {
-        // The Cribl fetch proxy pre-parses JSON responses. When the stored
-        // value is a JSON string literal (double-encoded), the proxy parses
-        // it to a JS string primitive. new Response(string) works correctly,
-        // so .text() returns the actual string content we can then parse.
         const text = await res.text();
-        console.log('[DUB] KV load text length:', text.length, 'first 80:', text.slice(0, 80));
+        console.log('[DUB] KV load text length:', text.length, 'first 100:', text.slice(0, 100));
 
-        if (text && text !== '[object Object]' && !text.startsWith('[object')) {
+        if (text && text[0] === '[') {
+          // Direct array format
           profileCache = JSON.parse(text);
-          console.log('[DUB] Loaded', profileCache!.length, 'projects from KV');
-          return profileCache!;
+        } else if (text && text[0] === '{') {
+          // Envelope format {d: "..."}
+          const obj = JSON.parse(text);
+          if (typeof obj.d === 'string') {
+            profileCache = JSON.parse(obj.d);
+          } else {
+            profileCache = [];
+          }
+        } else {
+          console.warn('[DUB] KV unexpected format:', text.slice(0, 50));
+          profileCache = loadFromLocalStorage();
         }
-        // Fallback: proxy corrupted the response (old format stored as object)
-        console.warn('[DUB] KV response was proxy-corrupted, falling back to localStorage');
+        console.log('[DUB] Loaded', profileCache!.length, 'projects from KV');
+        return profileCache!;
       }
     } catch (err) {
       console.warn('[DUB] KV load failed:', err);
@@ -82,15 +89,12 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   if (!apiUrl) return;
   try {
     const url = `${apiUrl}/kvstore/${KV_KEY}`;
-    // Double-encode: store as a JSON string literal so the proxy's
-    // JSON.parse returns a JS string (not an object), making
-    // new Response(string) produce a readable body.
-    const body = JSON.stringify(JSON.stringify(profiles));
-    console.log('[DUB] Saving', profiles.length, 'projects to:', url, 'body length:', body.length);
+    // Save as plain JSON array — the KV store accepts objects/arrays
+    console.log('[DUB] Saving', profiles.length, 'projects to:', url);
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body,
+      body: JSON.stringify(profiles),
     });
     console.log('[DUB] KV save response:', res.status);
     if (!res.ok) {
@@ -116,7 +120,7 @@ export function saveProfiles(profiles: CustomerProfile[]): void {
     fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(JSON.stringify(profiles)),
+      body: JSON.stringify(profiles),
     }).catch(() => {});
   }
 }
