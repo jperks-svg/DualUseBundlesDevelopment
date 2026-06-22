@@ -7,7 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { routingBlueprints } from '../data/routing';
 import { calculateFieldReduction, calculateCostSavings } from '../utils/costCalc';
-import { loadProfiles, saveProfiles, createProfile, updateProfile, deleteProfile, CustomerProfile } from '../utils/customerStore';
+import { loadProfiles, saveProfiles, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -94,43 +94,63 @@ function generateCombinedPackYaml(sourceIds: string[], customerName: string): st
 }
 
 export default function CustomerWorkspacePage() {
-  const [profiles, setProfiles] = useState<CustomerProfile[]>(loadProfiles());
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(profiles[0]?.id || null);
+  const [profiles, setProfiles] = useState<CustomerProfile[]>(() => loadProfiles());
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCompany, setNewCompany] = useState('');
   const [editNotes, setEditNotes] = useState(false);
 
-  const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
+  // Set initial active profile after first render
+  useEffect(() => {
+    if (!activeProfileId && profiles.length > 0) setActiveProfileId(profiles[0].id);
+  }, []);
 
-  function refresh() { setProfiles(loadProfiles()); }
+  // Persist to localStorage whenever profiles change
+  useEffect(() => { saveProfiles(profiles); }, [profiles]);
+
+  const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
 
   function handleCreate() {
     if (!newName.trim()) return;
-    const p = createProfile(newName.trim(), newCompany.trim());
-    setActiveProfileId(p.id);
+    const newProfile: CustomerProfile = {
+      id: `proj_${Date.now().toString(36)}`,
+      name: newName.trim(),
+      company: newCompany.trim(),
+      sourceIds: [],
+      notes: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setProfiles(prev => [...prev, newProfile]);
+    setActiveProfileId(newProfile.id);
     setNewName(''); setNewCompany(''); setShowCreate(false);
-    refresh();
   }
 
   function handleDelete(id: string) {
-    deleteProfile(id);
-    refresh();
-    setActiveProfileId(profiles.filter(p => p.id !== id)[0]?.id || null);
+    setProfiles(prev => {
+      const updated = prev.filter(p => p.id !== id);
+      setActiveProfileId(updated[0]?.id || null);
+      return updated;
+    });
   }
 
   function toggleSource(sourceId: string) {
     if (!activeProfile) return;
-    const current = activeProfile.sourceIds;
-    const updated = current.includes(sourceId) ? current.filter(s => s !== sourceId) : [...current, sourceId];
-    updateProfile(activeProfile.id, { sourceIds: updated });
-    refresh();
+    setProfiles(prev => prev.map(p => {
+      if (p.id !== activeProfile.id) return p;
+      const sourceIds = p.sourceIds.includes(sourceId)
+        ? p.sourceIds.filter(s => s !== sourceId)
+        : [...p.sourceIds, sourceId];
+      return { ...p, sourceIds, updatedAt: new Date().toISOString() };
+    }));
   }
 
   function handleNotesChange(notes: string) {
     if (!activeProfile) return;
-    updateProfile(activeProfile.id, { notes });
-    refresh();
+    setProfiles(prev => prev.map(p =>
+      p.id === activeProfile.id ? { ...p, notes, updatedAt: new Date().toISOString() } : p
+    ));
   }
 
   // Aggregate analysis for active profile
