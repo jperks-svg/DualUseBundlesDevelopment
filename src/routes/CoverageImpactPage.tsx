@@ -5,7 +5,7 @@ import { dataSources } from '../data/sources';
 import { fieldMatrix } from '../data/fields';
 import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
-import { loadProfiles, saveProfiles, CustomerProfile } from '../utils/customerStore';
+import { getProfilesSync, saveProfiles, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -71,7 +71,7 @@ export default function CoverageImpactPage() {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   function getProjects(): CustomerProfile[] {
-    try { return loadProfiles(); } catch { return []; }
+    try { return getProfilesSync(); } catch { return []; }
   }
 
   function saveToExistingProject(projectId: string) {

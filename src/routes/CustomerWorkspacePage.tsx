@@ -7,7 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { routingBlueprints } from '../data/routing';
 import { calculateFieldReduction, calculateCostSavings } from '../utils/costCalc';
-import { loadProfiles, saveProfiles, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
+import { getProfilesSync, saveProfiles, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -97,8 +97,11 @@ function generateCombinedPackYaml(sourceIds: string[], customerName: string, cus
 }
 
 export default function CustomerWorkspacePage() {
-  const [profiles, setProfiles] = useState<CustomerProfile[]>(() => loadProfiles());
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<CustomerProfile[]>(() => getProfilesSync());
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(() => {
+    const cached = getProfilesSync();
+    return cached.length > 0 ? cached[0].id : null;
+  });
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCompany, setNewCompany] = useState('');
@@ -108,25 +111,17 @@ export default function CustomerWorkspacePage() {
   const [droppedFields, setDroppedFields] = useState<Record<string, Set<string>>>({});
   const [fieldFilter, setFieldFilter] = useState<'all' | 'droppable' | 'security' | 'observability'>('all');
 
-  // Load from KV store on mount (async), merge with any local data
+  // On mount: refresh from KV store (async) to pick up data from prior sessions
   useEffect(() => {
     loadProfilesFromKV().then(kvProfiles => {
       if (kvProfiles.length > 0) {
-        setProfiles(prev => {
-          const merged = [...kvProfiles];
-          prev.forEach(p => { if (!merged.find(m => m.id === p.id)) merged.push(p); });
-          return merged;
-        });
+        setProfiles(kvProfiles);
+        if (!activeProfileId) setActiveProfileId(kvProfiles[0].id);
       }
     });
   }, []);
 
-  // Set initial active profile once profiles are available
-  useEffect(() => {
-    if (!activeProfileId && profiles.length > 0) setActiveProfileId(profiles[0].id);
-  }, [profiles]);
-
-  // Persist whenever profiles change (writes to both KV and localStorage)
+  // Persist whenever profiles change — writes to in-memory cache + KV + localStorage
   const isInitialMount = React.useRef(true);
   useEffect(() => {
     if (isInitialMount.current) { isInitialMount.current = false; return; }
