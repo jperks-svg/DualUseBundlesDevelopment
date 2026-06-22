@@ -1,9 +1,11 @@
 // @ts-nocheck
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { dataSources } from '../data/sources';
 import { fieldMatrix } from '../data/fields';
 import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
+import { loadProfiles, saveProfiles, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -61,6 +63,50 @@ export default function CoverageImpactPage() {
   }
 
   function clearAll() { setDroppedFields(new Set()); }
+
+  // Save to project
+  const navigate = useNavigate();
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  function getProjects(): CustomerProfile[] {
+    try { return loadProfiles(); } catch { return []; }
+  }
+
+  function saveToExistingProject(projectId: string) {
+    const profiles = getProjects();
+    const idx = profiles.findIndex(p => p.id === projectId);
+    if (idx === -1) return;
+    if (!profiles[idx].sourceIds.includes(selectedSource)) {
+      profiles[idx].sourceIds.push(selectedSource);
+    }
+    profiles[idx].updatedAt = new Date().toISOString();
+    saveProfiles(profiles);
+    setSaveStatus(`Saved to "${profiles[idx].name}"`);
+    setTimeout(() => setSaveStatus(null), 3000);
+    setShowSaveModal(false);
+  }
+
+  function saveToNewProject() {
+    if (!newProjectName.trim()) return;
+    const profiles = getProjects();
+    const newProfile: CustomerProfile = {
+      id: `proj_${Date.now().toString(36)}`,
+      name: newProjectName.trim(),
+      company: '',
+      sourceIds: [selectedSource],
+      notes: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    profiles.push(newProfile);
+    saveProfiles(profiles);
+    setNewProjectName('');
+    setSaveStatus(`Created "${newProfile.name}" with ${source?.name}`);
+    setTimeout(() => setSaveStatus(null), 3000);
+    setShowSaveModal(false);
+  }
 
   // Compute impact of dropped fields on detections
   const impact = useMemo(() => {
@@ -121,7 +167,61 @@ export default function CoverageImpactPage() {
         </select>
         <span style={tag('var(--cds-color-accent-subtle)', 'var(--cds-color-accent)')}>{fields.length} fields</span>
         <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>{secDetections.length + obsDetections.length} detections</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {saveStatus && <span style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-brand-teal)', fontWeight: 500 }}>{saveStatus}</span>}
+          <button onClick={() => setShowSaveModal(true)} style={btnPrimary}>Save to Project</button>
+        </div>
       </div>
+
+      {/* Save to Project modal */}
+      {showSaveModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowSaveModal(false)}>
+          <div style={{ background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border)', borderRadius: 'var(--cds-radius-xl)', padding: 28, maxWidth: 440, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 'var(--cds-font-size-lg)', fontWeight: 600 }}>Save to Project</h3>
+              <button onClick={() => setShowSaveModal(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--cds-color-fg-muted)' }}>&times;</button>
+            </div>
+            <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', marginBottom: 16 }}>
+              Add <strong>{source?.name}</strong>{droppedFields.size > 0 ? ` with ${droppedFields.size} fields marked for drop` : ''} to a project.
+            </p>
+
+            {/* Existing projects */}
+            {(() => {
+              const projects = getProjects();
+              return projects.length > 0 ? (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Add to existing project</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {projects.map(p => (
+                      <button key={p.id} onClick={() => saveToExistingProject(p.id)} style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px',
+                        border: '1px solid var(--cds-color-border)', borderRadius: 'var(--cds-radius-md)',
+                        background: 'var(--cds-color-bg)', cursor: 'pointer', textAlign: 'left',
+                      }}>
+                        <div>
+                          <div style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 500, color: 'var(--cds-color-fg)' }}>{p.name}</div>
+                          {p.company && <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)' }}>{p.company}</div>}
+                        </div>
+                        <span style={tag('var(--cds-color-bg-muted)', 'var(--cds-color-fg-muted)')}>{p.sourceIds.length} sources</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Create new */}
+            <div style={{ borderTop: getProjects().length > 0 ? '1px solid var(--cds-color-border-subtle)' : 'none', paddingTop: getProjects().length > 0 ? 16 : 0 }}>
+              <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-fg)', marginBottom: 8 }}>Or create a new project</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={newProjectName} onChange={e => setNewProjectName(e.target.value)} placeholder="Project name"
+                  style={{ ...selectStyle, flex: 1 }} onKeyDown={e => e.key === 'Enter' && saveToNewProject()} />
+                <button onClick={saveToNewProject} style={btnPrimary} disabled={!newProjectName.trim()}>Create</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Impact summary bar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
