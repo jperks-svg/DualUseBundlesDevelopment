@@ -8,9 +8,45 @@ export interface CustomerProfile {
   updatedAt: string;
 }
 
+const KV_KEY = 'projects/profiles';
+
+function getApiUrl(): string {
+  return (window as any).CRIBL_API_URL || '';
+}
+
+export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
+  const apiUrl = getApiUrl();
+  if (!apiUrl) return loadProfilesLocal();
+  try {
+    const res = await fetch(`${apiUrl}/kvstore/${KV_KEY}`);
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+    if (res.status === 404) return [];
+    return loadProfilesLocal();
+  } catch {
+    return loadProfilesLocal();
+  }
+}
+
+export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<void> {
+  const apiUrl = getApiUrl();
+  if (!apiUrl) { saveProfilesLocal(profiles); return; }
+  try {
+    await fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profiles),
+    });
+  } catch {}
+  saveProfilesLocal(profiles);
+}
+
+// localStorage fallback for local dev or when KV is unavailable
 const STORAGE_KEY = 'dub_customer_profiles';
 
-export function loadProfiles(): CustomerProfile[] {
+function loadProfilesLocal(): CustomerProfile[] {
   try {
     if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -18,39 +54,19 @@ export function loadProfiles(): CustomerProfile[] {
   } catch { return []; }
 }
 
-export function saveProfiles(profiles: CustomerProfile[]): void {
+function saveProfilesLocal(profiles: CustomerProfile[]): void {
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
   } catch {}
 }
 
-export function createProfile(name: string, company: string): CustomerProfile {
-  const profile: CustomerProfile = {
-    id: `cust_${Date.now().toString(36)}`,
-    name,
-    company,
-    sourceIds: [],
-    notes: '',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  const profiles = loadProfiles();
-  profiles.push(profile);
-  saveProfiles(profiles);
-  return profile;
+// Synchronous versions for components that need immediate reads (use cached state)
+export function loadProfiles(): CustomerProfile[] {
+  return loadProfilesLocal();
 }
 
-export function updateProfile(id: string, updates: Partial<Omit<CustomerProfile, 'id' | 'createdAt'>>): CustomerProfile | null {
-  const profiles = loadProfiles();
-  const idx = profiles.findIndex(p => p.id === id);
-  if (idx === -1) return null;
-  profiles[idx] = { ...profiles[idx], ...updates, updatedAt: new Date().toISOString() };
-  saveProfiles(profiles);
-  return profiles[idx];
-}
-
-export function deleteProfile(id: string): void {
-  const profiles = loadProfiles().filter(p => p.id !== id);
-  saveProfiles(profiles);
+export function saveProfiles(profiles: CustomerProfile[]): void {
+  saveProfilesLocal(profiles);
+  saveProfilesToKV(profiles);
 }

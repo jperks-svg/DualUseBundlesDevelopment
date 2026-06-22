@@ -7,7 +7,7 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { routingBlueprints } from '../data/routing';
 import { calculateFieldReduction, calculateCostSavings } from '../utils/costCalc';
-import { loadProfiles, saveProfiles, CustomerProfile } from '../utils/customerStore';
+import { loadProfiles, saveProfiles, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -108,13 +108,30 @@ export default function CustomerWorkspacePage() {
   const [droppedFields, setDroppedFields] = useState<Record<string, Set<string>>>({});
   const [fieldFilter, setFieldFilter] = useState<'all' | 'droppable' | 'security' | 'observability'>('all');
 
-  // Set initial active profile after first render
+  // Load from KV store on mount (async), merge with any local data
   useEffect(() => {
-    if (!activeProfileId && profiles.length > 0) setActiveProfileId(profiles[0].id);
+    loadProfilesFromKV().then(kvProfiles => {
+      if (kvProfiles.length > 0) {
+        setProfiles(prev => {
+          const merged = [...kvProfiles];
+          prev.forEach(p => { if (!merged.find(m => m.id === p.id)) merged.push(p); });
+          return merged;
+        });
+      }
+    });
   }, []);
 
-  // Persist to localStorage whenever profiles change
-  useEffect(() => { saveProfiles(profiles); }, [profiles]);
+  // Set initial active profile once profiles are available
+  useEffect(() => {
+    if (!activeProfileId && profiles.length > 0) setActiveProfileId(profiles[0].id);
+  }, [profiles]);
+
+  // Persist whenever profiles change (writes to both KV and localStorage)
+  const isInitialMount = React.useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) { isInitialMount.current = false; return; }
+    saveProfiles(profiles);
+  }, [profiles]);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
 
