@@ -9,6 +9,9 @@ import SettingsPage from './routes/SettingsPage';
 import CostSimulatorPage from './routes/CostSimulatorPage';
 import CorrelationStoriesPage from './routes/CorrelationStoriesPage';
 import CoverageHeatmapPage from './routes/CoverageHeatmapPage';
+import CustomerWorkspacePage from './routes/CustomerWorkspacePage';
+import CoverageImpactPage from './routes/CoverageImpactPage';
+import ReportPage from './routes/ReportPage';
 
 export default function App() {
   return (
@@ -23,6 +26,9 @@ export default function App() {
           <Route path="/stories" element={<CorrelationStoriesPage />} />
           <Route path="/coverage" element={<CoverageHeatmapPage />} />
           <Route path="/export" element={<ExportPage />} />
+          <Route path="/workspace" element={<CustomerWorkspacePage />} />
+          <Route path="/impact" element={<CoverageImpactPage />} />
+          <Route path="/report" element={<ReportPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
