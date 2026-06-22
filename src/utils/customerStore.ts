@@ -35,23 +35,25 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
         const res = await fetch(url);
         console.log('[DUB] KV load response:', res.status);
         if (res.ok) {
-          // Cribl's fetch proxy may return pre-parsed data or raw text.
-          // We wrap in a string envelope on save ({d:"..."}) so load
-          // always gets a JSON object with a string field we can parse.
-          let data: any;
+          // Cribl's fetch proxy returns a non-standard Response where
+          // .json() throws and .text() after .json() fails (stream consumed).
+          // Strategy: try blob→text (raw bytes), then clone→json, then text.
+          let data: any = null;
           try {
-            data = await res.json();
-          } catch {
-            // json() failed — try text
+            const blob = await res.blob();
+            const raw = await blob.text();
+            console.log('[DUB] KV load via blob, length:', raw.length, 'preview:', raw.slice(0, 100));
+            data = raw ? JSON.parse(raw) : null;
+          } catch (e1) {
+            console.warn('[DUB] KV blob read failed:', e1);
+            // Fallback: try clone().json()
             try {
-              const text = await res.text();
-              data = text ? JSON.parse(text) : null;
+              data = await res.clone().json();
             } catch (e2) {
-              console.warn('[DUB] KV load: both json() and text() failed', e2);
-              data = null;
+              console.warn('[DUB] KV clone.json() also failed:', e2);
             }
           }
-          console.log('[DUB] KV load result type:', typeof data, 'keys:', data ? Object.keys(data) : 'null');
+          console.log('[DUB] KV load result type:', typeof data, Array.isArray(data) ? '(array)' : data ? Object.keys(data) : 'null');
           // Unwrap string envelope
           let parsed: CustomerProfile[];
           if (data && typeof data.d === 'string') {
