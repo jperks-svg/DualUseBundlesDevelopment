@@ -35,12 +35,35 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
         const res = await fetch(url);
         console.log('[DUB] KV load response:', res.status);
         if (res.ok) {
-          const text = await res.text();
-          console.log('[DUB] KV load raw:', text.slice(0, 200));
-          const data = text ? JSON.parse(text) : [];
-          profileCache = Array.isArray(data) ? data : [];
-          console.log('[DUB] Loaded', profileCache.length, 'projects from KV');
-          return profileCache;
+          // Cribl's fetch proxy may return pre-parsed data or raw text.
+          // We wrap in a string envelope on save ({d:"..."}) so load
+          // always gets a JSON object with a string field we can parse.
+          let data: any;
+          try {
+            data = await res.json();
+          } catch {
+            // json() failed — try text
+            try {
+              const text = await res.text();
+              data = text ? JSON.parse(text) : null;
+            } catch (e2) {
+              console.warn('[DUB] KV load: both json() and text() failed', e2);
+              data = null;
+            }
+          }
+          console.log('[DUB] KV load result type:', typeof data, 'keys:', data ? Object.keys(data) : 'null');
+          // Unwrap string envelope
+          let parsed: CustomerProfile[];
+          if (data && typeof data.d === 'string') {
+            parsed = JSON.parse(data.d);
+          } else if (Array.isArray(data)) {
+            parsed = data;
+          } else {
+            parsed = [];
+          }
+          profileCache = parsed;
+          console.log('[DUB] Loaded', parsed.length, 'projects from KV');
+          return parsed;
         }
         if (res.status === 404) {
           console.log('[DUB] KV key not found (first use)');
@@ -69,11 +92,13 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   if (!apiUrl) return;
   try {
     const url = `${apiUrl}/kvstore/${KV_KEY}`;
+    // Wrap in string envelope to avoid proxy deserialization issues
+    const envelope = JSON.stringify({ d: JSON.stringify(profiles) });
     console.log('[DUB] Saving', profiles.length, 'projects to:', url);
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(profiles),
+      body: envelope,
     });
     console.log('[DUB] KV save response:', res.status);
     if (!res.ok) {
@@ -95,13 +120,13 @@ export function loadProfiles(): CustomerProfile[] {
 export function saveProfiles(profiles: CustomerProfile[]): void {
   profileCache = profiles;
   saveToLocalStorage(profiles);
-  // Fire KV save in background
+  // Fire KV save in background (string envelope)
   const apiUrl = getApiUrl();
   if (apiUrl) {
     fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(profiles),
+      body: JSON.stringify({ d: JSON.stringify(profiles) }),
     }).catch(() => {});
   }
 }
