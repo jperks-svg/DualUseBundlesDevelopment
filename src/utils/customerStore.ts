@@ -20,95 +20,54 @@ function getPackId(): string {
   return parts[parts.length - 1] || '';
 }
 
-// Build the real KV store URL that bypasses the fetch proxy rewriting.
-// The proxy rewrites CRIBL_API_URL/kvstore/x → /api/v1/p/{packId}/kvstore/x
-// We construct this URL ourselves for XHR (which the proxy can't intercept).
-function getKvUrl(): string | null {
-  const apiUrl = getApiUrl();
-  if (!apiUrl) return null;
-  const packId = getPackId();
-  if (!packId) return null;
-  const origin = new URL(apiUrl).origin;
-  return `${origin}/api/v1/p/${packId}/kvstore/${KV_KEY}`;
-}
-
-// XHR-based KV read — bypasses the fetch proxy entirely.
-// The proxy only hooks window.fetch, not XMLHttpRequest.
-// Since the iframe is same-origin with the parent, session cookies
-// provide authentication automatically with withCredentials.
-function kvReadXHR(): Promise<string | null> {
+// Try multiple XHR URL patterns to find the right KV endpoint
+function kvReadXHR(): Promise<CustomerProfile[] | null> {
   return new Promise((resolve) => {
-    const url = getKvUrl();
-    if (!url) { resolve(null); return; }
+    const apiUrl = getApiUrl();
+    if (!apiUrl) { resolve(null); return; }
+    const packId = getPackId();
+    const origin = new URL(apiUrl).origin;
 
-    console.log('[DUB] XHR read from:', url);
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('Accept', 'application/json');
-    xhr.onload = () => {
-      console.log('[DUB] XHR read status:', xhr.status, 'length:', xhr.responseText?.length);
-      if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
-        resolve(xhr.responseText);
-      } else if (xhr.status === 404) {
-        console.log('[DUB] XHR: key not found (first use)');
-        resolve(null);
-      } else {
-        console.warn('[DUB] XHR read failed:', xhr.status, xhr.responseText?.slice(0, 100));
-        resolve(null);
-      }
-    };
-    xhr.onerror = () => {
-      console.warn('[DUB] XHR network error');
-      resolve(null);
-    };
-    xhr.send();
+    // Try multiple path patterns the proxy might be rewriting to
+    const urls = [
+      `${origin}/api/v1/a/${packId}/kvstore/${KV_KEY}`,
+      `${origin}/api/v1/p/${packId}/kvstore/${KV_KEY}`,
+      `${origin}/api/v1/packs/${packId}/kvstore/${KV_KEY}`,
+      `${apiUrl}/kvstore/${KV_KEY}`,
+    ];
+
+    let completed = 0;
+    let resolved = false;
+
+    for (const url of urls) {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('Accept', 'application/json');
+      xhr.onload = () => {
+        completed++;
+        if (resolved) return;
+        console.log('[DUB] XHR try:', url, 'status:', xhr.status);
+        if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (Array.isArray(data)) {
+              resolved = true;
+              console.log('[DUB] XHR success from:', url, 'count:', data.length);
+              resolve(data);
+              return;
+            }
+          } catch {}
+        }
+        if (completed === urls.length && !resolved) resolve(null);
+      };
+      xhr.onerror = () => {
+        completed++;
+        if (completed === urls.length && !resolved) resolve(null);
+      };
+      xhr.send();
+    }
   });
-}
-
-// IndexedDB for local persistence (reliable, fast, survives refresh)
-const DB_NAME = 'dub_projects';
-const STORE_NAME = 'profiles';
-
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function readFromIDB(): Promise<CustomerProfile[]> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
-  } catch { return []; }
-}
-
-async function writeToIDB(profiles: CustomerProfile[]): Promise<void> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      store.clear();
-      for (const p of profiles) store.put(p);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
 }
 
 // In-memory cache
@@ -124,30 +83,14 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    // Try XHR read from KV store first (cross-machine source of truth)
-    const raw = await kvReadXHR();
-    if (raw) {
-      try {
-        const data = JSON.parse(raw);
-        const profiles = Array.isArray(data) ? data : [];
-        profileCache = profiles;
-        await writeToIDB(profiles); // Sync to local IDB
-        console.log('[DUB] Loaded', profiles.length, 'projects from KV (XHR)');
-        return profiles;
-      } catch (err) {
-        console.warn('[DUB] KV parse failed:', err);
-      }
+    const data = await kvReadXHR();
+    if (data && data.length > 0) {
+      profileCache = data;
+      console.log('[DUB] Loaded', data.length, 'projects');
+      return data;
     }
 
-    // Fallback: load from IndexedDB (local cache)
-    const local = await readFromIDB();
-    if (local.length > 0) {
-      console.log('[DUB] Loaded', local.length, 'projects from IndexedDB (local)');
-      profileCache = local;
-      return local;
-    }
-
-    console.log('[DUB] No projects found (KV or local)');
+    console.log('[DUB] No projects found');
     profileCache = [];
     return profileCache;
   })();
@@ -159,10 +102,6 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   profileCache = profiles;
   loadPromise = null;
 
-  // Write to IndexedDB (local, reliable)
-  await writeToIDB(profiles);
-
-  // Write to KV store via fetch (proxy handles auth for writes)
   const apiUrl = getApiUrl();
   if (!apiUrl) return;
   try {
@@ -190,7 +129,6 @@ export function loadProfiles(): CustomerProfile[] {
 
 export function saveProfiles(profiles: CustomerProfile[]): void {
   profileCache = profiles;
-  writeToIDB(profiles).catch(() => {});
   const apiUrl = getApiUrl();
   if (apiUrl) {
     fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
