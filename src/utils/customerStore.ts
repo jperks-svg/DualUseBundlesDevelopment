@@ -14,96 +14,38 @@ function getApiUrl(): string {
   return (window as any).CRIBL_API_URL || '';
 }
 
-// Read from KV store using fetch. The Cribl service worker intercepts
-// all requests (including XHR), so we can't bypass it. Instead, we
-// save data as text/plain so the SW won't JSON.parse the response body.
 async function kvRead(): Promise<CustomerProfile[] | null> {
   const apiUrl = getApiUrl();
   if (!apiUrl) return null;
 
-  const url = `${apiUrl}/kvstore/${KV_KEY}`;
-  console.log('[DUB] Reading from:', url);
   try {
-    const res = await fetch(url);
-    console.log('[DUB] KV read status:', res.status);
+    const res = await fetch(`${apiUrl}/kvstore/${KV_KEY}`);
     if (res.status === 404) return null;
     if (!res.ok) return null;
 
-    // Try to read as text
-    let text: string;
-    try {
-      text = await res.text();
-    } catch (e) {
-      console.warn('[DUB] .text() failed:', e);
-      return null;
-    }
+    const text = await res.text();
+    if (!text || text.startsWith('[object')) return null;
 
-    console.log('[DUB] KV responseText length:', text.length, 'first 120:', text.slice(0, 120));
-
-    // If text is corrupted ("[object Object]"), try to recover
-    if (!text || text.startsWith('[object') || text === 'undefined' || text === 'null') {
-      console.warn('[DUB] KV response corrupted or empty');
-      return null;
-    }
-
-    // Valid JSON?
-    try {
-      const data = JSON.parse(text);
-      if (Array.isArray(data)) return data;
-      // Maybe it's wrapped: {profiles: [...]}
-      if (data && Array.isArray(data.profiles)) return data.profiles;
-    } catch (e) {
-      console.warn('[DUB] KV JSON parse failed:', e);
-    }
-
-    return null;
-  } catch (err) {
-    console.warn('[DUB] KV read error:', err);
+    const data = JSON.parse(text);
+    return Array.isArray(data) ? data : null;
+  } catch {
     return null;
   }
 }
 
-// Save to KV store. Try both application/json and text/plain to find
-// a format that the server accepts AND the service worker doesn't corrupt on read.
-async function kvWrite(profiles: CustomerProfile[]): Promise<boolean> {
+async function kvWrite(profiles: CustomerProfile[]): Promise<void> {
   const apiUrl = getApiUrl();
-  if (!apiUrl) return false;
+  if (!apiUrl) return;
 
-  const jsonBody = JSON.stringify(profiles);
-
-  // Strategy 1: Save as text/plain body (SW might not JSON.parse text/plain responses)
-  const textUrl = `${apiUrl}/kvstore/${KV_KEY}`;
-  console.log('[DUB] Saving', profiles.length, 'projects (text/plain) to:', textUrl);
-  try {
-    const res = await fetch(textUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/plain' },
-      body: jsonBody,
-    });
-    console.log('[DUB] KV save (text/plain) response:', res.status);
-    if (res.ok) return true;
-  } catch (err) {
-    console.warn('[DUB] KV save (text/plain) error:', err);
-  }
-
-  // Strategy 2: Fallback to application/json
-  console.log('[DUB] Trying application/json save');
-  try {
-    const res = await fetch(textUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: jsonBody,
-    });
-    console.log('[DUB] KV save (json) response:', res.status);
-    if (res.ok) return true;
-  } catch (err) {
-    console.warn('[DUB] KV save (json) error:', err);
-  }
-
-  return false;
+  // text/plain prevents the proxy from JSON-parsing the response on read
+  await fetch(`${apiUrl}/kvstore/${KV_KEY}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(profiles),
+  });
 }
 
-// In-memory cache
+// In-memory cache — survives route changes within the SPA session
 let profileCache: CustomerProfile[] | null = null;
 let loadPromise: Promise<CustomerProfile[]> | null = null;
 
@@ -117,14 +59,7 @@ export async function loadProfilesFromKV(): Promise<CustomerProfile[]> {
 
   loadPromise = (async () => {
     const data = await kvRead();
-    if (data && data.length > 0) {
-      profileCache = data;
-      console.log('[DUB] Loaded', data.length, 'projects');
-      return data;
-    }
-
-    console.log('[DUB] No projects found');
-    profileCache = [];
+    profileCache = data && data.length > 0 ? data : [];
     return profileCache;
   })();
 
@@ -137,7 +72,6 @@ export async function saveProfilesToKV(profiles: CustomerProfile[]): Promise<voi
   await kvWrite(profiles);
 }
 
-// Synchronous API
 export function loadProfiles(): CustomerProfile[] {
   if (profileCache !== null) return profileCache;
   return [];
