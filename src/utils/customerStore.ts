@@ -3,6 +3,7 @@ export interface CustomerProfile {
   name: string;
   company: string;
   sourceIds: string[];
+  droppedFields?: Record<string, string[]>;
   notes: string;
   createdAt: string;
   updatedAt: string;

@@ -108,7 +108,19 @@ export default function CustomerWorkspacePage() {
   const [editNotes, setEditNotes] = useState(false);
   const [showFieldTuning, setShowFieldTuning] = useState(false);
   const [tuningSource, setTuningSource] = useState<string | null>(null);
-  const [droppedFields, setDroppedFields] = useState<Record<string, Set<string>>>({});
+  const [droppedFields, setDroppedFields] = useState<Record<string, Set<string>>>(() => {
+    // Hydrate from active profile if available
+    const cached = getProfilesSync();
+    const active = cached[0];
+    if (active?.droppedFields) {
+      const result: Record<string, Set<string>> = {};
+      for (const [k, v] of Object.entries(active.droppedFields)) {
+        result[k] = new Set(v);
+      }
+      return result;
+    }
+    return {};
+  });
   const [fieldFilter, setFieldFilter] = useState<'all' | 'droppable' | 'security' | 'observability'>('all');
 
   // On mount: refresh from KV store (async) to pick up data from prior sessions
@@ -116,7 +128,17 @@ export default function CustomerWorkspacePage() {
     loadProfilesFromKV().then(kvProfiles => {
       if (kvProfiles.length > 0) {
         setProfiles(kvProfiles);
-        if (!activeProfileId) setActiveProfileId(kvProfiles[0].id);
+        const firstId = kvProfiles[0].id;
+        if (!activeProfileId) setActiveProfileId(firstId);
+        // Hydrate droppedFields from the active profile
+        const active = kvProfiles.find(p => p.id === (activeProfileId || firstId));
+        if (active?.droppedFields) {
+          const hydrated: Record<string, Set<string>> = {};
+          for (const [k, v] of Object.entries(active.droppedFields)) {
+            hydrated[k] = new Set(v);
+          }
+          setDroppedFields(hydrated);
+        }
       }
     });
   }, []);
@@ -135,6 +157,20 @@ export default function CustomerWorkspacePage() {
       setTimeout(() => setSaveStatus(null), 3000);
     });
   }, [profiles]);
+
+  // Hydrate droppedFields when switching profiles
+  useEffect(() => {
+    const profile = profiles.find(p => p.id === activeProfileId);
+    if (profile?.droppedFields) {
+      const hydrated: Record<string, Set<string>> = {};
+      for (const [k, v] of Object.entries(profile.droppedFields)) {
+        hydrated[k] = new Set(v);
+      }
+      setDroppedFields(hydrated);
+    } else {
+      setDroppedFields({});
+    }
+  }, [activeProfileId]);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
 
@@ -180,22 +216,33 @@ export default function CustomerWorkspacePage() {
     ));
   }
 
+  // Sync droppedFields into the active profile for persistence
+  function persistDroppedFields(newDropped: Record<string, Set<string>>) {
+    setDroppedFields(newDropped);
+    if (!activeProfile) return;
+    const serialized: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(newDropped)) {
+      if (v.size > 0) serialized[k] = [...v];
+    }
+    setProfiles(prev => prev.map(p =>
+      p.id === activeProfile.id ? { ...p, droppedFields: serialized, updatedAt: new Date().toISOString() } : p
+    ));
+  }
+
   function toggleFieldDrop(sourceId: string, fieldName: string) {
-    setDroppedFields(prev => {
-      const current = new Set(prev[sourceId] || []);
-      current.has(fieldName) ? current.delete(fieldName) : current.add(fieldName);
-      return { ...prev, [sourceId]: current };
-    });
+    const current = new Set(droppedFields[sourceId] || []);
+    current.has(fieldName) ? current.delete(fieldName) : current.add(fieldName);
+    persistDroppedFields({ ...droppedFields, [sourceId]: current });
   }
 
   function dropAllRecommended(sourceId: string) {
     const fields = (fieldMatrix as any)[sourceId] || [];
     const droppable = fields.filter((f: any) => f.canDrop === 'Yes').map((f: any) => f.field);
-    setDroppedFields(prev => ({ ...prev, [sourceId]: new Set(droppable) }));
+    persistDroppedFields({ ...droppedFields, [sourceId]: new Set(droppable) });
   }
 
   function keepAll(sourceId: string) {
-    setDroppedFields(prev => ({ ...prev, [sourceId]: new Set() }));
+    persistDroppedFields({ ...droppedFields, [sourceId]: new Set() });
   }
 
   // Field tuning impact for active tuning source
