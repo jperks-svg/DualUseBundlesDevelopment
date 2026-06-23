@@ -61,10 +61,13 @@ function downloadBlobFile(blob: Blob, filename: string) {
 }
 
 export default function DetectionLibraryPage() {
-  const sources = useMemo(() => dataSources.flatMap((c: any) => c.sources), []);
+  const sources = useMemo(() => dataSources.flatMap((c: any) => c.sources).sort((a: any, b: any) => a.name.localeCompare(b.name)), []);
   const [selectedSource, setSelectedSource] = useState(sources.find((s: any) => s.status === 'available')?.id || 'palo-alto-traffic');
   const [activeTab, setActiveTab] = useState<'security' | 'observability' | 'summary' | 'enrichments'>('security');
   const [search, setSearch] = useState('');
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourceDropdownOpen, setSourceDropdownOpen] = useState(false);
+  const sourceDropdownRef = React.useRef<HTMLDivElement>(null);
   const [severityFilter, setSeverityFilter] = useState('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [enabledSecDetections, setEnabledSecDetections] = useState<Set<string>>(new Set());
@@ -80,6 +83,22 @@ export default function DetectionLibraryPage() {
   const [deploying, setDeploying] = useState(false);
   const [deployDataset, setDeployDataset] = useState('');
   const [showDashboardModal, setShowDashboardModal] = useState(false);
+
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) {
+        setSourceDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredSources = useMemo(() => {
+    if (!sourceSearch) return sources;
+    const q = sourceSearch.toLowerCase();
+    return sources.filter((s: any) => s.name.toLowerCase().includes(q));
+  }, [sources, sourceSearch]);
 
   const selectedSourceObj = sources.find((s: any) => s.id === selectedSource);
   const selectedSourceName = selectedSourceObj?.name || selectedSource;
@@ -270,9 +289,45 @@ export default function DetectionLibraryPage() {
 
       {/* Source selector */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
-        <select value={selectedSource} onChange={e => { setSelectedSource(e.target.value); setEnabledSecDetections(new Set()); setEnabledObsDetections(new Set()); setEnabledStreamEnrichments(new Set()); setEnabledSearchEnrichments(new Set()); }} style={{ ...selectStyle, minWidth: 260 }}>
-          {sources.map((s: any) => <option key={s.id} value={s.id} disabled={s.status !== 'available'}>{s.name}{s.status !== 'available' ? ' (Coming Soon)' : ''}</option>)}
-        </select>
+        <div ref={sourceDropdownRef} style={{ position: 'relative', minWidth: 300 }}>
+          <div
+            onClick={() => setSourceDropdownOpen(!sourceDropdownOpen)}
+            style={{ ...selectStyle, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+          >
+            <span>{selectedSourceName}</span>
+            <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>{sourceDropdownOpen ? '▲' : '▼'}</span>
+          </div>
+          {sourceDropdownOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000, background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border)', borderRadius: 'var(--cds-radius-md)', boxShadow: 'var(--cds-shadow-md)', marginTop: 4, maxHeight: 320, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--cds-color-border-subtle)' }}>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Search sources..."
+                  value={sourceSearch}
+                  onChange={e => setSourceSearch(e.target.value)}
+                  style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--cds-color-border)', borderRadius: 'var(--cds-radius-sm)', fontSize: 'var(--cds-font-size-sm)', outline: 'none', background: 'var(--cds-color-bg)', color: 'var(--cds-color-fg)' }}
+                />
+              </div>
+              <div style={{ overflowY: 'auto', maxHeight: 260 }}>
+                {filteredSources.length === 0 && (
+                  <div style={{ padding: '12px 14px', color: 'var(--cds-color-fg-muted)', fontSize: 'var(--cds-font-size-sm)' }}>No sources match</div>
+                )}
+                {filteredSources.map((s: any) => (
+                  <div
+                    key={s.id}
+                    onClick={() => { if (s.status === 'available') { setSelectedSource(s.id); setEnabledSecDetections(new Set()); setEnabledObsDetections(new Set()); setEnabledStreamEnrichments(new Set()); setEnabledSearchEnrichments(new Set()); setSourceDropdownOpen(false); setSourceSearch(''); } }}
+                    style={{ padding: '8px 14px', cursor: s.status === 'available' ? 'pointer' : 'not-allowed', fontSize: 'var(--cds-font-size-sm)', color: s.status !== 'available' ? 'var(--cds-color-fg-muted)' : s.id === selectedSource ? 'var(--cds-brand-teal)' : 'var(--cds-color-fg)', background: s.id === selectedSource ? 'var(--cds-color-accent-subtle)' : 'transparent', fontWeight: s.id === selectedSource ? 600 : 400 }}
+                    onMouseEnter={e => { if (s.status === 'available' && s.id !== selectedSource) (e.target as HTMLElement).style.background = 'var(--cds-color-bg-hover)'; }}
+                    onMouseLeave={e => { (e.target as HTMLElement).style.background = s.id === selectedSource ? 'var(--cds-color-accent-subtle)' : 'transparent'; }}
+                  >
+                    {s.name}{s.status !== 'available' ? ' (Coming Soon)' : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         {totalEnabled > 0 && <span style={tag('var(--cds-color-accent-subtle)', 'var(--cds-color-accent)')}>{totalEnabled} detection{totalEnabled !== 1 ? 's' : ''} enabled</span>}
       </div>
 

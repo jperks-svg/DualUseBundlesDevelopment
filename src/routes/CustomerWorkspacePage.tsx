@@ -35,7 +35,7 @@ const inputStyle: React.CSSProperties = {
   fontSize: 'var(--cds-font-size-sm)', background: 'var(--cds-color-bg)', color: 'var(--cds-color-fg)', width: '100%',
 };
 
-const allSources = dataSources.flatMap((c: any) => c.sources).filter((s: any) => s.status === 'available');
+const allSources = dataSources.flatMap((c: any) => c.sources).filter((s: any) => s.status === 'available').sort((a: any, b: any) => a.name.localeCompare(b.name));
 
 function generateCombinedPackYaml(sourceIds: string[], customerName: string, customDrops?: Record<string, Set<string>>): string {
   let yaml = '';
