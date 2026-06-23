@@ -9924,5 +9924,10293 @@ export const securityDetections = {
         }
       ]
     }
-  ]
+  ],
+  'sap-hana-audit': [
+    {
+      id: 'sha-sec-001',
+      name: 'SAP HANA Privileged User Login from Unusual IP',
+      objective: 'Detects privileged SAP HANA database accounts (SYSTEM, SAPServiceSID) authenticating from IP addresses not typically associated with administrative access, indicating potential credential compromise or unauthorized access.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'database', 'sap', 'privileged-access', 'initial-access'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'ACTION'],
+      detectionLogic: 'Identifies login actions (CONNECT, SUCCESSFUL LOGON) performed by privileged SAP HANA accounts (SYSTEM, _SYS_REPO, SAPServiceSID patterns) where the CLIENT_IP does not match a known administrative IP baseline. Correlates with historical login patterns to flag anomalous source addresses.',
+      falsePositives: ['New administrative workstations being provisioned', 'SAP Basis team working from VPN with dynamic IP allocation', 'Disaster recovery failover scenarios using alternate jump hosts'],
+      tuningGuidance: 'Maintain a whitelist of known administrative IP ranges. Adjust the privileged user list to match your SAP SID naming conventions. Exclude known SAP application server IPs that perform service account connections.',
+      investigationWorkflow: '1. Verify the CLIENT_IP against known SAP administrative jump hosts and bastion hosts\n2. Check if the USER_NAME is a service account or interactive account\n3. Correlate the login time with change management windows or SAP Basis team schedules\n4. Review subsequent actions performed by this session for privilege escalation or data access\n5. Check network logs for the CLIENT_IP to determine geographic origin and device posture',
+      criblSearchQueries: [
+        {
+          name: 'Privileged User Logins by Source IP',
+          description: 'Lists all login events for privileged SAP HANA accounts grouped by source IP to identify unusual access patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION == "CONNECT" AND (USER_NAME == "SYSTEM" OR USER_NAME startswith "_SYS_" OR USER_NAME startswith "SAP")\n| summarize count() by USER_NAME, CLIENT_IP, CLIENT_HOST\n| order by count_ desc'
+        },
+        {
+          name: 'First-Time IP for Privileged Users',
+          description: 'Identifies CLIENT_IP addresses that have not been seen for privileged users in the past 30 days',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION == "CONNECT" AND (USER_NAME == "SYSTEM" OR USER_NAME startswith "_SYS_")\n| join type=leftanti (dataset="$DATASET" earliest=-30d latest=-1h | where ACTION == "CONNECT" AND (USER_NAME == "SYSTEM" OR USER_NAME startswith "_SYS_") | summarize by CLIENT_IP) on CLIENT_IP\n| summarize count() by USER_NAME, CLIENT_IP, CLIENT_HOST'
+        },
+        {
+          name: 'Privileged Login Activity Timeline',
+          description: 'Shows temporal distribution of privileged account logins to identify off-hours access',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION == "CONNECT" AND (USER_NAME == "SYSTEM" OR USER_NAME startswith "_SYS_")\n| timestats span=1h count() by USER_NAME'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-002',
+      name: 'SAP HANA Brute Force Authentication Attempts',
+      objective: 'Detects repeated failed login attempts against SAP HANA database accounts, indicating potential brute force or credential stuffing attacks targeting the database layer directly.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing'],
+      tags: ['security', 'database', 'sap', 'brute-force', 'credential-access'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'ACTION'],
+      detectionLogic: 'Monitors for multiple failed authentication actions (INVALID CONNECT, FAILED LOGON) from a single CLIENT_IP or targeting a single USER_NAME within a short time window. Threshold of 5 or more failures within 10 minutes triggers the detection. Also detects distributed attacks across multiple usernames from a single source.',
+      falsePositives: ['SAP application servers with misconfigured connection pools', 'Password rotation processes that temporarily use old credentials', 'Monitoring tools with stale credentials attempting health checks'],
+      tuningGuidance: 'Adjust the failure threshold based on your environment baseline. Exclude known SAP application server IPs that may have transient connection failures. Consider separate thresholds for service accounts vs interactive accounts.',
+      investigationWorkflow: '1. Identify whether failures target a single account or multiple accounts (spray vs targeted)\n2. Determine if CLIENT_IP is internal (compromised host) or external (direct attack)\n3. Check if any successful login follows the failed attempts (successful compromise)\n4. Review SAP HANA user lock status to determine if accounts have been automatically locked\n5. Correlate with network IDS/IPS alerts for the same CLIENT_IP',
+      criblSearchQueries: [
+        {
+          name: 'Failed Login Attempts by Source IP',
+          description: 'Counts failed authentication attempts per source IP to identify brute force sources',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION in ("INVALID CONNECT", "AUTHENTICATION FAILED")\n| summarize attempt_count=count() by CLIENT_IP, CLIENT_HOST\n| where attempt_count >= 5\n| order by attempt_count desc'
+        },
+        {
+          name: 'Failed Logins Followed by Success',
+          description: 'Detects successful authentication that follows multiple failures, indicating potential compromise',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION in ("INVALID CONNECT", "AUTHENTICATION FAILED", "CONNECT")\n| summarize failures=countif(ACTION != "CONNECT"), successes=countif(ACTION == "CONNECT") by USER_NAME, CLIENT_IP\n| where failures >= 3 AND successes >= 1\n| order by failures desc'
+        },
+        {
+          name: 'Targeted Account Analysis',
+          description: 'Shows which accounts are being targeted most frequently by failed login attempts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("INVALID CONNECT", "AUTHENTICATION FAILED")\n| summarize attempt_count=count(), unique_sources=dcount(CLIENT_IP) by USER_NAME\n| order by attempt_count desc'
+        },
+        {
+          name: 'Brute Force Timeline',
+          description: 'Temporal view of failed authentication to identify attack windows',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("INVALID CONNECT", "AUTHENTICATION FAILED")\n| timestats span=10m count() by CLIENT_IP\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-003',
+      name: 'SAP HANA Suspicious DDL Statement Execution',
+      objective: 'Detects execution of dangerous Data Definition Language statements such as DROP, TRUNCATE, or ALTER on critical SAP HANA schemas, which may indicate destructive actions by a compromised account or malicious insider.',
+      severity: 'Critical',
+      mitre: ['T1485 - Data Destruction', 'T1565.001 - Stored Data Manipulation'],
+      tags: ['security', 'database', 'sap', 'data-destruction', 'impact'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'STATEMENT_STRING', 'ACTION', 'SCHEMA_NAME', 'OBJECT_NAME'],
+      detectionLogic: 'Monitors STATEMENT_STRING for DDL operations (DROP TABLE, DROP SCHEMA, TRUNCATE TABLE, ALTER SYSTEM) executed against production schemas. Filters out known maintenance windows and authorized DBA accounts. Focuses on schemas containing SAP business data (_SYS_BIC, SAPABAP1, SAP<SID>).',
+      falsePositives: ['Scheduled database maintenance tasks run by authorized DBAs', 'SAP transport imports that modify schema objects', 'Development or QA system housekeeping if audit logs are consolidated'],
+      tuningGuidance: 'Define a list of protected schemas that should never have DDL operations outside maintenance windows. Create an exclusion list for authorized DBA service accounts. Implement time-based suppression for known maintenance windows.',
+      investigationWorkflow: '1. Identify the exact DDL statement executed and the target object\n2. Verify if the USER_NAME is an authorized DBA with change approval\n3. Check change management system for approved maintenance activities at this time\n4. Assess the impact of the DDL operation on SAP application availability\n5. Review preceding actions by the same user session for evidence of lateral movement or escalation',
+      criblSearchQueries: [
+        {
+          name: 'Destructive DDL Operations',
+          description: 'Identifies DROP, TRUNCATE, and destructive ALTER statements across all schemas',
+          query: 'dataset="$DATASET" earliest=-24h\n| where STATEMENT_STRING matches regex "(?i)(DROP|TRUNCATE|ALTER\\s+SYSTEM)"\n| summarize count() by USER_NAME, SCHEMA_NAME, OBJECT_NAME, ACTION\n| order by count_ desc'
+        },
+        {
+          name: 'DDL on Protected Schemas',
+          description: 'Focuses on DDL operations targeting critical SAP system and business data schemas',
+          query: 'dataset="$DATASET" earliest=-7d\n| where STATEMENT_STRING matches regex "(?i)(DROP|TRUNCATE|ALTER)" AND (SCHEMA_NAME startswith "_SYS_" OR SCHEMA_NAME startswith "SAP")\n| summarize count() by USER_NAME, SCHEMA_NAME, OBJECT_NAME, STATEMENT_STRING\n| order by TIMESTAMP desc'
+        },
+        {
+          name: 'User DDL Activity Baseline',
+          description: 'Establishes normal DDL activity patterns per user for anomaly comparison',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ACTION in ("DROP", "CREATE", "ALTER", "TRUNCATE")\n| summarize ddl_count=count() by USER_NAME\n| order by ddl_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-004',
+      name: 'SAP HANA Audit Policy Modification or Disablement',
+      objective: 'Detects changes to SAP HANA audit policies including creation, deletion, or disabling of audit configurations, which attackers may perform to cover their tracks after gaining database access.',
+      severity: 'High',
+      mitre: ['T1562.008 - Disable or Modify Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'database', 'sap', 'defense-evasion', 'audit-tampering'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'STATEMENT_STRING', 'ACTION', 'AUDIT_POLICY_NAME', 'AUDIT_LEVEL'],
+      detectionLogic: 'Monitors for actions that modify the SAP HANA audit configuration including ALTER AUDIT POLICY, DROP AUDIT POLICY, and changes to AUDIT_LEVEL. Detects both direct SQL manipulation of audit policies and changes via SAP HANA Cockpit. Any reduction in audit coverage or disabling of audit policies generates an alert.',
+      falsePositives: ['Authorized audit policy updates during compliance reviews', 'SAP Basis team adjusting audit verbosity for performance during batch windows', 'Initial audit policy deployment in new systems'],
+      tuningGuidance: 'Whitelist authorized SAP Basis accounts that manage audit configurations. Implement time-based alerting to distinguish planned changes from unexpected modifications. Consider separate severity levels for policy deletion vs modification.',
+      investigationWorkflow: '1. Identify which audit policy was modified and the exact nature of the change\n2. Determine if this reduces audit coverage for critical actions or users\n3. Review preceding actions by the same USER_NAME for suspicious activity being concealed\n4. Verify against change management records for authorized audit policy modifications\n5. Check if the original audit policy has been restored or if coverage gaps persist',
+      criblSearchQueries: [
+        {
+          name: 'Audit Policy Modifications',
+          description: 'Lists all changes to audit policies including creates, alters, and drops',
+          query: 'dataset="$DATASET" earliest=-7d\n| where STATEMENT_STRING matches regex "(?i)(CREATE|ALTER|DROP)\\s+AUDIT\\s+POLICY"\n| summarize count() by USER_NAME, STATEMENT_STRING, AUDIT_POLICY_NAME\n| order by TIMESTAMP desc'
+        },
+        {
+          name: 'Audit Level Changes',
+          description: 'Tracks changes in audit level configuration that may reduce logging coverage',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION matches regex "(?i)AUDIT" AND AUDIT_LEVEL != ""\n| summarize count() by USER_NAME, AUDIT_POLICY_NAME, AUDIT_LEVEL, ACTION\n| order by count_ desc'
+        },
+        {
+          name: 'User Activity Before Audit Change',
+          description: 'Reviews all actions by the user who modified audit policies in the preceding hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where USER_NAME in (dataset="$DATASET" earliest=-24h | where STATEMENT_STRING matches regex "(?i)(ALTER|DROP)\\s+AUDIT\\s+POLICY" | summarize by USER_NAME)\n| summarize count() by USER_NAME, ACTION, SCHEMA_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'Current Audit Policy Status',
+          description: 'Shows the current state of all audit policies to identify coverage gaps',
+          query: 'dataset="$DATASET" earliest=-1h\n| where AUDIT_POLICY_NAME != ""\n| summarize latest_action=max(TIMESTAMP) by AUDIT_POLICY_NAME, AUDIT_LEVEL\n| order by AUDIT_POLICY_NAME asc'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-005',
+      name: 'SAP HANA Mass Data Export or Extraction',
+      objective: 'Detects large-scale data extraction from SAP HANA via EXPORT statements, SELECT INTO, or UNLOAD operations that could indicate data exfiltration by a malicious insider or compromised account.',
+      severity: 'High',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1530 - Data from Cloud Storage'],
+      tags: ['security', 'database', 'sap', 'data-exfiltration', 'collection'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'STATEMENT_STRING', 'ACTION', 'SCHEMA_NAME', 'OBJECT_NAME', 'CLIENT_IP'],
+      detectionLogic: 'Identifies SQL statements that export or extract bulk data from SAP HANA including EXPORT TABLE, EXPORT SCHEMA, SELECT INTO, CREATE TABLE AS SELECT patterns, and UNLOAD operations. Correlates volume of export operations per user session and flags users performing exports across multiple schemas or against sensitive tables (employee, financial, customer data).',
+      falsePositives: ['Authorized ETL processes exporting data to data warehouses', 'SAP BW data loads that use EXPORT statements', 'Database backup operations using native HANA export', 'Reporting tools generating scheduled data extracts'],
+      tuningGuidance: 'Whitelist known ETL service accounts and their expected export patterns. Define sensitive schemas and tables that should trigger at lower thresholds. Implement volumetric baselines per user to detect deviations from normal export behavior.',
+      investigationWorkflow: '1. Identify the scope of data being exported (schemas, tables, row counts if available)\n2. Determine the destination of the export (file system path, remote location)\n3. Verify if the USER_NAME has legitimate business need for bulk data access\n4. Check if exports target sensitive data categories (PII, financial, HR)\n5. Correlate with file system or network logs to track where exported data was sent',
+      criblSearchQueries: [
+        {
+          name: 'Bulk Export Operations',
+          description: 'Identifies all export and bulk data extraction statements',
+          query: 'dataset="$DATASET" earliest=-24h\n| where STATEMENT_STRING matches regex "(?i)(EXPORT|UNLOAD|SELECT\\s+.+\\s+INTO|COPY\\s+.+\\s+TO)"\n| summarize count() by USER_NAME, CLIENT_IP, SCHEMA_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'Multi-Schema Export Activity',
+          description: 'Detects users exporting data from multiple schemas which may indicate broad data collection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where STATEMENT_STRING matches regex "(?i)(EXPORT|UNLOAD|SELECT\\s+.+\\s+INTO)"\n| summarize schema_count=dcount(SCHEMA_NAME), export_count=count() by USER_NAME, CLIENT_IP\n| where schema_count > 2\n| order by schema_count desc'
+        },
+        {
+          name: 'Export Activity Trend',
+          description: 'Shows temporal pattern of export operations to identify unusual spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where STATEMENT_STRING matches regex "(?i)(EXPORT|UNLOAD)"\n| timestats span=1h count() by USER_NAME'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-006',
+      name: 'SAP HANA Privilege Escalation via GRANT Statement',
+      objective: 'Detects unauthorized privilege grants in SAP HANA where users assign elevated roles or system privileges to accounts, potentially establishing persistence or enabling further compromise.',
+      severity: 'High',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'database', 'sap', 'privilege-escalation', 'persistence'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'STATEMENT_STRING', 'ACTION', 'OBJECT_NAME'],
+      detectionLogic: 'Monitors for GRANT statements that assign powerful system privileges (DATA ADMIN, CATALOG READ, INIFILE ADMIN, USER ADMIN) or sensitive roles (CONTENT_ADMIN, MODELING, SAP_INTERNAL_HANA_SUPPORT). Alerts when grants are issued by non-standard administrative accounts or outside of change windows. Tracks privilege grants to newly created accounts.',
+      falsePositives: ['SAP Basis provisioning new users as part of onboarding', 'Role assignments during SAP system copy or migration', 'Automated provisioning tools managing HANA user lifecycle'],
+      tuningGuidance: 'Define a list of authorized accounts permitted to issue GRANT statements. Create a whitelist of expected role assignments for standard user provisioning. Implement time-based correlation to link GRANTs with user creation events.',
+      investigationWorkflow: '1. Identify what privileges or roles were granted and to which account\n2. Determine if the granting user is authorized to assign these permissions\n3. Check if the target account was recently created (potential backdoor account)\n4. Verify against HR onboarding records or access request tickets\n5. Assess the blast radius of the granted privileges and whether they enable further escalation',
+      criblSearchQueries: [
+        {
+          name: 'High-Privilege GRANT Operations',
+          description: 'Lists all GRANT statements for sensitive system privileges and roles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where STATEMENT_STRING matches regex "(?i)GRANT\\s+(DATA\\s+ADMIN|CATALOG\\s+READ|USER\\s+ADMIN|INIFILE\\s+ADMIN|CONTENT_ADMIN)"\n| summarize count() by USER_NAME, STATEMENT_STRING, CLIENT_IP\n| order by TIMESTAMP desc'
+        },
+        {
+          name: 'All GRANT Activity by Non-System Users',
+          description: 'Shows privilege grants issued by accounts other than standard system administrators',
+          query: 'dataset="$DATASET" earliest=-7d\n| where STATEMENT_STRING matches regex "(?i)^GRANT" AND USER_NAME != "SYSTEM" AND NOT (USER_NAME startswith "_SYS_")\n| summarize count() by USER_NAME, CLIENT_IP\n| order by count_ desc'
+        },
+        {
+          name: 'New Account Privilege Timeline',
+          description: 'Correlates account creation with subsequent privilege assignments to detect backdoor accounts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where STATEMENT_STRING matches regex "(?i)(CREATE\\s+USER|GRANT)"\n| summarize actions=count(), grant_count=countif(STATEMENT_STRING matches regex "(?i)^GRANT") by USER_NAME\n| where grant_count > 0\n| order by grant_count desc'
+        },
+        {
+          name: 'Role Assignment Frequency',
+          description: 'Baseline of GRANT operations over time to detect unusual spikes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ACTION == "GRANT"\n| timestats span=1d count() by USER_NAME'
+        }
+      ]
+    },
+    {
+      id: 'sha-sec-007',
+      name: 'SAP HANA Access from Unexpected Client Host',
+      objective: 'Detects SAP HANA database connections originating from client hostnames not associated with known SAP application servers, jump hosts, or administrative workstations, indicating potential lateral movement or unauthorized direct database access.',
+      severity: 'Medium',
+      mitre: ['T1021 - Remote Services', 'T1563 - Remote Service Session Hijacking'],
+      tags: ['security', 'database', 'sap', 'lateral-movement', 'network'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'CLIENT_HOST', 'ACTION'],
+      detectionLogic: 'Compares CLIENT_HOST values against a known-good baseline of SAP application servers, Basis admin workstations, and monitoring systems. Flags connections from hostnames that have never previously connected to the HANA instance or that match patterns associated with end-user workstations (non-server naming conventions). Correlates with CLIENT_IP to detect both hostname and IP anomalies.',
+      falsePositives: ['New SAP application servers added without updating the baseline', 'SAP developers connecting from development workstations during troubleshooting', 'Third-party vendor access during contracted maintenance windows'],
+      tuningGuidance: 'Maintain an updated list of authorized CLIENT_HOST patterns including SAP application servers, BW systems, and admin jump hosts. Use hostname naming conventions to auto-classify known server vs workstation connections. Implement a learning period for new environments.',
+      investigationWorkflow: '1. Identify the CLIENT_HOST and determine if it is a server, workstation, or unknown device\n2. Check if the CLIENT_IP maps to an expected network segment for HANA access\n3. Determine what USER_NAME was used and whether it matches expected usage from that host\n4. Review what actions were performed after the connection was established\n5. Verify with SAP Basis team whether this is an authorized new connection source',
+      criblSearchQueries: [
+        {
+          name: 'Unique Client Hosts Connecting',
+          description: 'Lists all unique client hosts that have connected to SAP HANA for baseline review',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION == "CONNECT"\n| summarize first_seen=min(TIMESTAMP), last_seen=max(TIMESTAMP), connection_count=count() by CLIENT_HOST, CLIENT_IP\n| order by connection_count asc'
+        },
+        {
+          name: 'New Client Hosts in Last 24 Hours',
+          description: 'Identifies client hosts seen in the last 24 hours that were not seen in the prior 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION == "CONNECT"\n| join type=leftanti (dataset="$DATASET" earliest=-30d latest=-24h | where ACTION == "CONNECT" | summarize by CLIENT_HOST) on CLIENT_HOST\n| summarize count() by CLIENT_HOST, CLIENT_IP, USER_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'Host-to-User Mapping',
+          description: 'Shows which users connect from each host to identify unusual user-host pairings',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION == "CONNECT"\n| summarize user_count=dcount(USER_NAME), users=makeset(USER_NAME) by CLIENT_HOST, CLIENT_IP\n| order by user_count desc'
+        },
+        {
+          name: 'Non-Server Host Activity Detail',
+          description: 'Detailed view of actions performed from hosts that do not match server naming patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where NOT (CLIENT_HOST matches regex "(?i)(srv|app|sap|hana|bw|db|mon)")\n| summarize count() by CLIENT_HOST, CLIENT_IP, USER_NAME, ACTION\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+
+  'servicenow': [
+    {
+      id: 'snw-sec-001',
+      name: 'Critical Incident Rapid Escalation',
+      objective: 'Detects incidents that are created at critical priority or rapidly escalated to critical, which may indicate an active security breach or attacker manipulating ticket priority to trigger automated responses.',
+      severity: 'High',
+      mitre: ['T1489 - Service Stop', 'T1499 - Endpoint Denial of Service'],
+      tags: ['security', 'incident-management', 'escalation'],
+      requiredFields: ['sys_created_on', 'number', 'priority', 'impact', 'urgency', 'category'],
+      detectionLogic: 'Identifies incidents created with Priority 1 (Critical) or where impact and urgency are both set to 1-High within a short timeframe. Correlates with category to determine if these are security-related incidents being weaponized or legitimate critical outages.',
+      falsePositives: ['Legitimate P1 incidents during major outages', 'Automated monitoring tools creating critical incidents', 'Change-related incidents during maintenance windows'],
+      tuningGuidance: 'Baseline normal P1 creation rate per week. Alert when P1 creation exceeds 2x baseline within a 1-hour window. Exclude known monitoring integration accounts from caller_id.',
+      investigationWorkflow: '1. Review the incident short_description and category for security indicators\n2. Check caller_id to determine if the creator is a known automation or human user\n3. Examine assignment_group to see if routing follows normal patterns\n4. Correlate with other P1 incidents in the same timeframe for coordinated activity\n5. Verify whether the cmdb_ci referenced is actually experiencing issues',
+      criblSearchQueries: [
+        {
+          name: 'Critical Incidents Created',
+          description: 'Lists all Priority 1 incidents created in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where priority == "1"\n| summarize count() by category, assignment_group\n| order by count_ desc'
+        },
+        {
+          name: 'Rapid Priority Escalation',
+          description: 'Detects incidents where priority changed to critical within minutes of creation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where priority == "1" and impact == "1" and urgency == "1"\n| summarize count() by caller_id, assignment_group\n| order by count_ desc'
+        },
+        {
+          name: 'Critical Incident Spike Detection',
+          description: 'Identifies unusual spikes in critical incident creation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where priority == "1"\n| timestats span=1h count() by category'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-002',
+      name: 'Incident Assignment to Unauthorized Group',
+      objective: 'Detects incidents being reassigned to unusual or unauthorized assignment groups, potentially indicating an insider threat attempting to route sensitive incidents to compromised teams.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1556 - Modify Authentication Process'],
+      tags: ['security', 'insider-threat', 'assignment-manipulation'],
+      requiredFields: ['sys_updated_on', 'number', 'assignment_group', 'assigned_to', 'state', 'category'],
+      detectionLogic: 'Monitors for incidents being reassigned to groups that do not normally handle the incident category. Builds a baseline of normal category-to-group mappings and alerts when assignments deviate. Also detects bulk reassignment of incidents to a single individual.',
+      falsePositives: ['Organizational restructuring changing team responsibilities', 'New team members being assigned incidents during onboarding', 'Temporary reassignment during team PTO or holidays'],
+      tuningGuidance: 'Build a lookup of valid category-to-assignment_group mappings. Allow a 30-day learning period for new groups. Set threshold for bulk reassignment at more than 10 incidents reassigned to the same person in 1 hour.',
+      investigationWorkflow: '1. Identify the user who performed the reassignment via sys_updated_on correlation\n2. Check if the new assignment_group normally handles this category of incidents\n3. Review the assigned_to user permissions and role\n4. Look for patterns of similar reassignments across multiple incidents\n5. Verify with the assignment_group manager if the reassignment was authorized',
+      criblSearchQueries: [
+        {
+          name: 'Unusual Group Assignments',
+          description: 'Finds incidents assigned to groups that rarely handle their category',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by category, assignment_group\n| where count_ < 3\n| order by category asc'
+        },
+        {
+          name: 'Bulk Reassignment to Single User',
+          description: 'Detects mass reassignment of incidents to one individual',
+          query: 'dataset="$DATASET" earliest=-4h\n| where assigned_to != ""\n| summarize count() by assigned_to\n| where count_ > 10\n| order by count_ desc'
+        },
+        {
+          name: 'Assignment Changes Over Time',
+          description: 'Tracks assignment group changes for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where assignment_group != ""\n| timestats span=1h count() by assignment_group'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-003',
+      name: 'Mass Incident State Manipulation',
+      objective: 'Detects bulk closure or state changes of incidents which may indicate an attacker covering tracks by closing security-related tickets or an insider attempting to suppress alerts.',
+      severity: 'Critical',
+      mitre: ['T1070 - Indicator Removal', 'T1562 - Impair Defenses'],
+      tags: ['security', 'evidence-tampering', 'bulk-operations'],
+      requiredFields: ['sys_updated_on', 'number', 'state', 'assigned_to', 'category', 'short_description'],
+      detectionLogic: 'Alerts when more than 15 incidents are moved to Closed or Resolved state within a 30-minute window by the same user. Also detects incidents being moved directly from New to Closed without intermediate states, bypassing normal workflow.',
+      falsePositives: ['End-of-sprint ticket cleanup activities', 'Automated batch closure of aged incidents', 'ServiceNow administrators performing data hygiene'],
+      tuningGuidance: 'Set bulk closure threshold based on team size. For teams under 10, alert at 15 closures per 30 minutes. Exclude service accounts used for automated lifecycle management. Whitelist scheduled batch jobs.',
+      investigationWorkflow: '1. Identify the user performing bulk state changes\n2. Review the categories and short_descriptions of affected incidents\n3. Check if any closed incidents were security-related or had active investigation\n4. Determine if the closures followed proper resolution workflow\n5. Correlate with the users recent login activity for signs of account compromise',
+      criblSearchQueries: [
+        {
+          name: 'Bulk Incident Closures',
+          description: 'Identifies users closing many incidents in a short window',
+          query: 'dataset="$DATASET" earliest=-1h\n| where state == "7" or state == "6"\n| summarize count() by assigned_to\n| where count_ > 15\n| order by count_ desc'
+        },
+        {
+          name: 'Direct New-to-Closed Transitions',
+          description: 'Finds incidents that skipped workflow states',
+          query: 'dataset="$DATASET" earliest=-24h\n| where state == "7"\n| summarize count() by assigned_to, category\n| order by count_ desc'
+        },
+        {
+          name: 'Security Incident Closures',
+          description: 'Monitors closure of security-categorized incidents',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category == "Security" and (state == "7" or state == "6")\n| summarize count() by assigned_to, short_description\n| order by count_ desc'
+        },
+        {
+          name: 'State Change Velocity',
+          description: 'Tracks the rate of state changes over time per user',
+          query: 'dataset="$DATASET" earliest=-7d\n| where state == "7"\n| timestats span=30m count() by assigned_to'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-004',
+      name: 'After-Hours Critical Change Activity',
+      objective: 'Detects critical incidents or changes being created or modified outside business hours, which may indicate unauthorized access or an attacker operating during low-visibility periods.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1098 - Account Manipulation'],
+      tags: ['security', 'off-hours', 'suspicious-timing'],
+      requiredFields: ['sys_created_on', 'sys_updated_on', 'number', 'priority', 'assigned_to', 'caller_id', 'category'],
+      detectionLogic: 'Identifies high-priority incidents (P1/P2) created or updated between 22:00 and 06:00 local time on weekdays, or any time on weekends. Cross-references caller_id against known on-call schedules to determine if activity is expected.',
+      falsePositives: ['On-call engineers responding to legitimate after-hours alerts', 'Global teams operating in different time zones', 'Scheduled maintenance windows occurring after hours'],
+      tuningGuidance: 'Configure business hours per assignment_group timezone. Maintain an on-call roster lookup to exclude expected after-hours activity. Adjust weekend detection for teams with 24/7 coverage.',
+      investigationWorkflow: '1. Verify the caller_id against the current on-call schedule\n2. Check if the incident category aligns with known after-hours monitoring\n3. Review the short_description for indicators of unauthorized activity\n4. Correlate with VPN or authentication logs for the caller\n5. Determine if the assigned_to user was actually working or if their account was compromised',
+      criblSearchQueries: [
+        {
+          name: 'After-Hours Critical Incidents',
+          description: 'Lists high-priority incidents created outside business hours',
+          query: 'dataset="$DATASET" earliest=-7d\n| where priority == "1" or priority == "2"\n| extend hour = strftime("%H", sys_created_on)\n| where hour >= "22" or hour <= "06"\n| summarize count() by caller_id, category'
+        },
+        {
+          name: 'Weekend Incident Activity',
+          description: 'Monitors incident creation on weekends',
+          query: 'dataset="$DATASET" earliest=-14d\n| extend day_of_week = strftime("%u", sys_created_on)\n| where day_of_week == "6" or day_of_week == "7"\n| summarize count() by caller_id, priority\n| order by count_ desc'
+        },
+        {
+          name: 'Off-Hours Modification Pattern',
+          description: 'Tracks after-hours updates to existing incidents',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour = strftime("%H", sys_updated_on)\n| where hour >= "22" or hour <= "06"\n| summarize count() by assigned_to\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-005',
+      name: 'CMDB Configuration Item Unauthorized Modification',
+      objective: 'Detects incidents linked to critical CMDB configuration items being modified by users outside the normal change management process, potentially indicating infrastructure tampering.',
+      severity: 'High',
+      mitre: ['T1565 - Data Manipulation', 'T1485 - Data Destruction'],
+      tags: ['security', 'cmdb', 'configuration-tampering'],
+      requiredFields: ['sys_updated_on', 'number', 'cmdb_ci', 'assigned_to', 'state', 'category', 'short_description'],
+      detectionLogic: 'Monitors for incidents referencing critical infrastructure CMDB CIs (servers, network devices, security appliances) where the incident state changes suggest unauthorized modification. Correlates with change management to identify if proper CAB approval was obtained.',
+      falsePositives: ['Emergency changes with retroactive CAB approval', 'Automated configuration management updating CI records', 'Routine patching activities linked to incidents'],
+      tuningGuidance: 'Define a list of critical CMDB CIs that require change management. Set alert threshold based on CI criticality tier. Exclude automated service accounts that perform approved configuration updates.',
+      investigationWorkflow: '1. Identify the CMDB CI being referenced and its criticality tier\n2. Check if there is an associated approved change request\n3. Review who made the modification and their authorization level\n4. Determine if the CI configuration was actually altered or just referenced\n5. Validate the current CI state against known-good configuration baselines',
+      criblSearchQueries: [
+        {
+          name: 'Critical CI Incident Association',
+          description: 'Finds incidents linked to critical CMDB items',
+          query: 'dataset="$DATASET" earliest=-24h\n| where cmdb_ci != ""\n| summarize count() by cmdb_ci, category, state\n| order by count_ desc'
+        },
+        {
+          name: 'CI Modification Frequency',
+          description: 'Tracks how often specific CIs appear in incidents',
+          query: 'dataset="$DATASET" earliest=-30d\n| where cmdb_ci != ""\n| summarize count() by cmdb_ci\n| where count_ > 5\n| order by count_ desc'
+        },
+        {
+          name: 'Unauthorized CI Changes Timeline',
+          description: 'Timeline of CI-related incidents for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where cmdb_ci != "" and category == "Security"\n| timestats span=4h count() by cmdb_ci'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-006',
+      name: 'Suspicious Incident Description Patterns',
+      objective: 'Detects incidents with descriptions containing indicators of social engineering, phishing campaigns, or credential compromise attempts being logged through the service desk.',
+      severity: 'Medium',
+      mitre: ['T1566 - Phishing', 'T1078 - Valid Accounts', 'T1204 - User Execution'],
+      tags: ['security', 'social-engineering', 'phishing'],
+      requiredFields: ['sys_created_on', 'number', 'short_description', 'caller_id', 'category', 'priority', 'assignment_group'],
+      detectionLogic: 'Scans incident short_description for keywords associated with security events including password reset requests, suspicious emails, unauthorized access attempts, MFA bypass, and account lockouts. Aggregates by caller_id to identify users who may be targeted or compromised.',
+      falsePositives: ['Legitimate password reset requests during normal operations', 'IT awareness training generating test phishing reports', 'Users reporting spam rather than targeted phishing'],
+      tuningGuidance: 'Maintain a keyword list that evolves with current threat landscape. Weight keywords by risk level. Set aggregation threshold at 3+ security-related incidents from the same caller within 24 hours.',
+      investigationWorkflow: '1. Review the short_description for specific security indicators\n2. Check caller_id history for patterns of security-related incidents\n3. Determine if multiple users are reporting similar issues (campaign indicator)\n4. Correlate with email security logs for phishing confirmation\n5. Escalate to SOC if indicators suggest active compromise',
+      criblSearchQueries: [
+        {
+          name: 'Security Keyword Incidents',
+          description: 'Finds incidents with security-related keywords in description',
+          query: 'dataset="$DATASET" earliest=-24h\n| where short_description matches "(?i)(phish|unauthorized|compromis|breach|malware|suspicious)"\n| summarize count() by caller_id, category\n| order by count_ desc'
+        },
+        {
+          name: 'Repeated Security Reports by User',
+          description: 'Identifies users filing multiple security-related incidents',
+          query: 'dataset="$DATASET" earliest=-7d\n| where category == "Security" or short_description matches "(?i)(password|locked|MFA|hack)"\n| summarize count() by caller_id\n| where count_ > 3\n| order by count_ desc'
+        },
+        {
+          name: 'Security Incident Trend',
+          description: 'Tracks security-related incident volume over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where short_description matches "(?i)(phish|unauthorized|suspicious|malware)"\n| timestats span=1d count() by category'
+        }
+      ]
+    },
+    {
+      id: 'snw-sec-007',
+      name: 'Incident Caller Impersonation',
+      objective: 'Detects potential impersonation where incidents are created with caller_id values that do not match the authenticated session, indicating someone may be filing tickets on behalf of executives or privileged users to trigger automated workflows.',
+      severity: 'Critical',
+      mitre: ['T1036 - Masquerading', 'T1078 - Valid Accounts', 'T1134 - Access Token Manipulation'],
+      tags: ['security', 'impersonation', 'privilege-escalation'],
+      requiredFields: ['sys_created_on', 'number', 'caller_id', 'assigned_to', 'priority', 'category', 'assignment_group'],
+      detectionLogic: 'Identifies incidents where the caller_id is set to a high-privilege user (executive, IT admin, security team) but the creation pattern does not match that users normal behavior. Looks for single users creating incidents with many different caller_ids, especially targeting privileged accounts.',
+      falsePositives: ['Service desk agents creating incidents on behalf of callers', 'Automated systems using service accounts with delegated caller_id', 'Executive assistants filing tickets for their principals'],
+      tuningGuidance: 'Build an allowlist of service desk agents and their normal caller_id delegation patterns. Flag when non-service-desk users set caller_id to someone other than themselves. Monitor for new users suddenly delegating for executives.',
+      investigationWorkflow: '1. Identify who actually created the incident versus the listed caller_id\n2. Check if the creator has service desk permissions to delegate caller_id\n3. Review if the listed caller_id user is aware of the incident\n4. Examine what automated workflows were triggered by the incident\n5. Determine if any privilege escalation occurred as a result of the impersonation',
+      criblSearchQueries: [
+        {
+          name: 'Caller ID Delegation Analysis',
+          description: 'Identifies users creating incidents with different caller_ids',
+          query: 'dataset="$DATASET" earliest=-7d\n| where caller_id != assigned_to and caller_id != ""\n| summarize unique_callers=dcount(caller_id) by assigned_to\n| where unique_callers > 5\n| order by unique_callers desc'
+        },
+        {
+          name: 'High-Privilege Caller Targeting',
+          description: 'Finds incidents filed on behalf of privileged users',
+          query: 'dataset="$DATASET" earliest=-24h\n| where caller_id != "" and priority == "1"\n| summarize count() by caller_id, assignment_group\n| order by count_ desc'
+        },
+        {
+          name: 'Impersonation Pattern Detection',
+          description: 'Detects single users filing as multiple different callers in short windows',
+          query: 'dataset="$DATASET" earliest=-4h\n| where caller_id != ""\n| summarize unique_callers=dcount(caller_id), incidents=count() by assigned_to\n| where unique_callers > 3 and incidents > 5\n| order by unique_callers desc'
+        },
+        {
+          name: 'Caller Activity Baseline Deviation',
+          description: 'Compares caller incident creation rate against baseline',
+          query: 'dataset="$DATASET" earliest=-30d\n| where caller_id != ""\n| timestats span=1d count() by caller_id\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'vmware-vsphere': [
+    {
+      id: 'vmw-sec-001',
+      name: 'Virtual Machine Snapshot Deletion Before Attack',
+      objective: 'Detects deletion of VM snapshots which may indicate an attacker removing recovery points before deploying ransomware or destructive malware.',
+      severity: 'Critical',
+      mitre: ['T1490 - Inhibit System Recovery', 'T1485 - Data Destruction'],
+      tags: ['security', 'ransomware', 'recovery-inhibition'],
+      requiredFields: ['timestamp', 'vm_name', 'event_type', 'user_name', 'datacenter', 'message'],
+      detectionLogic: 'Monitors for snapshot removal events (RemoveSnapshot_Task, RemoveAllSnapshots_Task) occurring in bulk across multiple VMs or performed by users who do not normally manage snapshots. Alerts when more than 5 snapshot deletions occur within a 15-minute window.',
+      falsePositives: ['Scheduled snapshot cleanup by backup solutions like Veeam or Commvault', 'Storage reclamation activities during maintenance windows', 'Automated lifecycle management removing aged snapshots'],
+      tuningGuidance: 'Whitelist backup service accounts that routinely remove snapshots. Set threshold based on environment size. For environments with under 100 VMs, alert at 5 deletions per 15 minutes. Exclude maintenance windows.',
+      investigationWorkflow: '1. Identify all VMs affected by snapshot removal in the timeframe\n2. Verify the user_name against authorized backup administrators\n3. Check if there is a corresponding change request or maintenance window\n4. Look for subsequent suspicious activity on the affected VMs\n5. Validate that current backups exist for affected VMs outside vSphere',
+      criblSearchQueries: [
+        {
+          name: 'Bulk Snapshot Deletions',
+          description: 'Identifies mass snapshot removal events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)removesnapshot"\n| summarize count() by user_name, datacenter\n| where count_ > 5\n| order by count_ desc'
+        },
+        {
+          name: 'Snapshot Operations Timeline',
+          description: 'Shows all snapshot operations over time for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type matches "(?i)snapshot"\n| timestats span=1h count() by event_type'
+        },
+        {
+          name: 'Snapshot Deletion by Non-Standard Users',
+          description: 'Finds snapshot deletions by unusual accounts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)removesnapshot"\n| summarize count() by user_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-002',
+      name: 'Unauthorized VM Cloning or Export',
+      objective: 'Detects VM cloning or OVF export operations that may indicate data exfiltration of entire virtual machines containing sensitive data.',
+      severity: 'Critical',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1005 - Data from Local System'],
+      tags: ['security', 'data-exfiltration', 'vm-theft'],
+      requiredFields: ['timestamp', 'vm_name', 'event_type', 'user_name', 'datacenter', 'datastore', 'message'],
+      detectionLogic: 'Monitors for CloneVM_Task, ExportVm, and CreateClone events. Alerts on any clone or export operation performed by non-standard users or targeting VMs classified as containing sensitive data. Also detects clones being placed on non-standard datastores that may indicate staging for exfiltration.',
+      falsePositives: ['DevOps teams cloning VMs for testing environments', 'Disaster recovery replication creating VM copies', 'Template creation from running VMs for standardization'],
+      tuningGuidance: 'Maintain a list of authorized VM clone operators. Define which datastores are approved clone targets. Flag any clone operation targeting VMs tagged as PCI, HIPAA, or containing PII data.',
+      investigationWorkflow: '1. Identify the source VM and determine its data classification\n2. Verify the user_name has authorization to clone this specific VM\n3. Check the destination datastore for abnormalities\n4. Determine if the cloned VM was subsequently powered on or exported\n5. Review network activity for large data transfers from the datastore',
+      criblSearchQueries: [
+        {
+          name: 'VM Clone Operations',
+          description: 'Lists all VM clone and export events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)(clone|export)"\n| summarize count() by user_name, vm_name, datastore\n| order by count_ desc'
+        },
+        {
+          name: 'Clone to Unusual Datastore',
+          description: 'Detects clones placed on non-standard datastores',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type matches "(?i)clone"\n| summarize count() by datastore, user_name\n| order by count_ desc'
+        },
+        {
+          name: 'Clone Activity Trend',
+          description: 'Tracks clone operations over time for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-30d\n| where event_type matches "(?i)(clone|export)"\n| timestats span=1d count() by event_type'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-003',
+      name: 'ESXi Host Root Login Activity',
+      objective: 'Detects direct root login to ESXi hosts which bypasses vCenter RBAC controls and audit logging, potentially indicating an attacker with compromised root credentials.',
+      severity: 'High',
+      mitre: ['T1078.003 - Valid Accounts: Local Accounts', 'T1548 - Abuse Elevation Control Mechanism'],
+      tags: ['security', 'privilege-escalation', 'direct-access'],
+      requiredFields: ['timestamp', 'host_name', 'event_type', 'user_name', 'message', 'severity'],
+      detectionLogic: 'Monitors for login events where user_name is root or where event_type indicates direct console or SSH access to ESXi hosts. In properly managed environments, all administration should flow through vCenter. Direct root access indicates either emergency break-glass or unauthorized access.',
+      falsePositives: ['Emergency break-glass procedures during vCenter outages', 'Initial host setup before vCenter integration', 'Hardware troubleshooting requiring direct console access'],
+      tuningGuidance: 'All root logins should generate alerts in mature environments. Create a break-glass procedure that pre-notifies the SOC. Correlate with vCenter availability to distinguish emergency access from unauthorized access.',
+      investigationWorkflow: '1. Identify which ESXi host received the root login\n2. Check if vCenter was unavailable at the time (justifying break-glass)\n3. Verify the source IP or console type of the login\n4. Review subsequent actions taken during the root session\n5. Confirm with infrastructure team if this was an authorized break-glass event',
+      criblSearchQueries: [
+        {
+          name: 'Root Login Events',
+          description: 'Lists all root login activity on ESXi hosts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user_name == "root"\n| summarize count() by host_name, event_type\n| order by count_ desc'
+        },
+        {
+          name: 'Direct Host Access Pattern',
+          description: 'Identifies direct host access versus vCenter-mediated',
+          query: 'dataset="$DATASET" earliest=-7d\n| where user_name == "root"\n| timestats span=4h count() by host_name'
+        },
+        {
+          name: 'Host Login Severity Events',
+          description: 'Monitors high-severity events on ESXi hosts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user_name == "root" and severity matches "(?i)(critical|error|warning)"\n| summarize count() by host_name, severity, message'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-004',
+      name: 'VM Network Configuration Tampering',
+      objective: 'Detects unauthorized changes to VM network configurations such as port group modifications, promiscuous mode enablement, or VLAN hopping setups that could facilitate lateral movement or traffic interception.',
+      severity: 'High',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1599 - Network Boundary Bridging'],
+      tags: ['security', 'network-manipulation', 'lateral-movement'],
+      requiredFields: ['timestamp', 'vm_name', 'event_type', 'user_name', 'host_name', 'message'],
+      detectionLogic: 'Monitors for events related to network adapter changes, port group modifications, promiscuous mode activation, and virtual switch configuration changes. Alerts when VMs are moved to different network segments or when security policies on port groups are weakened.',
+      falsePositives: ['Network team performing authorized VLAN migrations', 'Security team enabling promiscuous mode for packet capture', 'VM provisioning workflows adding network adapters'],
+      tuningGuidance: 'Maintain a list of network-authorized administrators. Alert on any promiscuous mode enablement. Set sensitivity higher for production networks versus development segments.',
+      investigationWorkflow: '1. Identify the specific network change made and the affected VM\n2. Determine if the VM was moved to a more sensitive or less restricted network\n3. Verify the user_name has network administration privileges\n4. Check if promiscuous mode or forged transmits were enabled\n5. Review traffic patterns from the affected VM after the change',
+      criblSearchQueries: [
+        {
+          name: 'Network Configuration Changes',
+          description: 'Lists all network-related VM configuration events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)(network|portgroup|vswitch|dvs|nic)"\n| summarize count() by user_name, vm_name, event_type\n| order by count_ desc'
+        },
+        {
+          name: 'Promiscuous Mode Events',
+          description: 'Detects promiscuous mode enablement',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message matches "(?i)promiscuous"\n| summarize count() by user_name, host_name, vm_name'
+        },
+        {
+          name: 'Network Change Frequency',
+          description: 'Tracks network changes over time for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-30d\n| where event_type matches "(?i)(network|portgroup|vswitch)"\n| timestats span=1d count() by event_type'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-005',
+      name: 'Suspicious VM Power State Changes',
+      objective: 'Detects unusual patterns of VM power operations (power off, suspend, reset) that may indicate a denial-of-service attack against critical infrastructure or attacker preparation for data theft.',
+      severity: 'High',
+      mitre: ['T1529 - System Shutdown/Reboot', 'T1489 - Service Stop'],
+      tags: ['security', 'denial-of-service', 'availability'],
+      requiredFields: ['timestamp', 'vm_name', 'event_type', 'user_name', 'datacenter', 'cluster'],
+      detectionLogic: 'Monitors for bulk power-off or suspend operations across multiple VMs within a short timeframe. Also detects power operations on VMs tagged as critical infrastructure performed by users without proper authorization. Threshold: more than 3 VMs powered off within 10 minutes by the same user.',
+      falsePositives: ['Planned maintenance requiring bulk VM shutdowns', 'Disaster recovery testing with coordinated failovers', 'Auto-scaling systems powering down idle VMs'],
+      tuningGuidance: 'Define critical VM lists that should never be powered off without change approval. Whitelist automation accounts used for scaling operations. Set bulk threshold based on normal operational patterns.',
+      investigationWorkflow: '1. Identify all VMs affected by power state changes\n2. Determine if the VMs are part of a critical service\n3. Verify the user_name against authorized operators for those VMs\n4. Check for associated change requests or maintenance windows\n5. Assess business impact and initiate incident response if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Bulk Power Operations',
+          description: 'Detects mass VM power-off or suspend events',
+          query: 'dataset="$DATASET" earliest=-4h\n| where event_type matches "(?i)(poweroff|suspend|shutdown)"\n| summarize count() by user_name, cluster\n| where count_ > 3\n| order by count_ desc'
+        },
+        {
+          name: 'Critical VM Power Events',
+          description: 'Monitors power operations on VMs in production clusters',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)(poweroff|suspend|reset)"\n| summarize count() by vm_name, user_name, datacenter\n| order by count_ desc'
+        },
+        {
+          name: 'Power Operation Trends',
+          description: 'Tracks power operations over time for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-14d\n| where event_type matches "(?i)(poweroff|poweron|suspend|reset)"\n| timestats span=4h count() by event_type'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-006',
+      name: 'vCenter Permission Escalation',
+      objective: 'Detects changes to vCenter roles and permissions that grant elevated privileges, potentially indicating an attacker establishing persistent administrative access.',
+      severity: 'Medium',
+      mitre: ['T1098 - Account Manipulation', 'T1078 - Valid Accounts'],
+      tags: ['security', 'privilege-escalation', 'persistence'],
+      requiredFields: ['timestamp', 'event_type', 'user_name', 'datacenter', 'message', 'severity'],
+      detectionLogic: 'Monitors for permission and role modification events in vCenter including CreateRole, UpdateRole, SetEntityPermissions, and AddAuthorizationRole. Alerts when administrator-level permissions are granted or when custom roles are created with sensitive privileges.',
+      falsePositives: ['Onboarding new administrators with appropriate approvals', 'Role restructuring during security hardening initiatives', 'Automated provisioning systems managing service accounts'],
+      tuningGuidance: 'Alert on all Administrator role grants. Maintain a list of approved permission change operators. Set higher priority for permission changes at the datacenter or root folder level versus individual VM level.',
+      investigationWorkflow: '1. Identify what permission change was made and at what scope level\n2. Determine who received the elevated privileges\n3. Verify the user_name making the change is an authorized IAM administrator\n4. Check if there is a corresponding access request or ticket\n5. Review the grantees subsequent activity for signs of abuse',
+      criblSearchQueries: [
+        {
+          name: 'Permission Change Events',
+          description: 'Lists all permission and role modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)(role|permission|authorization)"\n| summarize count() by user_name, event_type, message\n| order by count_ desc'
+        },
+        {
+          name: 'Administrator Role Grants',
+          description: 'Detects when admin-level roles are assigned',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message matches "(?i)(admin|administrator)" and event_type matches "(?i)(permission|role)"\n| summarize count() by user_name, datacenter'
+        },
+        {
+          name: 'Permission Change History',
+          description: 'Tracks permission changes over time for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-30d\n| where event_type matches "(?i)(role|permission)"\n| timestats span=1d count() by user_name'
+        }
+      ]
+    },
+    {
+      id: 'vmw-sec-007',
+      name: 'Datastore Anomalous Access Patterns',
+      objective: 'Detects unusual datastore browsing or file operations that may indicate an attacker searching for VM disk files (VMDKs) to exfiltrate or manipulate.',
+      severity: 'Medium',
+      mitre: ['T1083 - File and Directory Discovery', 'T1039 - Data from Network Shared Drive'],
+      tags: ['security', 'data-discovery', 'datastore-access'],
+      requiredFields: ['timestamp', 'event_type', 'user_name', 'datastore', 'host_name', 'message'],
+      detectionLogic: 'Monitors for datastore browser events, file copy operations, and VMDK access patterns. Alerts when users browse multiple datastores in succession or access VMDK files directly rather than through normal VM operations. Also detects file downloads from datastores.',
+      falsePositives: ['Storage administrators performing capacity planning reviews', 'Backup solutions scanning datastores for changed blocks', 'VM migration operations accessing multiple datastores'],
+      tuningGuidance: 'Baseline normal datastore access patterns per user role. Alert when a user accesses more than 3 unique datastores within 1 hour. Exclude backup service accounts and storage admin roles from browse-only alerts.',
+      investigationWorkflow: '1. Identify which datastores were accessed and what files were touched\n2. Determine if the user normally accesses these datastores\n3. Check for file download or copy operations following the browse\n4. Review if sensitive VMs are stored on the accessed datastores\n5. Correlate with network egress data for potential exfiltration',
+      criblSearchQueries: [
+        {
+          name: 'Datastore Browse Activity',
+          description: 'Lists datastore browsing and file access events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type matches "(?i)(datastore|browse|file)"\n| summarize count() by user_name, datastore\n| order by count_ desc'
+        },
+        {
+          name: 'Multi-Datastore Access',
+          description: 'Identifies users accessing multiple datastores',
+          query: 'dataset="$DATASET" earliest=-4h\n| where event_type matches "(?i)datastore"\n| summarize unique_stores=dcount(datastore) by user_name\n| where unique_stores > 3\n| order by unique_stores desc'
+        },
+        {
+          name: 'VMDK File Operations',
+          description: 'Detects direct VMDK file manipulation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message matches "(?i)vmdk"\n| summarize count() by user_name, datastore, event_type\n| order by count_ desc'
+        },
+        {
+          name: 'Datastore Access Patterns',
+          description: 'Tracks datastore access over time for baseline',
+          query: 'dataset="$DATASET" earliest=-14d\n| where event_type matches "(?i)datastore"\n| timestats span=4h count() by user_name'
+        }
+      ]
+    }
+  ],
+  'hashicorp-vault': [
+    {
+      id: 'vlt-sec-001',
+      name: 'Root Token Generation or Usage',
+      objective: 'Detects generation or use of Vault root tokens which provide unrestricted access to all secrets and configurations, representing the highest-risk credential in a Vault deployment.',
+      severity: 'Critical',
+      mitre: ['T1078.004 - Valid Accounts: Cloud Accounts', 'T1548 - Abuse Elevation Control Mechanism'],
+      tags: ['security', 'root-token', 'privilege-escalation'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Monitors for audit events where auth_policies contains "root" or where request_path matches sys/generate-root. Also detects any operation performed with root token authentication. In production environments, root tokens should never be generated outside of emergency break-glass procedures.',
+      falsePositives: ['Initial Vault cluster setup requiring root token', 'Emergency break-glass procedures with proper authorization', 'Vault migration or major upgrade requiring root access'],
+      tuningGuidance: 'All root token events should alert in production. Create an allowlist for initial setup only during the first 24 hours of cluster deployment. Integrate with break-glass ticketing system for verification.',
+      investigationWorkflow: '1. Determine if root token generation was authorized via break-glass procedure\n2. Identify the request_remote_address to trace the source system\n3. Review all operations performed with the root token\n4. Verify the root token was revoked after use\n5. Check for any policy changes or new auth methods created during the session',
+      criblSearchQueries: [
+        {
+          name: 'Root Token Operations',
+          description: 'Detects all root token generation and usage events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where auth_policies matches "(?i)root" or request_path matches "(?i)generate-root"\n| summarize count() by request_operation, request_path, request_remote_address\n| order by count_ desc'
+        },
+        {
+          name: 'Root Policy Authentication',
+          description: 'Lists all authentications using root policy',
+          query: 'dataset="$DATASET" earliest=-7d\n| where auth_policies matches "(?i)root"\n| summarize count() by auth_display_name, request_remote_address\n| order by count_ desc'
+        },
+        {
+          name: 'Root Token Timeline',
+          description: 'Tracks root token activity over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where auth_policies matches "(?i)root"\n| timestats span=1d count() by request_operation'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-002',
+      name: 'Bulk Secret Enumeration',
+      objective: 'Detects rapid enumeration of secret paths using LIST operations, indicating an attacker mapping out available secrets after gaining initial access to Vault.',
+      severity: 'High',
+      mitre: ['T1087 - Account Discovery', 'T1083 - File and Directory Discovery'],
+      tags: ['security', 'reconnaissance', 'secret-enumeration'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Monitors for high-frequency LIST operations across multiple secret engine paths within a short timeframe. Alerts when a single auth identity performs more than 20 LIST operations within 5 minutes, or when LIST operations span more than 5 different secret engine mount points.',
+      falsePositives: ['Vault backup operations that enumerate all paths', 'Security auditing tools scanning for policy compliance', 'CI/CD pipelines checking secret existence before read'],
+      tuningGuidance: 'Whitelist known backup service accounts and audit tools. Set LIST threshold based on environment complexity. For environments with fewer than 10 secret engines, alert at 20 LISTs per 5 minutes.',
+      investigationWorkflow: '1. Identify the auth identity performing the enumeration\n2. Determine which secret paths were listed\n3. Check if subsequent READ operations followed the LIST activity\n4. Verify the source request_remote_address against known infrastructure\n5. Review the auth_policies to understand what access the token has',
+      criblSearchQueries: [
+        {
+          name: 'High-Frequency LIST Operations',
+          description: 'Detects rapid secret path enumeration',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_operation == "list"\n| summarize count() by auth_display_name, request_remote_address\n| where count_ > 20\n| order by count_ desc'
+        },
+        {
+          name: 'Multi-Engine Enumeration',
+          description: 'Identifies LIST operations spanning multiple secret engines',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_operation == "list"\n| extend engine = split(request_path, "/")[0]\n| summarize unique_engines=dcount(engine) by auth_display_name\n| where unique_engines > 5\n| order by unique_engines desc'
+        },
+        {
+          name: 'List Operation Patterns',
+          description: 'Tracks LIST operation volume over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_operation == "list"\n| timestats span=1h count() by auth_display_name'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-003',
+      name: 'Authentication Method Manipulation',
+      objective: 'Detects creation or modification of authentication methods which could allow an attacker to establish persistent backdoor access to Vault.',
+      severity: 'Critical',
+      mitre: ['T1556 - Modify Authentication Process', 'T1098 - Account Manipulation'],
+      tags: ['security', 'persistence', 'auth-manipulation'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Monitors for write operations to sys/auth/ paths which create or modify authentication backends. Also detects changes to auth method configurations such as adding new allowed roles, modifying token TTLs, or changing bound CIDR ranges. Any new auth method in production should be investigated.',
+      falsePositives: ['Infrastructure-as-code deployments provisioning Vault auth methods', 'Vault administrators onboarding new application auth paths', 'Auth method reconfiguration during security hardening'],
+      tuningGuidance: 'Alert on all auth method creation in production. Allow auth configuration updates only from known Terraform/Ansible service accounts. Flag any auth method creation that does not have a corresponding change ticket.',
+      investigationWorkflow: '1. Identify what auth method was created or modified\n2. Review the configuration for overly permissive settings\n3. Verify the operator against authorized Vault administrators\n4. Check if the auth method was created via IaC or manually\n5. Determine if any tokens have already been issued via the new method',
+      criblSearchQueries: [
+        {
+          name: 'Auth Method Changes',
+          description: 'Lists all authentication method creation and modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_path matches "^sys/auth" and request_operation == "update"\n| summarize count() by auth_display_name, request_path, request_remote_address\n| order by count_ desc'
+        },
+        {
+          name: 'New Auth Method Creation',
+          description: 'Detects new authentication backends being enabled',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_path matches "^sys/auth" and request_operation == "update"\n| summarize count() by request_path, auth_display_name\n| order by count_ desc'
+        },
+        {
+          name: 'Auth Configuration Timeline',
+          description: 'Tracks auth method changes over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where request_path matches "^sys/auth"\n| timestats span=1d count() by request_operation'
+        },
+        {
+          name: 'Auth Method Source Analysis',
+          description: 'Identifies where auth changes originate from',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_path matches "^sys/auth"\n| summarize count() by request_remote_address, auth_display_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-004',
+      name: 'Policy Modification for Privilege Escalation',
+      objective: 'Detects changes to Vault policies that expand access permissions, potentially allowing an attacker to escalate privileges by modifying their own or other policies.',
+      severity: 'High',
+      mitre: ['T1484 - Domain Policy Modification', 'T1548 - Abuse Elevation Control Mechanism'],
+      tags: ['security', 'privilege-escalation', 'policy-modification'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Monitors for write operations to sys/policies/ or sys/policy/ paths. Alerts when policies are created or updated, especially when the change adds wildcard paths, root capabilities, or sudo permissions. Correlates with the operators own policy to detect self-escalation attempts.',
+      falsePositives: ['Planned policy updates deployed via infrastructure-as-code', 'Security team tightening policies during hardening', 'New application onboarding requiring policy creation'],
+      tuningGuidance: 'Alert on all policy modifications in production clusters. Whitelist IaC service accounts for policy deployment. Flag policies that grant wildcard (*) path access or sudo/root capabilities at Critical severity.',
+      investigationWorkflow: '1. Review the policy change to understand what new access was granted\n2. Determine if the change expanded or restricted permissions\n3. Verify the operator is an authorized policy administrator\n4. Check if the modified policy is assigned to the operators own token\n5. Review subsequent access patterns from identities using the modified policy',
+      criblSearchQueries: [
+        {
+          name: 'Policy Modification Events',
+          description: 'Lists all policy creation and update operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_path matches "^sys/polic" and request_operation == "update"\n| summarize count() by auth_display_name, request_path, request_remote_address\n| order by count_ desc'
+        },
+        {
+          name: 'Policy Changes by Source',
+          description: 'Identifies policy modifications by source address',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_path matches "^sys/polic"\n| summarize count() by request_remote_address, auth_display_name\n| order by count_ desc'
+        },
+        {
+          name: 'Policy Modification Frequency',
+          description: 'Tracks policy change rate over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where request_path matches "^sys/polic" and request_operation == "update"\n| timestats span=1d count() by auth_display_name'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-005',
+      name: 'Repeated Authentication Failures',
+      objective: 'Detects brute force or credential stuffing attacks against Vault authentication endpoints through high volumes of failed authentication attempts.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing'],
+      tags: ['security', 'brute-force', 'credential-attack'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'request_operation', 'request_path', 'request_remote_address', 'response_error'],
+      detectionLogic: 'Monitors for authentication requests that result in error responses, particularly "permission denied" or "invalid credentials" responses. Alerts when more than 10 failed auth attempts occur from the same request_remote_address within 5 minutes, or more than 5 failures against the same auth path.',
+      falsePositives: ['Misconfigured applications with expired credentials', 'Token renewal failures during Vault maintenance', 'Developers testing auth configurations in non-production'],
+      tuningGuidance: 'Set threshold at 10 failures per 5 minutes per source IP. Exclude known CI/CD IP ranges that may have transient auth failures during deployments. Lower threshold for auth methods that should never fail (like AppRole in production).',
+      investigationWorkflow: '1. Identify the source request_remote_address and resolve to a system\n2. Determine which auth method is being targeted\n3. Check if failures are from a single identity or multiple\n4. Look for successful authentication following the failures\n5. Block the source IP if confirmed malicious and not an internal system',
+      criblSearchQueries: [
+        {
+          name: 'Failed Authentication Attempts',
+          description: 'Detects high-volume auth failures by source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where response_error != "" and request_path matches "(?i)auth/"\n| summarize count() by request_remote_address, request_path\n| where count_ > 10\n| order by count_ desc'
+        },
+        {
+          name: 'Auth Failure Patterns',
+          description: 'Analyzes authentication failure distribution',
+          query: 'dataset="$DATASET" earliest=-24h\n| where response_error != "" and request_path matches "(?i)auth/"\n| summarize count() by response_error, request_path\n| order by count_ desc'
+        },
+        {
+          name: 'Failure-to-Success Correlation',
+          description: 'Identifies successful logins following failures from same source',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_path matches "(?i)auth/"\n| summarize failures=countif(response_error != ""), successes=countif(response_error == "") by request_remote_address\n| where failures > 5 and successes > 0\n| order by failures desc'
+        },
+        {
+          name: 'Auth Failure Timeline',
+          description: 'Tracks authentication failures over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where response_error != "" and request_path matches "(?i)auth/"\n| timestats span=1h count() by request_remote_address'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-006',
+      name: 'Secret Engine Mount or Unmount',
+      objective: 'Detects mounting of new secret engines or unmounting of existing ones, which may indicate an attacker creating hidden storage for exfiltrated data or destroying evidence by removing engines.',
+      severity: 'Medium',
+      mitre: ['T1564 - Hide Artifacts', 'T1070 - Indicator Removal'],
+      tags: ['security', 'secret-engines', 'evidence-destruction'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Monitors for operations on sys/mounts/ paths which indicate secret engine mounting or unmounting. Alerts on any new mount creation or existing mount removal. Unmounting is particularly concerning as it destroys all secrets within that engine.',
+      falsePositives: ['Infrastructure provisioning creating new secret engines for applications', 'Decommissioning workflows removing unused engines', 'Vault migrations moving secret engines between clusters'],
+      tuningGuidance: 'Alert on all mount/unmount operations in production. Allow creation from IaC service accounts only. Treat unmount operations as higher severity than mount operations. Require change approval verification for all unmount alerts.',
+      investigationWorkflow: '1. Identify what secret engine was mounted or unmounted\n2. For unmounts, determine what secrets were stored (may be unrecoverable)\n3. Verify the operator is authorized for secret engine management\n4. Check for corresponding IaC deployments or change tickets\n5. For new mounts, review the engine configuration for appropriateness',
+      criblSearchQueries: [
+        {
+          name: 'Secret Engine Mount Operations',
+          description: 'Lists all mount and unmount events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_path matches "^sys/mounts"\n| summarize count() by request_operation, request_path, auth_display_name\n| order by count_ desc'
+        },
+        {
+          name: 'Unmount Events',
+          description: 'Specifically tracks secret engine removal',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_path matches "^sys/mounts" and request_operation == "delete"\n| summarize count() by request_path, auth_display_name, request_remote_address'
+        },
+        {
+          name: 'Mount Activity History',
+          description: 'Tracks mount operations over time for baseline',
+          query: 'dataset="$DATASET" earliest=-30d\n| where request_path matches "^sys/mounts"\n| timestats span=1d count() by request_operation'
+        }
+      ]
+    },
+    {
+      id: 'vlt-sec-007',
+      name: 'Unusual Secret Access from New Source',
+      objective: 'Detects access to secrets from previously unseen IP addresses or identities, indicating potential credential theft or lateral movement from a compromised system.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1021 - Remote Services'],
+      tags: ['security', 'anomalous-access', 'lateral-movement'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'request_remote_address'],
+      detectionLogic: 'Builds a baseline of normal source IPs for each auth identity over 30 days. Alerts when an identity accesses secrets from a new request_remote_address not seen in the baseline. Also detects identities accessing secret paths they have never previously accessed.',
+      falsePositives: ['Application deployments to new infrastructure with new IPs', 'Cloud autoscaling spinning up instances with new addresses', 'VPN or proxy changes causing legitimate IP shifts'],
+      tuningGuidance: 'Allow a 7-day learning period for new identities. Exclude cloud metadata IPs and known load balancer ranges. Set sensitivity higher for identities accessing highly sensitive paths (PKI, database credentials).',
+      investigationWorkflow: '1. Identify the new source IP and resolve it to infrastructure\n2. Determine if the IP belongs to known cloud infrastructure or is external\n3. Review what secrets were accessed from the new source\n4. Check if the auth identity token was recently created or is long-lived\n5. Correlate with network logs to verify the source systems legitimacy',
+      criblSearchQueries: [
+        {
+          name: 'New Source IP Detection',
+          description: 'Identifies secret access from IPs not seen in baseline period',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_operation == "read" and type == "response"\n| summarize count() by auth_display_name, request_remote_address\n| order by count_ asc'
+        },
+        {
+          name: 'Identity Source IP Mapping',
+          description: 'Maps identities to their access source IPs',
+          query: 'dataset="$DATASET" earliest=-30d\n| where request_operation == "read"\n| summarize unique_ips=dcount(request_remote_address), access_count=count() by auth_display_name\n| where unique_ips > 3\n| order by unique_ips desc'
+        },
+        {
+          name: 'New Path Access by Identity',
+          description: 'Detects identities accessing secret paths for the first time',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_operation == "read"\n| summarize count() by auth_display_name, request_path\n| where count_ == 1\n| order by auth_display_name asc'
+        },
+        {
+          name: 'Access Source Trends',
+          description: 'Tracks unique source IPs per identity over time',
+          query: 'dataset="$DATASET" earliest=-14d\n| where request_operation == "read"\n| timestats span=1d dcount(request_remote_address) by auth_display_name'
+        }
+      ]
+    }
+  ],
+  'github-audit': [
+    {
+      id: 'gha-sec-001',
+      name: 'Repository Visibility Changed to Public',
+      objective: 'Detects when a private repository is changed to public visibility, which could expose proprietary code, secrets, credentials, or intellectual property to the internet.',
+      severity: 'Critical',
+      mitre: ['T1567 - Exfiltration Over Web Service', 'T1213 - Data from Information Repositories'],
+      tags: ['security', 'data-exposure', 'repository-visibility'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'data_visibility'],
+      detectionLogic: 'Monitors for repo.access events where data_visibility changes to public. Any private-to-public repository transition in an enterprise organization should be investigated as it may expose sensitive code. Also detects internal-to-public changes in GitHub Enterprise environments.',
+      falsePositives: ['Intentional open-source releases after security review', 'Public documentation repositories', 'Marketing or community repositories meant to be public'],
+      tuningGuidance: 'Alert on all visibility changes to public in enterprise organizations. Maintain a whitelist of repositories approved for public visibility. Integrate with change management to verify approval before suppressing alerts.',
+      investigationWorkflow: '1. Identify the repository and assess what code/data it contains\n2. Check for any secrets, credentials, or API keys in the repository history\n3. Verify with the actor that the visibility change was intentional\n4. Review if the repository has been forked since becoming public\n5. If unauthorized, immediately revert to private and rotate any exposed credentials',
+      criblSearchQueries: [
+        {
+          name: 'Repository Visibility Changes',
+          description: 'Detects all repository visibility modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)repo.access" and data_visibility == "public"\n| summarize count() by actor, repo, org\n| order by count_ desc'
+        },
+        {
+          name: 'Visibility Change History',
+          description: 'Tracks all visibility changes over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)repo.access"\n| summarize count() by data_visibility, org\n| order by count_ desc'
+        },
+        {
+          name: 'Actor Visibility Change Pattern',
+          description: 'Identifies actors who frequently change repository visibility',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action matches "(?i)repo.access"\n| timestats span=1d count() by actor'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-002',
+      name: 'Organization Member Added with Admin Role',
+      objective: 'Detects when new members are added to the organization with administrative privileges, which could indicate account compromise or insider threat establishing persistent access.',
+      severity: 'High',
+      mitre: ['T1136 - Create Account', 'T1098 - Account Manipulation'],
+      tags: ['security', 'privilege-escalation', 'persistence'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'user', 'team'],
+      detectionLogic: 'Monitors for org.add_member and org.update_member events, particularly when combined with team additions to admin teams or direct admin role grants. Alerts when members are added outside of normal onboarding workflows or by actors who do not typically manage membership.',
+      falsePositives: ['Legitimate employee onboarding by HR-authorized personnel', 'Contractor onboarding with temporary admin access', 'Emergency access grants during incident response'],
+      tuningGuidance: 'Maintain a list of authorized membership managers. Alert on any admin role grant by non-authorized actors. Set higher priority for member additions outside business hours.',
+      investigationWorkflow: '1. Verify the new member addition against HR onboarding records\n2. Check if the actor is authorized to add organization members\n3. Review the role/team assigned to determine privilege level\n4. Verify the new users identity matches expected personnel\n5. Check for immediate suspicious activity from the new account',
+      criblSearchQueries: [
+        {
+          name: 'Organization Member Additions',
+          description: 'Lists all new member additions to the organization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)org.add_member"\n| summarize count() by actor, user, org\n| order by count_ desc'
+        },
+        {
+          name: 'Admin Team Additions',
+          description: 'Detects additions to administrative teams',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)team.add_member" and team matches "(?i)admin"\n| summarize count() by actor, user, team\n| order by count_ desc'
+        },
+        {
+          name: 'Member Addition Trends',
+          description: 'Tracks membership changes over time for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)(org.add_member|org.remove_member)"\n| timestats span=1d count() by action'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-003',
+      name: 'Deploy Key or PAT Creation Spike',
+      objective: 'Detects unusual creation of deploy keys or personal access tokens that could be used to establish persistent programmatic access to repositories, bypassing SSO and MFA requirements.',
+      severity: 'High',
+      mitre: ['T1098.001 - Additional Cloud Credentials', 'T1550.001 - Application Access Token'],
+      tags: ['security', 'persistence', 'credential-creation'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'programmatic_access_type'],
+      detectionLogic: 'Monitors for deploy key creation events and personal access token (PAT) generation. Alerts when a single actor creates more than 3 deploy keys or PATs within 24 hours, or when deploy keys are added to repositories the actor does not normally maintain. Also detects PATs with broad scopes.',
+      falsePositives: ['DevOps engineers setting up CI/CD pipelines for multiple repos', 'Security team rotating deploy keys as part of credential management', 'Automated provisioning of deploy keys during repo creation'],
+      tuningGuidance: 'Set threshold at 3 key/token creations per actor per 24 hours. Whitelist CI/CD service accounts. Flag deploy keys added to repositories outside the actors normal team ownership.',
+      investigationWorkflow: '1. Identify all repositories where deploy keys were added\n2. Verify the actor normally administers these repositories\n3. Check the deploy key permissions (read-only vs read-write)\n4. Review if the programmatic_access_type aligns with legitimate use\n5. Determine if corresponding CI/CD pipeline changes justify the keys',
+      criblSearchQueries: [
+        {
+          name: 'Deploy Key Creation Events',
+          description: 'Lists all deploy key and access token creation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(deploy_key|token)" and action matches "(?i)create"\n| summarize count() by actor, repo, programmatic_access_type\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Credential Creation',
+          description: 'Detects actors creating multiple credentials rapidly',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(deploy_key|token)" and action matches "(?i)create"\n| summarize count() by actor\n| where count_ > 3\n| order by count_ desc'
+        },
+        {
+          name: 'Credential Creation Trend',
+          description: 'Tracks credential creation patterns over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)(deploy_key|token)" and action matches "(?i)create"\n| timestats span=1d count() by actor'
+        },
+        {
+          name: 'Programmatic Access Distribution',
+          description: 'Analyzes types of programmatic access being created',
+          query: 'dataset="$DATASET" earliest=-7d\n| where programmatic_access_type != ""\n| summarize count() by programmatic_access_type, actor\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-004',
+      name: 'Repository Transfer or Fork to External Organization',
+      objective: 'Detects repository transfers or forks to organizations outside the enterprise, which may represent intellectual property theft or unauthorized code sharing.',
+      severity: 'Critical',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'data-exfiltration', 'ip-theft'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'user'],
+      detectionLogic: 'Monitors for repo.transfer events and fork events where the destination organization differs from the source. Alerts on any transfer outside the enterprise organization or fork to a personal account. Treats all outbound transfers as potential data exfiltration requiring verification.',
+      falsePositives: ['Approved open-source contributions forked to personal accounts', 'Organizational restructuring moving repos between approved orgs', 'Vendor collaborations with approved external organizations'],
+      tuningGuidance: 'Alert on all repository transfers. Maintain an allowlist of approved destination organizations for forks. Treat transfers to personal accounts with higher severity than inter-org transfers.',
+      investigationWorkflow: '1. Identify the repository being transferred and its sensitivity classification\n2. Determine the destination organization or user account\n3. Verify with the actor that the transfer was authorized\n4. Check if the repository contains secrets or proprietary algorithms\n5. If unauthorized, contact GitHub support for transfer reversal',
+      criblSearchQueries: [
+        {
+          name: 'Repository Transfers',
+          description: 'Detects all repository transfer events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)repo.transfer"\n| summarize count() by actor, repo, org\n| order by count_ desc'
+        },
+        {
+          name: 'External Forks',
+          description: 'Identifies forks to accounts outside the organization',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)repo.fork"\n| summarize count() by actor, repo, user\n| order by count_ desc'
+        },
+        {
+          name: 'Transfer and Fork History',
+          description: 'Tracks transfer and fork activity over time',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action matches "(?i)(repo.transfer|repo.fork)"\n| timestats span=1d count() by action'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-005',
+      name: 'Branch Protection Rule Disabled',
+      objective: 'Detects removal or weakening of branch protection rules that enforce code review requirements, potentially allowing an attacker to push malicious code directly to main branches.',
+      severity: 'High',
+      mitre: ['T1562 - Impair Defenses', 'T1195.002 - Supply Chain Compromise: Compromise Software Supply Chain'],
+      tags: ['security', 'supply-chain', 'branch-protection'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo'],
+      detectionLogic: 'Monitors for protected_branch.destroy, protected_branch.policy_override, and branch protection update events that reduce security controls. Alerts when required reviewers are reduced, force push is enabled, or status checks are removed from main/master branches.',
+      falsePositives: ['Temporary branch protection changes for emergency hotfixes', 'Repository migration requiring temporary rule relaxation', 'Updating protection rules as part of workflow improvements'],
+      tuningGuidance: 'Alert on all branch protection removals on main/master branches. Allow updates from designated repository administrators only. Flag any protection change that reduces the number of required reviewers.',
+      investigationWorkflow: '1. Identify which branch protection rules were modified or removed\n2. Determine if the change weakened security controls\n3. Check if there was an immediate push to the affected branch\n4. Verify the actor is a repository administrator with authorization\n5. Look for code changes pushed between protection removal and restoration',
+      criblSearchQueries: [
+        {
+          name: 'Branch Protection Changes',
+          description: 'Lists all branch protection modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)protected_branch"\n| summarize count() by actor, repo, action\n| order by count_ desc'
+        },
+        {
+          name: 'Protection Rule Removals',
+          description: 'Specifically detects branch protection deletions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)protected_branch.destroy"\n| summarize count() by actor, repo, org\n| order by count_ desc'
+        },
+        {
+          name: 'Protection Change Timeline',
+          description: 'Tracks branch protection changes over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)protected_branch"\n| timestats span=1d count() by action'
+        },
+        {
+          name: 'Actor Protection Changes',
+          description: 'Identifies which actors most frequently modify protections',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action matches "(?i)protected_branch"\n| summarize count() by actor\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-006',
+      name: 'Suspicious Git Clone via Alternate Protocol',
+      objective: 'Detects repository cloning using non-standard transport protocols which may indicate automated scraping tools or credential-based access bypassing SSO controls.',
+      severity: 'Medium',
+      mitre: ['T1213 - Data from Information Repositories', 'T1005 - Data from Local System'],
+      tags: ['security', 'data-access', 'protocol-anomaly'],
+      requiredFields: ['created_at', 'action', 'actor', 'repo', 'transport_protocol', 'actor_ip'],
+      detectionLogic: 'Monitors git.clone events and analyzes the transport_protocol field. Alerts when cloning occurs via SSH from unexpected IPs, or when a single actor clones an unusually high number of repositories. Also flags cloning from IP addresses outside known corporate ranges.',
+      falsePositives: ['Developers cloning repos from home or travel locations', 'CI/CD systems using SSH protocol for authenticated clones', 'Mirror services that clone repositories for backup purposes'],
+      tuningGuidance: 'Baseline normal clone patterns per actor. Alert when an actor clones more than 10 repositories in 1 hour. Maintain an allowlist of known CI/CD and mirror IPs. Flag SSH clones from outside corporate IP ranges.',
+      investigationWorkflow: '1. Identify the actor and their normal clone behavior\n2. Check the actor_ip against known corporate and VPN ranges\n3. Review the transport_protocol for protocol anomalies\n4. Determine how many repositories were cloned and their sensitivity\n5. Verify with the actor if the clone activity was intentional',
+      criblSearchQueries: [
+        {
+          name: 'Clone Activity by Protocol',
+          description: 'Analyzes repository cloning by transport protocol',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)git.clone"\n| summarize count() by transport_protocol, actor\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Repository Cloning',
+          description: 'Detects actors cloning many repositories',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action matches "(?i)git.clone"\n| summarize repos_cloned=dcount(repo) by actor, actor_ip\n| where repos_cloned > 10\n| order by repos_cloned desc'
+        },
+        {
+          name: 'Clone Source IP Analysis',
+          description: 'Maps clone activity to source IPs',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)git.clone"\n| summarize count() by actor_ip, actor\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-sec-007',
+      name: 'Webhook Configuration Manipulation',
+      objective: 'Detects creation or modification of repository webhooks that could be used to exfiltrate code changes, secrets from push events, or to inject malicious payloads into CI/CD pipelines.',
+      severity: 'Medium',
+      mitre: ['T1567 - Exfiltration Over Web Service', 'T1195 - Supply Chain Compromise'],
+      tags: ['security', 'webhooks', 'data-exfiltration'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo'],
+      detectionLogic: 'Monitors for hook.create, hook.config_changed, and hook.events_changed actions. Alerts when webhooks are created pointing to external or unusual URLs, when webhook configurations are changed to include sensitive event types (push, pull_request, deployment), or when multiple webhooks are created across repositories.',
+      falsePositives: ['DevOps engineers configuring CI/CD pipeline webhooks', 'Slack or Teams integration webhooks for notifications', 'Security scanning tools registering push event webhooks'],
+      tuningGuidance: 'Maintain an allowlist of approved webhook destination domains. Alert on webhooks pointing to personal servers or unusual cloud providers. Flag webhooks that subscribe to sensitive events like deployment or security_advisory.',
+      investigationWorkflow: '1. Identify the webhook URL destination and determine if it is legitimate\n2. Review which events the webhook subscribes to\n3. Verify the actor is authorized to create webhooks for this repository\n4. Check if the destination domain is a known service or personal server\n5. Determine if any sensitive data has already been sent to the webhook',
+      criblSearchQueries: [
+        {
+          name: 'Webhook Creation Events',
+          description: 'Lists all webhook creation and modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)hook"\n| summarize count() by actor, repo, action\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Webhook Creation',
+          description: 'Detects actors creating multiple webhooks rapidly',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)hook.create"\n| summarize count() by actor\n| where count_ > 3\n| order by count_ desc'
+        },
+        {
+          name: 'Webhook Activity Timeline',
+          description: 'Tracks webhook modifications over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)hook"\n| timestats span=1d count() by action'
+        }
+      ]
+    }
+  ],
+  'atlassian-audit': [
+    {
+      id: 'atl-sec-001',
+      name: 'Global Permission Escalation',
+      objective: 'Detects changes to global permissions in Atlassian products (Jira/Confluence) that grant administrative access, potentially indicating an attacker establishing persistent elevated access.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078 - Valid Accounts'],
+      tags: ['security', 'privilege-escalation', 'global-permissions'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'result'],
+      detectionLogic: 'Monitors for actions related to global permission grants, system administrator role assignments, and group membership changes to admin groups. Alerts when users are added to site-admin, system-administrator, or jira-administrators groups, or when global permissions are modified.',
+      falsePositives: ['Onboarding new Atlassian administrators through proper channels', 'Role changes during organizational restructuring', 'Temporary admin access for troubleshooting with approval'],
+      tuningGuidance: 'Alert on all global admin permission grants. Maintain an allowlist of authorized permission managers. Set higher priority for changes outside business hours or by non-admin actors.',
+      investigationWorkflow: '1. Identify what permission was granted and to whom\n2. Verify the actor_email is an authorized Atlassian administrator\n3. Check if there is a corresponding access request ticket\n4. Review the recipients subsequent activity for privilege abuse\n5. Determine if the permission grant was temporary or permanent',
+      criblSearchQueries: [
+        {
+          name: 'Global Permission Changes',
+          description: 'Lists all global permission modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(permission|admin)" and objectItem_typeName matches "(?i)(group|permission)"\n| summarize count() by actor_displayName, action, objectItem_name\n| order by count_ desc'
+        },
+        {
+          name: 'Admin Group Additions',
+          description: 'Detects additions to administrative groups',
+          query: 'dataset="$DATASET" earliest=-7d\n| where objectItem_name matches "(?i)admin" and action matches "(?i)add"\n| summarize count() by actor_displayName, objectItem_name, actor_email\n| order by count_ desc'
+        },
+        {
+          name: 'Permission Change Timeline',
+          description: 'Tracks permission changes over time for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)permission"\n| timestats span=1d count() by action'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-002',
+      name: 'Bulk Space or Project Permission Changes',
+      objective: 'Detects mass modification of Confluence space or Jira project permissions, which may indicate an attacker granting themselves access to sensitive content or removing access controls.',
+      severity: 'High',
+      mitre: ['T1484 - Domain Policy Modification', 'T1222 - File and Directory Permissions Modification'],
+      tags: ['security', 'access-control', 'bulk-modification'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'container_name', 'result'],
+      detectionLogic: 'Monitors for permission change events affecting multiple spaces or projects within a short timeframe. Alerts when a single actor modifies permissions on more than 5 spaces/projects within 30 minutes, or when anonymous access is granted to any space.',
+      falsePositives: ['Atlassian administrators restructuring permissions during migrations', 'Automated provisioning scripts setting up new project permissions', 'Compliance changes applying uniform permission policies'],
+      tuningGuidance: 'Set threshold at 5 permission changes across different containers within 30 minutes. Whitelist known automation service accounts. Alert immediately on any anonymous access enablement.',
+      investigationWorkflow: '1. Identify all spaces/projects affected by the permission changes\n2. Determine if permissions were expanded or restricted\n3. Verify the actor is authorized for bulk permission management\n4. Check if anonymous or public access was enabled on any space\n5. Review the content in affected spaces for sensitivity level',
+      criblSearchQueries: [
+        {
+          name: 'Bulk Permission Modifications',
+          description: 'Detects actors making many permission changes rapidly',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action matches "(?i)permission"\n| summarize unique_containers=dcount(container_name), changes=count() by actor_displayName\n| where unique_containers > 5\n| order by unique_containers desc'
+        },
+        {
+          name: 'Anonymous Access Grants',
+          description: 'Identifies when anonymous access is enabled',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)permission" and objectItem_name matches "(?i)anonymous"\n| summarize count() by actor_displayName, container_name, action\n| order by count_ desc'
+        },
+        {
+          name: 'Permission Changes by Container',
+          description: 'Tracks which containers have the most permission changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)permission"\n| summarize count() by container_name, actor_displayName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-003',
+      name: 'User Account Creation from Unusual Source',
+      objective: 'Detects user account creation from unexpected IP addresses or by unauthorized actors, which may indicate an attacker creating backdoor accounts for persistent access.',
+      severity: 'High',
+      mitre: ['T1136.003 - Create Account: Cloud Account', 'T1078 - Valid Accounts'],
+      tags: ['security', 'account-creation', 'persistence'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'sourceIP', 'result'],
+      detectionLogic: 'Monitors for user creation events and validates the sourceIP against known administrative IP ranges. Alerts when accounts are created from IP addresses outside corporate ranges, by actors who are not designated user administrators, or when multiple accounts are created rapidly.',
+      falsePositives: ['Legitimate onboarding by HR/IT from remote locations', 'Atlassian Cloud automated user provisioning via SCIM', 'Administrators working from home or travel'],
+      tuningGuidance: 'Maintain an allowlist of admin IPs and authorized provisioning service accounts. Alert on all manual account creations from non-corporate IPs. Whitelist SCIM/directory sync service accounts.',
+      investigationWorkflow: '1. Verify the sourceIP against known corporate and VPN ranges\n2. Check if the actor is an authorized user administrator\n3. Validate the new account against HR onboarding records\n4. Review the new accounts initial activity for suspicious behavior\n5. Determine if the account was created via SCIM sync or manually',
+      criblSearchQueries: [
+        {
+          name: 'User Account Creations',
+          description: 'Lists all user creation events with source details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)user.*create" and objectItem_typeName matches "(?i)user"\n| summarize count() by actor_displayName, sourceIP, objectItem_name\n| order by count_ desc'
+        },
+        {
+          name: 'Account Creation from Unusual IPs',
+          description: 'Identifies account creations from non-standard source IPs',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)user.*create"\n| summarize count() by sourceIP\n| order by count_ desc'
+        },
+        {
+          name: 'Rapid Account Creation',
+          description: 'Detects bulk account creation in short timeframes',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action matches "(?i)user.*create"\n| summarize count() by actor_displayName\n| where count_ > 3\n| order by count_ desc'
+        },
+        {
+          name: 'Account Creation Trends',
+          description: 'Tracks account creation patterns over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)user.*create"\n| timestats span=1d count() by actor_displayName'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-004',
+      name: 'Application Link or OAuth App Installation',
+      objective: 'Detects installation of third-party applications or creation of application links that could exfiltrate data from Atlassian products or provide unauthorized API access.',
+      severity: 'High',
+      mitre: ['T1550.001 - Application Access Token', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'third-party-apps', 'oauth-abuse'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'result', 'extraAttributes'],
+      detectionLogic: 'Monitors for app installation events, OAuth consent grants, and application link creation. Alerts when new third-party applications are installed that have broad data access scopes, or when application links are created to external systems not in the approved integrations list.',
+      falsePositives: ['IT team installing approved marketplace apps', 'Developers connecting approved development tools', 'Standard integrations like Slack, Teams, or CI/CD tools'],
+      tuningGuidance: 'Maintain an approved application list. Alert on all app installations not on the approved list. Flag applications requesting admin or write scopes. Review extraAttributes for scope information.',
+      investigationWorkflow: '1. Identify the application installed and its publisher\n2. Review the permissions/scopes requested by the application\n3. Verify the actor is authorized to install applications\n4. Check if the application is on the approved integrations list\n5. Assess data access implications of the granted scopes',
+      criblSearchQueries: [
+        {
+          name: 'Application Installations',
+          description: 'Lists all app installation and OAuth events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(app|oauth|install|connect)"\n| summarize count() by actor_displayName, objectItem_name, action\n| order by count_ desc'
+        },
+        {
+          name: 'Application Link Changes',
+          description: 'Detects new application links to external systems',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)applink" or objectItem_typeName matches "(?i)application"\n| summarize count() by actor_displayName, objectItem_name, result\n| order by count_ desc'
+        },
+        {
+          name: 'App Installation Trend',
+          description: 'Tracks application installations over time',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action matches "(?i)(install|app.*create)"\n| timestats span=1d count() by action'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-005',
+      name: 'Bulk Content Export or Download',
+      objective: 'Detects mass export of Confluence pages or Jira issues which may indicate data exfiltration of sensitive intellectual property, project plans, or security documentation.',
+      severity: 'Critical',
+      mitre: ['T1530 - Data from Cloud Storage Object', 'T1005 - Data from Local System'],
+      tags: ['security', 'data-exfiltration', 'content-export'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'container_name', 'sourceIP'],
+      detectionLogic: 'Monitors for space export, PDF export, and bulk download actions. Alerts when a user exports an entire Confluence space, performs more than 20 page exports within 1 hour, or downloads bulk Jira issue data. Also detects API-based mass content retrieval.',
+      falsePositives: ['Backup operations by authorized administrators', 'Content migration between Atlassian instances', 'Compliance teams creating regulatory documentation archives'],
+      tuningGuidance: 'Alert on all full space exports. Set page export threshold at 20 per hour per user. Whitelist authorized backup service accounts. Flag exports of spaces tagged as confidential or restricted.',
+      investigationWorkflow: '1. Identify what content was exported and its classification level\n2. Verify the actor has legitimate business need for the export\n3. Check the sourceIP against known corporate ranges\n4. Determine if the export volume is consistent with the actors role\n5. Review if the content was subsequently shared externally',
+      criblSearchQueries: [
+        {
+          name: 'Content Export Events',
+          description: 'Detects all content export and download activities',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(export|download|bulk)"\n| summarize count() by actor_displayName, container_name, action\n| order by count_ desc'
+        },
+        {
+          name: 'Space-Level Exports',
+          description: 'Identifies full space export operations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)space.*export"\n| summarize count() by actor_displayName, container_name, sourceIP\n| order by count_ desc'
+        },
+        {
+          name: 'High-Volume Page Access',
+          description: 'Detects users accessing unusually many pages',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action matches "(?i)(view|export|download)"\n| summarize count() by actor_displayName\n| where count_ > 50\n| order by count_ desc'
+        },
+        {
+          name: 'Export Activity Timeline',
+          description: 'Tracks export events over time for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action matches "(?i)export"\n| timestats span=1d count() by actor_displayName'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-006',
+      name: 'Authentication Policy Weakening',
+      objective: 'Detects changes to authentication policies that weaken security controls such as disabling MFA requirements, extending session timeouts, or modifying IP allowlists.',
+      severity: 'Medium',
+      mitre: ['T1556 - Modify Authentication Process', 'T1562 - Impair Defenses'],
+      tags: ['security', 'authentication', 'policy-weakening'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'result', 'extraAttributes'],
+      detectionLogic: 'Monitors for changes to authentication policies including MFA enforcement settings, session duration configurations, password policy modifications, and IP allowlist updates. Alerts when any change results in weaker security posture than the previous configuration.',
+      falsePositives: ['Planned security policy updates with change approval', 'Temporary relaxation during system migrations', 'Testing authentication changes in sandbox environments'],
+      tuningGuidance: 'Alert on all authentication policy changes that reduce security. Differentiate between strengthening and weakening changes. Require change ticket verification for all policy weakening alerts.',
+      investigationWorkflow: '1. Identify the specific authentication policy that was changed\n2. Determine if the change weakened or strengthened security controls\n3. Verify the actor is an authorized security administrator\n4. Check for a corresponding change request or approval\n5. Assess the blast radius of the policy change',
+      criblSearchQueries: [
+        {
+          name: 'Authentication Policy Changes',
+          description: 'Lists all authentication and security policy modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)(auth|policy|mfa|session|password)"\n| summarize count() by actor_displayName, action, objectItem_name\n| order by count_ desc'
+        },
+        {
+          name: 'MFA Policy Modifications',
+          description: 'Specifically tracks MFA-related policy changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)mfa" or objectItem_name matches "(?i)(mfa|two.factor|2fa)"\n| summarize count() by actor_displayName, action, result\n| order by count_ desc'
+        },
+        {
+          name: 'Security Policy Change History',
+          description: 'Tracks security policy modifications over time',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action matches "(?i)(policy|auth|security)"\n| timestats span=1d count() by action'
+        }
+      ]
+    },
+    {
+      id: 'atl-sec-007',
+      name: 'Suspicious Login from Multiple Geographies',
+      objective: 'Detects user accounts authenticating from multiple geographically distant IP addresses within a short timeframe, indicating potential credential compromise or account sharing.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1110 - Brute Force'],
+      tags: ['security', 'impossible-travel', 'account-compromise'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'sourceIP', 'result'],
+      detectionLogic: 'Monitors login events and tracks sourceIP per actor. Alerts when the same actor_email authenticates from more than 3 unique IP addresses within a 1-hour window, or when sequential logins from the same user come from IPs in different geographic regions (impossible travel detection).',
+      falsePositives: ['Users connecting via VPN that rotates exit nodes', 'Mobile users transitioning between WiFi and cellular', 'Cloud-based proxy services with distributed exit IPs'],
+      tuningGuidance: 'Exclude known VPN exit IP ranges. Set threshold at 3 unique IPs per hour per user. Weight alerts higher when IP geolocation indicates different countries. Reduce sensitivity for users with known travel patterns.',
+      investigationWorkflow: '1. Identify all source IPs used by the actor in the timeframe\n2. Geolocate the IPs to determine if travel is physically possible\n3. Check if the user is using a known VPN or proxy service\n4. Review the success/failure rate of authentication attempts\n5. Contact the user to verify the login activity if suspicious',
+      criblSearchQueries: [
+        {
+          name: 'Multi-IP Login Detection',
+          description: 'Identifies users logging in from multiple IPs',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action matches "(?i)login" and result == "success"\n| summarize unique_ips=dcount(sourceIP) by actor_email\n| where unique_ips > 3\n| order by unique_ips desc'
+        },
+        {
+          name: 'Login Source Analysis',
+          description: 'Maps login activity to source IPs per user',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action matches "(?i)login"\n| summarize count() by actor_email, sourceIP, result\n| order by actor_email asc'
+        },
+        {
+          name: 'Failed Login Patterns',
+          description: 'Detects failed login attempts by source',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action matches "(?i)login" and result != "success"\n| summarize count() by actor_email, sourceIP\n| where count_ > 5\n| order by count_ desc'
+        },
+        {
+          name: 'Login Activity Timeline',
+          description: 'Tracks login patterns over time per user',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action matches "(?i)login"\n| timestats span=1h count() by actor_email'
+        }
+      ]
+    }
+  ],
+  'paloalto-cortex-xdr': [
+    {
+      id: 'xdr-sec-001',
+      name: 'Critical Severity Alert with Process Execution',
+      objective: 'Detects critical severity XDR alerts involving process execution, indicating active threats requiring immediate response.',
+      severity: 'Critical',
+      mitre: ['T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'endpoint', 'execution', 'critical-alert'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'severity', 'host_name', 'action_process_command_line'],
+      detectionLogic: 'Identifies XDR alerts with Critical severity that include process execution details. Critical alerts with command line activity often indicate active exploitation or malware execution that has bypassed preventive controls.',
+      falsePositives: ['Legitimate administrative scripts triggering behavioral detection rules', 'Security testing or red team exercises generating critical alerts'],
+      tuningGuidance: 'Exclude known administrative hosts or scheduled task processes. Create allowlist for approved security testing timeframes.',
+      investigationWorkflow: '1. Review the alert_name and full command line for indicators of malicious activity\n2. Check host_name for business context — is this a high-value asset?\n3. Correlate user_name with expected activity for that host\n4. Examine MITRE mappings for attack stage context\n5. Pivot to related alerts on same host within ±1 hour',
+      criblSearchQueries: [
+        {
+          name: 'Critical alerts with process execution',
+          description: 'Find all critical severity alerts that include command line data',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity == "Critical" AND action_process_command_line != ""\n| project detection_timestamp, alert_name, host_name, user_name, action_process_command_line\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Critical alert volume by host',
+          description: 'Identify hosts with highest concentration of critical alerts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity == "Critical"\n| summarize alert_count=count() by host_name\n| order by alert_count desc'
+        },
+        {
+          name: 'MITRE technique distribution for critical alerts',
+          description: 'Map critical alerts to MITRE techniques for attack pattern analysis',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity == "Critical"\n| summarize count() by mitre_technique_id_and_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-002',
+      name: 'Suspicious PowerShell or Script Interpreter Execution',
+      objective: 'Detects execution of common script interpreters with suspicious command line arguments that may indicate living-off-the-land attacks.',
+      severity: 'High',
+      mitre: ['T1059.001 - PowerShell', 'T1059.003 - Windows Command Shell'],
+      tags: ['security', 'endpoint', 'execution', 'living-off-the-land'],
+      requiredFields: ['detection_timestamp', 'host_name', 'user_name', 'action_process_image_name', 'action_process_command_line'],
+      detectionLogic: 'Monitors for execution of powershell.exe, cmd.exe, wscript.exe, cscript.exe, or mshta.exe with encoded commands, download cradles, or obfuscated arguments. These patterns are common in fileless malware and initial access payloads.',
+      falsePositives: ['IT automation tools using encoded PowerShell for deployment', 'SCCM or Intune running encoded scripts for configuration management'],
+      tuningGuidance: 'Baseline normal encoded PowerShell usage per host group. Allowlist specific script hashes used by IT automation. Focus on workstations rather than management servers.',
+      investigationWorkflow: '1. Decode any Base64 encoded command line arguments\n2. Identify the parent process and execution chain\n3. Check if the user_name matches expected operators for that host\n4. Look for network connections or file writes following execution\n5. Search for the same command line across other hosts for lateral movement indicators',
+      criblSearchQueries: [
+        {
+          name: 'Suspicious script interpreter executions',
+          description: 'Find script interpreters with encoded or download arguments',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_process_image_name in ("powershell.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe")\n| where action_process_command_line matches regex "(?i)(encodedcommand|downloadstring|invoke-expression|bypass|hidden|noprofile)"\n| project detection_timestamp, host_name, user_name, action_process_image_name, action_process_command_line'
+        },
+        {
+          name: 'Script execution timeline by host',
+          description: 'Timeline of suspicious script activity on affected hosts',
+          query: 'dataset="$DATASET" earliest=-48h\n| where action_process_image_name in ("powershell.exe", "cmd.exe", "wscript.exe")\n| timestats span=1h count() by host_name\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Unique command lines per user',
+          description: 'Identify unusual command patterns per user account',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_process_image_name == "powershell.exe"\n| summarize unique_commands=dcount(action_process_command_line), sample_cmd=any(action_process_command_line) by user_name\n| order by unique_commands desc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-003',
+      name: 'Credential Access via LSASS Memory',
+      objective: 'Detects processes accessing LSASS memory which indicates credential dumping attempts to harvest authentication material.',
+      severity: 'Critical',
+      mitre: ['T1003.001 - LSASS Memory', 'T1003 - OS Credential Dumping'],
+      tags: ['security', 'endpoint', 'credential-access', 'lsass'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'host_name', 'user_name', 'action_process_image_name', 'action_process_command_line', 'mitre_technique_id_and_name'],
+      detectionLogic: 'Identifies XDR alerts where the MITRE technique maps to credential dumping (T1003) or where process names associated with credential theft tools (mimikatz, procdump, comsvcs.dll) are detected accessing LSASS. This is a high-fidelity indicator of active compromise.',
+      falsePositives: ['Endpoint protection products performing legitimate LSASS scanning', 'Crash dump utilities collecting diagnostic data during troubleshooting'],
+      tuningGuidance: 'Allowlist known security product processes that legitimately access LSASS. Validate against EDR exclusion lists. Any non-security-tool access to LSASS should remain at Critical.',
+      investigationWorkflow: '1. Immediately verify if the process accessing LSASS is a known security tool\n2. Check user_name — credential dumping from non-admin accounts indicates privilege escalation occurred first\n3. Review host for other alerts in the same timeframe\n4. Check for subsequent lateral movement from this host\n5. Initiate containment if confirmed malicious — isolate host via XDR',
+      criblSearchQueries: [
+        {
+          name: 'LSASS access alerts',
+          description: 'All alerts related to credential dumping techniques',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitre_technique_id_and_name matches regex "(?i)(T1003|credential.dump|lsass)"\n| project detection_timestamp, host_name, user_name, action_process_image_name, action_process_command_line\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Credential tool process names',
+          description: 'Detect known credential theft tool process names',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_process_image_name matches regex "(?i)(mimikatz|procdump|sekurlsa|lazagne|pypykatz)"\n| summarize count() by host_name, user_name, action_process_image_name\n| order by count_ desc'
+        },
+        {
+          name: 'Post-credential-dump lateral movement',
+          description: 'Check for lateral movement alerts on hosts with credential access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitre_tactic_id_and_name matches regex "(?i)(lateral.movement|credential.access)"\n| summarize tactics=makeset(mitre_tactic_id_and_name) by host_name\n| where array_length(tactics) > 1'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-004',
+      name: 'Multiple High Severity Alerts on Single Host',
+      objective: 'Detects hosts experiencing multiple high or critical severity alerts in a short timeframe, suggesting an active attack chain progressing through kill chain phases.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'endpoint', 'attack-chain', 'correlation'],
+      requiredFields: ['detection_timestamp', 'severity', 'host_name', 'alert_name', 'mitre_tactic_id_and_name'],
+      detectionLogic: 'Correlates multiple distinct high/critical severity alerts on a single host within a 1-hour window. A single host generating alerts across multiple MITRE tactics (e.g., Initial Access → Execution → Persistence) indicates progression through an attack kill chain rather than isolated events.',
+      falsePositives: ['Vulnerability scanning generating multiple detection signatures', 'Aggressive endpoint protection updates causing transient alert spikes'],
+      tuningGuidance: 'Set threshold at 3+ distinct alert names within 1 hour. Exclude hosts known to trigger during patching windows. Weight scoring by MITRE tactic diversity.',
+      investigationWorkflow: '1. Map all alerts to MITRE tactics to understand attack progression\n2. Identify the earliest alert as potential initial access vector\n3. Check if alerts span multiple tactics indicating kill chain progression\n4. Review user_name consistency — multiple users suggests compromised host vs. compromised account\n5. Determine if the host has network connectivity to sensitive systems',
+      criblSearchQueries: [
+        {
+          name: 'Hosts with multiple high severity alerts',
+          description: 'Find hosts with alert concentration indicating attack chains',
+          query: 'dataset="$DATASET" earliest=-4h\n| where severity in ("High", "Critical")\n| summarize alert_count=count(), distinct_alerts=dcount(alert_name), tactics=makeset(mitre_tactic_id_and_name) by host_name\n| where alert_count >= 3\n| order by alert_count desc'
+        },
+        {
+          name: 'Alert timeline for suspect host',
+          description: 'Chronological alert sequence for a specific host under investigation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity in ("High", "Critical")\n| summarize alert_count=count(), distinct_alerts=dcount(alert_name) by host_name, bin(detection_timestamp, 1h)\n| where alert_count >= 3\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Multi-tactic hosts',
+          description: 'Hosts with alerts spanning multiple MITRE tactics',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity in ("High", "Critical")\n| summarize tactic_count=dcount(mitre_tactic_id_and_name), tactics=makeset(mitre_tactic_id_and_name) by host_name\n| where tactic_count >= 2\n| order by tactic_count desc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-005',
+      name: 'Suspicious Binary Execution from Temp Directories',
+      objective: 'Detects execution of processes from temporary or user-writable directories which is common in malware delivery and payload staging.',
+      severity: 'High',
+      mitre: ['T1204 - User Execution', 'T1036 - Masquerading'],
+      tags: ['security', 'endpoint', 'execution', 'malware-staging'],
+      requiredFields: ['detection_timestamp', 'host_name', 'user_name', 'action_process_image_name', 'action_process_command_line', 'action_file_sha256'],
+      detectionLogic: 'Identifies process execution where the image path includes temporary directories (Temp, tmp, AppData\\Local\\Temp, Downloads) or other user-writable locations. Malware frequently stages payloads in these locations because they require no elevated privileges to write to.',
+      falsePositives: ['Software installers running from Downloads folder', 'Browser-based applications using temp directories for legitimate operations', 'Auto-update mechanisms extracting to temp before installing'],
+      tuningGuidance: 'Build allowlist of known installer hashes. Exclude signed binaries from trusted publishers. Focus on unsigned or newly-seen binaries in temp paths.',
+      investigationWorkflow: '1. Check the action_file_sha256 against threat intelligence feeds\n2. Determine if the binary is signed and by whom\n3. Review how the file arrived in the temp directory (browser download, email attachment, SMB copy)\n4. Check for persistence mechanisms created by the process\n5. Examine network connections made by the process post-execution',
+      criblSearchQueries: [
+        {
+          name: 'Temp directory executions',
+          description: 'Processes launched from temporary or user-writable directories',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_process_command_line matches regex "(?i)(\\\\temp\\\\|\\\\tmp\\\\|\\\\downloads\\\\|appdata\\\\local\\\\temp)"\n| project detection_timestamp, host_name, user_name, action_process_image_name, action_file_sha256\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Unique hashes from temp directories',
+          description: 'Identify unique file hashes executed from staging locations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_process_command_line matches regex "(?i)(\\\\temp\\\\|\\\\tmp\\\\)"\n| summarize first_seen=min(detection_timestamp), host_count=dcount(host_name), hosts=makeset(host_name) by action_file_sha256\n| order by first_seen desc'
+        },
+        {
+          name: 'New binaries in temp directories',
+          description: 'Recently seen unique binaries not observed in prior baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_process_command_line matches regex "(?i)(\\\\temp\\\\|\\\\tmp\\\\)"\n| summarize count() by action_file_sha256, action_process_image_name\n| order by count_ asc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-006',
+      name: 'Defense Evasion via Security Tool Tampering',
+      objective: 'Detects attempts to disable, stop, or tamper with security tools and endpoint protection which indicates an attacker trying to operate undetected.',
+      severity: 'Medium',
+      mitre: ['T1562.001 - Disable or Modify Tools', 'T1562 - Impair Defenses'],
+      tags: ['security', 'endpoint', 'defense-evasion', 'tampering'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'host_name', 'user_name', 'action_process_command_line', 'category', 'mitre_technique_id_and_name'],
+      detectionLogic: 'Monitors for XDR alerts categorized as defense evasion or where command lines indicate attempts to stop security services (net stop, sc config, taskkill targeting AV processes, registry modifications to security settings). Also flags MITRE technique T1562 mappings.',
+      falsePositives: ['IT administrators performing legitimate maintenance on endpoint protection', 'Software deployment tools temporarily disabling protection during updates', 'Endpoint protection self-update processes'],
+      tuningGuidance: 'Correlate with change management tickets for planned maintenance. Allowlist specific admin accounts during approved maintenance windows. Alert on any non-IT user attempting these actions.',
+      investigationWorkflow: '1. Verify if the user_name is an authorized IT administrator\n2. Check for active change management tickets covering this maintenance\n3. Determine which security tool was targeted and current protection status\n4. Look for subsequent malicious activity that may have occurred while defenses were down\n5. Verify the security tool has been restored to operational status',
+      criblSearchQueries: [
+        {
+          name: 'Defense evasion alerts',
+          description: 'All alerts mapped to defense evasion tactics',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitre_tactic_id_and_name matches regex "(?i)defense.evasion" OR mitre_technique_id_and_name matches regex "(?i)T1562"\n| project detection_timestamp, host_name, user_name, alert_name, action_process_command_line\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Service stop commands',
+          description: 'Detect attempts to stop or disable services via command line',
+          query: 'dataset="$DATASET" earliest=-48h\n| where action_process_command_line matches regex "(?i)(net\\s+stop|sc\\s+(stop|config|delete)|taskkill.*(defender|symantec|mcafee|crowdstrike|cortex))"\n| project detection_timestamp, host_name, user_name, action_process_command_line\n| order by detection_timestamp desc'
+        },
+        {
+          name: 'Defense evasion by user',
+          description: 'Users most frequently associated with defense evasion activity',
+          query: 'dataset="$DATASET" earliest=-30d\n| where mitre_tactic_id_and_name matches regex "(?i)defense.evasion"\n| summarize count() by user_name, host_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-sec-007',
+      name: 'Reconnaissance Activity via Discovery Commands',
+      objective: 'Detects clusters of system discovery commands that indicate an attacker enumerating the environment after gaining initial access.',
+      severity: 'Medium',
+      mitre: ['T1082 - System Information Discovery', 'T1016 - System Network Configuration Discovery', 'T1033 - System Owner/User Discovery'],
+      tags: ['security', 'endpoint', 'discovery', 'reconnaissance'],
+      requiredFields: ['detection_timestamp', 'host_name', 'user_name', 'action_process_image_name', 'action_process_command_line', 'mitre_tactic_id_and_name'],
+      detectionLogic: 'Identifies multiple discovery-related commands executed on a single host within a short timeframe. Commands include whoami, systeminfo, ipconfig, net user, net group, nltest, dsquery, and similar enumeration utilities. A burst of these commands suggests post-exploitation reconnaissance.',
+      falsePositives: ['System administrators running diagnostic scripts', 'Monitoring tools collecting system information periodically', 'Onboarding scripts for new endpoint enrollment'],
+      tuningGuidance: 'Set threshold at 4+ distinct discovery commands within 10 minutes. Exclude known monitoring service accounts. Baseline normal discovery patterns for IT admin accounts.',
+      investigationWorkflow: '1. Review the full list of discovery commands executed and their sequence\n2. Determine if the user_name is expected to run these commands\n3. Check what preceded the discovery activity (initial access indicators)\n4. Look for lateral movement or data staging following the reconnaissance\n5. Assess if sensitive systems or privileged groups were enumerated',
+      criblSearchQueries: [
+        {
+          name: 'Discovery command clusters',
+          description: 'Hosts with multiple discovery commands in short timeframes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_process_image_name in ("whoami.exe", "systeminfo.exe", "ipconfig.exe", "net.exe", "nltest.exe", "dsquery.exe", "nslookup.exe")\n| summarize cmd_count=count(), commands=makeset(action_process_image_name) by host_name, user_name, bin(detection_timestamp, 10m)\n| where cmd_count >= 4\n| order by cmd_count desc'
+        },
+        {
+          name: 'Discovery tactic alerts',
+          description: 'All XDR alerts categorized under Discovery tactic',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitre_tactic_id_and_name matches regex "(?i)discovery"\n| summarize count() by host_name, user_name\n| order by count_ desc'
+        },
+        {
+          name: 'Reconnaissance followed by lateral movement',
+          description: 'Hosts with discovery activity followed by lateral movement indicators',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitre_tactic_id_and_name matches regex "(?i)(discovery|lateral.movement)"\n| summarize tactics=makeset(mitre_tactic_id_and_name), alert_names=makeset(alert_name) by host_name\n| where array_length(tactics) >= 2\n| order by host_name'
+        }
+      ]
+    }
+  ],
+  'mongodb-audit': [
+    {
+      id: 'mdb-sec-001',
+      name: 'Authentication Failure Brute Force',
+      objective: 'Detects repeated authentication failures from a single source IP indicating brute force or credential stuffing attacks against MongoDB.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing'],
+      tags: ['security', 'database', 'authentication', 'brute-force'],
+      requiredFields: ['timestamp', 'atype', 'remote_ip', 'result', 'users'],
+      detectionLogic: 'Monitors for multiple failed authentication events (atype: authenticate, result != 0) from a single remote_ip within a short timeframe. More than 10 failures in 5 minutes from one source strongly indicates automated credential attacks.',
+      falsePositives: ['Application connection pool misconfiguration causing repeated auth failures', 'Password rotation causing temporary authentication failures from legitimate services'],
+      tuningGuidance: 'Set threshold based on environment — 10+ failures in 5 minutes for most environments. Allowlist known application server IPs that may generate transient failures during deployments.',
+      investigationWorkflow: '1. Identify the remote_ip and determine if it is internal or external\n2. Check which user accounts were targeted\n3. Verify if any authentication eventually succeeded (indicating compromise)\n4. Review network logs for the source IP activity\n5. If external, check threat intelligence for the IP reputation',
+      criblSearchQueries: [
+        {
+          name: 'Authentication failures by source IP',
+          description: 'Count failed auth attempts grouped by source IP',
+          query: 'dataset="$DATASET" earliest=-1h\n| where atype == "authenticate" AND result != 0\n| summarize failure_count=count() by remote_ip\n| where failure_count >= 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Targeted user accounts',
+          description: 'Identify which accounts are being targeted in brute force',
+          query: 'dataset="$DATASET" earliest=-1h\n| where atype == "authenticate" AND result != 0\n| summarize failure_count=count() by users, remote_ip\n| order by failure_count desc'
+        },
+        {
+          name: 'Successful auth after failures',
+          description: 'Check if brute force succeeded by finding auth success after failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where atype == "authenticate"\n| summarize successes=countif(result == 0), failures=countif(result != 0) by remote_ip, users\n| where failures >= 5 AND successes >= 1\n| order by failures desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-002',
+      name: 'Unauthorized Role Escalation',
+      objective: 'Detects users being granted elevated roles such as root, dbAdmin, or userAdmin which could indicate privilege escalation by an attacker.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'database', 'privilege-escalation', 'role-change'],
+      requiredFields: ['timestamp', 'atype', 'users', 'roles', 'param_command', 'remote_ip'],
+      detectionLogic: 'Monitors for grantRoles or createUser audit events where the granted roles include administrative privileges (root, dbOwner, userAdminAnyDatabase, clusterAdmin). Unauthorized role grants are a primary method attackers use to establish persistence in MongoDB environments.',
+      falsePositives: ['DBA team performing legitimate role assignments during onboarding', 'Automated provisioning systems creating service accounts with required roles'],
+      tuningGuidance: 'Maintain a list of authorized DBAs who can grant admin roles. Alert on any role grant from non-DBA accounts. Correlate with change tickets for planned access changes.',
+      investigationWorkflow: '1. Identify who performed the role grant (source user) and from which IP\n2. Verify the role grant against approved change requests\n3. Check if the granting user account was itself recently compromised\n4. Review what the newly privileged account did after receiving elevated roles\n5. If unauthorized, immediately revoke the granted roles',
+      criblSearchQueries: [
+        {
+          name: 'Administrative role grants',
+          description: 'Detect grants of high-privilege roles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype == "grantRoles" OR atype == "createUser"\n| where roles matches regex "(?i)(root|dbOwner|userAdmin|clusterAdmin|dbAdminAnyDatabase)"\n| project timestamp, users, roles, remote_ip, param_command\n| order by timestamp desc'
+        },
+        {
+          name: 'Role changes over time',
+          description: 'Timeline of all role modification events',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("grantRoles", "revokeRoles", "createUser", "updateUser")\n| timestats span=1d count() by atype\n| order by timestamp desc'
+        },
+        {
+          name: 'Role grants from unusual sources',
+          description: 'Role modifications from IPs not typically used by DBAs',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype == "grantRoles"\n| summarize grant_count=count(), users_modified=makeset(users) by remote_ip\n| order by grant_count asc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-003',
+      name: 'Database Dropped or Collection Destroyed',
+      objective: 'Detects destructive operations such as dropping databases or collections which may indicate sabotage, ransomware, or malicious insider activity.',
+      severity: 'Critical',
+      mitre: ['T1485 - Data Destruction', 'T1561 - Disk Wipe'],
+      tags: ['security', 'database', 'data-destruction', 'ransomware'],
+      requiredFields: ['timestamp', 'atype', 'users', 'param_ns', 'param_command', 'remote_ip', 'result'],
+      detectionLogic: 'Identifies dropDatabase and dropCollection audit events that succeed (result == 0). Database destruction is a hallmark of MongoDB ransomware attacks where attackers drop all collections and leave ransom notes, or malicious insiders destroying data before departure.',
+      falsePositives: ['Scheduled cleanup of temporary or staging databases', 'Development/test environment maintenance', 'Database migration processes that drop old databases after verification'],
+      tuningGuidance: 'Tag production databases and alert on any drop operation against them. In non-production, still log but reduce severity. Never suppress drop alerts for databases containing customer data.',
+      investigationWorkflow: '1. Immediately verify which database/collection was dropped\n2. Check if this was a production or non-production namespace\n3. Identify the user and source IP — verify authorization\n4. Look for ransom notes in remaining collections\n5. Verify backup recency and initiate recovery if unauthorized\n6. Check for data exfiltration preceding the drop operation',
+      criblSearchQueries: [
+        {
+          name: 'Database and collection drops',
+          description: 'All successful drop operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype in ("dropDatabase", "dropCollection") AND result == 0\n| project timestamp, users, param_ns, remote_ip, atype\n| order by timestamp desc'
+        },
+        {
+          name: 'Drop operations by user',
+          description: 'Users performing destructive operations',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype in ("dropDatabase", "dropCollection", "dropIndex")\n| summarize drop_count=count(), namespaces=makeset(param_ns) by users\n| order by drop_count desc'
+        },
+        {
+          name: 'Activity before database drop',
+          description: 'All activity from the same user/IP in the hour before a drop',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype in ("dropDatabase", "dropCollection") AND result == 0\n| project timestamp, users, remote_ip, param_ns, atype, param_command\n| order by timestamp asc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-004',
+      name: 'Connection from Unauthorized Network',
+      objective: 'Detects MongoDB connections from IP addresses outside expected network ranges which may indicate unauthorized access or compromised credentials used externally.',
+      severity: 'High',
+      mitre: ['T1133 - External Remote Services', 'T1078 - Valid Accounts'],
+      tags: ['security', 'database', 'network', 'unauthorized-access'],
+      requiredFields: ['timestamp', 'atype', 'remote_ip', 'remote_port', 'local_ip', 'local_port', 'users'],
+      detectionLogic: 'Monitors authentication events and flags connections from remote_ip addresses not in the expected application server or DBA network ranges. MongoDB instances should only accept connections from known application tiers and administrative jump hosts.',
+      falsePositives: ['New application servers not yet added to the allowlist', 'DBA connecting from VPN with dynamic IP assignment', 'Cloud auto-scaling introducing new compute instances'],
+      tuningGuidance: 'Maintain an updated list of authorized CIDR ranges for application servers and DBA networks. Integrate with CMDB or cloud inventory for dynamic environments. Alert on any authentication from outside these ranges.',
+      investigationWorkflow: '1. Resolve the remote_ip to determine its ownership and geolocation\n2. Check if the IP belongs to a known cloud provider or corporate range\n3. Verify the user account used — is it a service account or human account?\n4. Check if authentication succeeded and what operations were performed\n5. If external and unauthorized, rotate credentials immediately',
+      criblSearchQueries: [
+        {
+          name: 'Connections by source IP',
+          description: 'All unique source IPs connecting to MongoDB',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype == "authenticate"\n| summarize connection_count=count(), users_list=makeset(users) by remote_ip\n| order by connection_count desc'
+        },
+        {
+          name: 'New source IPs not seen before',
+          description: 'First-time source IPs in the last 24 hours compared to 30-day baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype == "authenticate" AND result == 0\n| summarize first_seen=min(timestamp) by remote_ip\n| order by first_seen desc'
+        },
+        {
+          name: 'Non-standard port connections',
+          description: 'Connections using unusual remote ports that may indicate non-application traffic',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype == "authenticate"\n| summarize count() by remote_ip, remote_port, users\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-005',
+      name: 'Bulk Data Export or Collection Scan',
+      objective: 'Detects large-scale data retrieval operations that may indicate data exfiltration or unauthorized data harvesting from MongoDB collections.',
+      severity: 'High',
+      mitre: ['T1005 - Data from Local System', 'T1039 - Data from Network Shared Drive'],
+      tags: ['security', 'database', 'data-exfiltration', 'bulk-access'],
+      requiredFields: ['timestamp', 'atype', 'users', 'param_command', 'param_ns', 'remote_ip'],
+      detectionLogic: 'Monitors for audit events indicating full collection scans, large batch operations, or use of mongodump/mongoexport commands. Detection triggers on find operations without restrictive query filters on sensitive collections, or known export tool signatures in the param_command field.',
+      falsePositives: ['Scheduled backup processes using mongodump', 'ETL pipelines performing legitimate bulk reads', 'Analytics queries on reporting replicas'],
+      tuningGuidance: 'Allowlist backup service accounts and scheduled ETL job accounts. Focus on human accounts performing bulk operations. Alert on sensitive collections (PII, financial) at lower thresholds.',
+      investigationWorkflow: '1. Identify the collection being accessed and its data sensitivity classification\n2. Determine if the user account normally accesses this data\n3. Check the volume of data read versus normal baseline\n4. Verify no data was written to external destinations\n5. Correlate with network egress logs for data exfiltration indicators',
+      criblSearchQueries: [
+        {
+          name: 'Bulk read operations',
+          description: 'Large-scale data access patterns on sensitive collections',
+          query: 'dataset="$DATASET" earliest=-24h\n| where param_command matches regex "(?i)(find|aggregate|getmore|mongodump|mongoexport)"\n| summarize operation_count=count() by users, param_ns, remote_ip\n| where operation_count >= 100\n| order by operation_count desc'
+        },
+        {
+          name: 'Export tool usage',
+          description: 'Detection of mongodump or mongoexport tool signatures',
+          query: 'dataset="$DATASET" earliest=-7d\n| where param_command matches regex "(?i)(mongodump|mongoexport|mongorestore)"\n| project timestamp, users, param_ns, remote_ip, param_command\n| order by timestamp desc'
+        },
+        {
+          name: 'Unusual data access patterns',
+          description: 'Users accessing collections they do not normally query',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize collections_accessed=dcount(param_ns), namespaces=makeset(param_ns) by users\n| where collections_accessed >= 5\n| order by collections_accessed desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-006',
+      name: 'User Account Created Outside Change Window',
+      objective: 'Detects creation of new MongoDB user accounts outside approved maintenance windows which may indicate unauthorized persistence establishment.',
+      severity: 'Medium',
+      mitre: ['T1136 - Create Account', 'T1136.001 - Local Account'],
+      tags: ['security', 'database', 'persistence', 'account-creation'],
+      requiredFields: ['timestamp', 'atype', 'users', 'roles', 'param_command', 'remote_ip', 'result'],
+      detectionLogic: 'Identifies createUser events (atype: createUser) that succeed (result == 0) and correlates with approved change windows. Account creation outside maintenance periods or from unexpected source IPs warrants investigation as attackers commonly create backdoor accounts for persistence.',
+      falsePositives: ['Emergency account creation during incident response', 'Automated provisioning systems creating accounts outside standard windows', 'Time zone differences making legitimate changes appear off-hours'],
+      tuningGuidance: 'Define approved change windows in detection configuration. Allowlist provisioning system IPs and service accounts. Alert immediately on any manual account creation regardless of window.',
+      investigationWorkflow: '1. Verify the new account against approved provisioning requests\n2. Check the roles assigned — are they appropriate or overly permissive?\n3. Identify who created the account and from which IP\n4. Determine if the new account has been used since creation\n5. If unauthorized, disable the account and investigate the creator',
+      criblSearchQueries: [
+        {
+          name: 'New user account creation',
+          description: 'All successful user creation events',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype == "createUser" AND result == 0\n| project timestamp, users, roles, remote_ip, param_command\n| order by timestamp desc'
+        },
+        {
+          name: 'Account creation frequency',
+          description: 'Daily account creation trend to identify anomalies',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype == "createUser"\n| timestats span=1d count() by result\n| order by timestamp desc'
+        },
+        {
+          name: 'Newly created account activity',
+          description: 'Track what newly created accounts do after creation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype == "createUser" AND result == 0\n| project new_user=users\n| join kind=inner (dataset="$DATASET" earliest=-7d | where atype == "authenticate") on $left.new_user == $right.users\n| summarize login_count=count() by users, remote_ip'
+        }
+      ]
+    },
+    {
+      id: 'mdb-sec-007',
+      name: 'Audit Configuration Tampering',
+      objective: 'Detects modifications to MongoDB audit configuration which may indicate an attacker attempting to cover their tracks by disabling or altering audit logging.',
+      severity: 'Medium',
+      mitre: ['T1562.002 - Disable Windows Event Logging', 'T1070 - Indicator Removal'],
+      tags: ['security', 'database', 'defense-evasion', 'audit-tampering'],
+      requiredFields: ['timestamp', 'atype', 'users', 'param_command', 'remote_ip', 'result'],
+      detectionLogic: 'Monitors for audit events related to configuration changes, particularly those affecting audit settings, logging parameters, or authentication mechanisms. Changes to setParameter, shutdown, or audit filter modifications are flagged as they may indicate an attacker disabling audit trails.',
+      falsePositives: ['DBA performing authorized configuration changes during maintenance', 'MongoDB version upgrades requiring configuration modifications', 'Performance tuning adjustments to audit verbosity'],
+      tuningGuidance: 'Any audit configuration change should generate an alert regardless of source. Correlate with change management systems. Maintain separate integrity monitoring for audit log files.',
+      investigationWorkflow: '1. Verify the configuration change against approved change tickets\n2. Determine if audit logging is still operational after the change\n3. Check for gaps in audit log continuity\n4. Review what the user did between disabling and re-enabling audit\n5. If unauthorized, restore audit configuration and review logs for the gap period',
+      criblSearchQueries: [
+        {
+          name: 'Configuration change events',
+          description: 'All MongoDB configuration modifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("setParameter", "shutdown", "replSetReconfig", "enableSharding")\n| project timestamp, users, atype, param_command, remote_ip\n| order by timestamp desc'
+        },
+        {
+          name: 'Audit-related configuration changes',
+          description: 'Changes specifically targeting audit settings',
+          query: 'dataset="$DATASET" earliest=-30d\n| where param_command matches regex "(?i)(audit|log|setParameter)"\n| summarize count() by atype, users\n| order by count_ desc'
+        },
+        {
+          name: 'Configuration changes by time of day',
+          description: 'Identify off-hours configuration changes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype in ("setParameter", "shutdown")\n| extend hour=hourofday(timestamp)\n| summarize count() by hour, users\n| order by hour asc'
+        }
+      ]
+    }
+  ],
+  'postgresql-audit': [
+    {
+      id: 'pga-sec-001',
+      name: 'Brute Force Authentication Attempts',
+      objective: 'Detects repeated failed authentication attempts to PostgreSQL indicating credential guessing or brute force attacks.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.003 - Password Spraying'],
+      tags: ['security', 'database', 'authentication', 'brute-force'],
+      requiredFields: ['log_time', 'user_name', 'connection_from', 'command_tag', 'application_name'],
+      detectionLogic: 'Monitors for multiple authentication failure events from a single connection_from address within a short timeframe. PostgreSQL logs authentication failures with specific error codes. Threshold of 10+ failures in 5 minutes from one source indicates automated attack.',
+      falsePositives: ['Application connection pool failures during deployment', 'Password rotation causing transient failures from legitimate services', 'Misconfigured pg_hba.conf rejecting valid connections'],
+      tuningGuidance: 'Adjust threshold based on environment size. Allowlist known application server IPs. Monitor for password spray patterns (few attempts per user, many users) separately from brute force (many attempts, one user).',
+      investigationWorkflow: '1. Identify the source IP from connection_from field\n2. Determine if targeted user accounts are service accounts or human accounts\n3. Check if any authentication eventually succeeded from the same source\n4. Review pg_hba.conf for any recent changes that may explain failures\n5. Correlate with network IDS alerts from the same source',
+      criblSearchQueries: [
+        {
+          name: 'Authentication failures by source',
+          description: 'Count failed auth attempts per source IP',
+          query: 'dataset="$DATASET" earliest=-1h\n| where command_tag == "authentication" AND statement matches regex "(?i)failed"\n| summarize failure_count=count() by connection_from\n| where failure_count >= 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Targeted accounts in brute force',
+          description: 'Which accounts are being targeted',
+          query: 'dataset="$DATASET" earliest=-1h\n| where command_tag == "authentication" AND statement matches regex "(?i)failed"\n| summarize failure_count=count() by user_name, connection_from\n| order by failure_count desc'
+        },
+        {
+          name: 'Auth failure timeline',
+          description: 'Timeline of authentication failures for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-4h\n| where command_tag == "authentication" AND statement matches regex "(?i)failed"\n| timestats span=5m count() by connection_from\n| order by log_time desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-002',
+      name: 'Privilege Escalation via GRANT or ALTER ROLE',
+      objective: 'Detects granting of superuser privileges or sensitive role modifications that may indicate unauthorized privilege escalation.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078 - Valid Accounts'],
+      tags: ['security', 'database', 'privilege-escalation', 'role-modification'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'statement', 'command_tag', 'connection_from'],
+      detectionLogic: 'Monitors for GRANT and ALTER ROLE statements that assign superuser, CREATEROLE, CREATEDB, or other elevated privileges. Also detects grants of pg_read_all_data or pg_write_all_data roles. Privilege escalation is a key attacker objective for database persistence and data access.',
+      falsePositives: ['DBA provisioning new users with approved elevated access', 'Application deployment scripts creating service accounts with required privileges', 'Database migration tools requiring temporary elevated access'],
+      tuningGuidance: 'Maintain allowlist of authorized DBA accounts. Alert on any SUPERUSER grant regardless of source. Correlate with change management tickets.',
+      investigationWorkflow: '1. Verify the GRANT/ALTER ROLE against approved change requests\n2. Identify who executed the statement and from which source\n3. Check if the elevated account has been used since the privilege change\n4. Review the granting user account for signs of compromise\n5. If unauthorized, revoke privileges immediately and rotate credentials',
+      criblSearchQueries: [
+        {
+          name: 'Privilege escalation statements',
+          description: 'GRANT and ALTER ROLE statements granting elevated access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where command_tag in ("GRANT", "ALTER ROLE")\n| where statement matches regex "(?i)(superuser|createrole|createdb|pg_read_all_data|pg_write_all_data)"\n| project log_time, user_name, connection_from, statement\n| order by log_time desc'
+        },
+        {
+          name: 'Role modification history',
+          description: 'All role changes over time for trend analysis',
+          query: 'dataset="$DATASET" earliest=-30d\n| where command_tag in ("GRANT", "ALTER ROLE", "CREATE ROLE")\n| timestats span=1d count() by command_tag\n| order by log_time desc'
+        },
+        {
+          name: 'Privilege grants by user',
+          description: 'Who is granting elevated privileges most frequently',
+          query: 'dataset="$DATASET" earliest=-30d\n| where command_tag in ("GRANT", "ALTER ROLE")\n| where statement matches regex "(?i)(superuser|createrole|createdb)"\n| summarize count() by user_name, connection_from\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-003',
+      name: 'Database or Table Dropped',
+      objective: 'Detects destructive DROP DATABASE or DROP TABLE operations that may indicate data destruction, ransomware, or malicious insider activity.',
+      severity: 'Critical',
+      mitre: ['T1485 - Data Destruction', 'T1489 - Service Stop'],
+      tags: ['security', 'database', 'data-destruction', 'destructive-operation'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'statement', 'command_tag', 'object_name', 'object_type', 'connection_from'],
+      detectionLogic: 'Identifies DROP DATABASE and DROP TABLE statements in the audit log. These destructive operations permanently remove data and are high-impact events. In production environments, drops should be extremely rare and always pre-approved.',
+      falsePositives: ['Scheduled cleanup of temporary tables', 'Database migration removing deprecated schemas', 'Test/development database lifecycle management'],
+      tuningGuidance: 'Any DROP operation on production databases should alert at Critical. Tag databases by environment (prod/staging/dev) and adjust severity accordingly. Never suppress DROP DATABASE alerts.',
+      investigationWorkflow: '1. Identify which database or table was dropped and its environment\n2. Verify if this was a production or non-production object\n3. Check the user and source IP against authorized DBA lists\n4. Verify backup recoverability — when was last backup taken?\n5. Look for data exfiltration events preceding the drop\n6. Initiate recovery from backup if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'DROP operations',
+          description: 'All destructive DROP statements',
+          query: 'dataset="$DATASET" earliest=-24h\n| where command_tag in ("DROP DATABASE", "DROP TABLE", "DROP SCHEMA")\n| project log_time, user_name, database_name, object_name, statement, connection_from\n| order by log_time desc'
+        },
+        {
+          name: 'Destructive operations trend',
+          description: 'Frequency of destructive operations over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where command_tag matches regex "(?i)DROP"\n| timestats span=1d count() by command_tag\n| order by log_time desc'
+        },
+        {
+          name: 'Pre-drop activity by user',
+          description: 'What the user did before dropping the object',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user_name == "SUSPECT_USER"\n| project log_time, command_tag, statement, database_name\n| order by log_time asc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-004',
+      name: 'Sensitive Data Access from New Application',
+      objective: 'Detects queries against sensitive tables from application names not previously seen, indicating potential unauthorized application access or credential theft.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1530 - Data from Cloud Storage Object'],
+      tags: ['security', 'database', 'data-access', 'application-anomaly'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'application_name', 'statement', 'connection_from'],
+      detectionLogic: 'Monitors the application_name field for new or unexpected application identifiers accessing the database. Legitimate applications have consistent application_name values. A new application name querying sensitive tables may indicate stolen credentials being used from an unauthorized tool (psql, DBeaver, custom scripts).',
+      falsePositives: ['New application deployment accessing database for first time', 'DBA using ad-hoc query tools for troubleshooting', 'Updated application version changing its reported application_name'],
+      tuningGuidance: 'Build baseline of known application_name values over 30 days. Alert on any new application_name accessing production databases. Maintain allowlist for approved DBA tools.',
+      investigationWorkflow: '1. Identify the unexpected application_name and research what tool it represents\n2. Check the connection_from IP — is it from expected application infrastructure?\n3. Review what data was queried — focus on PII or sensitive tables\n4. Verify with the application team if a new service was deployed\n5. If unauthorized, block the source and rotate database credentials',
+      criblSearchQueries: [
+        {
+          name: 'Unique application names',
+          description: 'All distinct application identifiers connecting to the database',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(log_time), query_count=count() by application_name, user_name\n| order by first_seen desc'
+        },
+        {
+          name: 'New application names',
+          description: 'Application names seen in last 24h not seen in prior 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by application_name, connection_from, user_name\n| where application_name != ""\n| order by count_ asc'
+        },
+        {
+          name: 'Queries from suspicious applications',
+          description: 'Statements executed by unexpected application identifiers',
+          query: 'dataset="$DATASET" earliest=-24h\n| where application_name matches regex "(?i)(psql|dbeaver|pgadmin|datagrip|python|jdbc)"\n| project log_time, user_name, application_name, connection_from, statement\n| order by log_time desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-005',
+      name: 'SQL Injection Indicators in Queries',
+      objective: 'Detects SQL injection patterns in logged statements that indicate application-layer attacks attempting to manipulate database queries.',
+      severity: 'High',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1059.004 - Unix Shell'],
+      tags: ['security', 'database', 'sql-injection', 'application-attack'],
+      requiredFields: ['log_time', 'user_name', 'statement', 'connection_from', 'application_name', 'database_name'],
+      detectionLogic: 'Scans statement field for common SQL injection patterns including UNION SELECT, OR 1=1, comment sequences (--), stacked queries with semicolons followed by DROP/INSERT/UPDATE, and time-based blind injection using pg_sleep. These patterns in application-generated queries indicate exploitation attempts.',
+      falsePositives: ['Legitimate queries that happen to contain injection-like patterns', 'ORM-generated queries with complex WHERE clauses', 'Database testing tools running injection test suites'],
+      tuningGuidance: 'Focus on queries from web application connections. Allowlist known ORM patterns. Combine with WAF logs for corroboration. Reduce false positives by requiring multiple injection indicators in same statement.',
+      investigationWorkflow: '1. Examine the full statement for injection payload analysis\n2. Identify the source application and connection_from IP\n3. Determine if the injection succeeded (check for error vs. result)\n4. Review WAF/application logs for the corresponding HTTP request\n5. Check if data was exfiltrated via the injection\n6. Patch the vulnerable application endpoint',
+      criblSearchQueries: [
+        {
+          name: 'SQL injection patterns',
+          description: 'Statements containing common injection signatures',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|pg_sleep|;\\s*(drop|insert|update|delete)|information_schema)"\n| project log_time, user_name, connection_from, application_name, statement\n| order by log_time desc'
+        },
+        {
+          name: 'Injection attempts by source',
+          description: 'Source IPs most frequently associated with injection patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|pg_sleep)"\n| summarize attempt_count=count() by connection_from, user_name\n| order by attempt_count desc'
+        },
+        {
+          name: 'Injection attempt timeline',
+          description: 'Time distribution of injection attempts for campaign analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|pg_sleep|information_schema)"\n| timestats span=1h count() by connection_from\n| order by log_time desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-006',
+      name: 'Extension Installation or Function Creation',
+      objective: 'Detects installation of PostgreSQL extensions or creation of untrusted language functions which can be used for code execution and privilege escalation.',
+      severity: 'Medium',
+      mitre: ['T1505.001 - SQL Stored Procedures', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'database', 'code-execution', 'persistence'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'statement', 'command_tag', 'connection_from'],
+      detectionLogic: 'Monitors for CREATE EXTENSION, CREATE FUNCTION with untrusted languages (plpythonu, plperlu, plsh), and COPY TO/FROM PROGRAM statements. These capabilities allow execution of operating system commands from within PostgreSQL and are common post-exploitation techniques.',
+      falsePositives: ['DBA installing approved extensions during planned maintenance', 'Application deployment creating required stored procedures', 'Database migration adding new function definitions'],
+      tuningGuidance: 'Maintain allowlist of approved extensions. Alert on any untrusted language function creation. COPY TO/FROM PROGRAM should always alert at high severity.',
+      investigationWorkflow: '1. Identify what extension or function was created\n2. Check if untrusted languages (plpythonu, plperlu) are involved\n3. Review the function body for OS command execution\n4. Verify the change against approved deployment tickets\n5. If unauthorized, drop the function/extension and investigate the user account',
+      criblSearchQueries: [
+        {
+          name: 'Extension and function creation',
+          description: 'All extension installations and function creations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where command_tag in ("CREATE EXTENSION", "CREATE FUNCTION") OR statement matches regex "(?i)copy.*(from|to)\\s+program"\n| project log_time, user_name, database_name, statement, connection_from\n| order by log_time desc'
+        },
+        {
+          name: 'Untrusted language functions',
+          description: 'Functions using untrusted languages that can execute OS commands',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)(plpythonu|plperlu|plsh|plpython3u)"\n| project log_time, user_name, database_name, statement, connection_from\n| order by log_time desc'
+        },
+        {
+          name: 'COPY PROGRAM usage',
+          description: 'Detect COPY TO/FROM PROGRAM for OS command execution',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)copy.*(from|to)\\s+program"\n| project log_time, user_name, database_name, statement, connection_from\n| order by log_time desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-sec-007',
+      name: 'Bulk Data Export via COPY Command',
+      objective: 'Detects large-scale data export using COPY TO statements which may indicate data exfiltration from PostgreSQL databases.',
+      severity: 'Medium',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1005 - Data from Local System'],
+      tags: ['security', 'database', 'data-exfiltration', 'bulk-export'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'statement', 'command_tag', 'connection_from', 'session_id'],
+      detectionLogic: 'Monitors for COPY TO statements that export data to files or stdout, particularly targeting sensitive tables. Also detects pg_dump activity patterns (multiple sequential COPY operations in a single session). Large data exports from interactive sessions rather than scheduled jobs warrant investigation.',
+      falsePositives: ['Scheduled database backups using pg_dump', 'ETL processes exporting data to data warehouse', 'Reporting systems extracting data for analytics'],
+      tuningGuidance: 'Allowlist scheduled backup job user accounts and source IPs. Focus on interactive sessions performing COPY operations. Alert on exports from tables classified as containing PII or sensitive data.',
+      investigationWorkflow: '1. Identify which tables were exported and their data sensitivity\n2. Check the destination — file path or stdout piped to network\n3. Verify the user and session against approved export jobs\n4. Calculate approximate data volume exported\n5. Check if the exported data left the network via DLP or network logs',
+      criblSearchQueries: [
+        {
+          name: 'COPY TO operations',
+          description: 'All data export operations via COPY',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)copy\\s+.*\\s+to\\s+"\n| project log_time, user_name, database_name, statement, connection_from, session_id\n| order by log_time desc'
+        },
+        {
+          name: 'Bulk export sessions',
+          description: 'Sessions with multiple COPY operations indicating pg_dump',
+          query: 'dataset="$DATASET" earliest=-24h\n| where command_tag == "COPY"\n| summarize copy_count=count() by session_id, user_name, connection_from\n| where copy_count >= 5\n| order by copy_count desc'
+        },
+        {
+          name: 'Export activity by user trend',
+          description: 'Data export patterns over time per user',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)copy\\s+.*\\s+to\\s+"\n| timestats span=1d count() by user_name\n| order by log_time desc'
+        }
+      ]
+    }
+  ],
+  'snowflake-audit': [
+    {
+      id: 'sfa-sec-001',
+      name: 'Brute Force Login Attempts',
+      objective: 'Detects repeated failed login attempts to Snowflake accounts indicating credential brute force or credential stuffing attacks.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.004 - Credential Stuffing'],
+      tags: ['security', 'cloud-data', 'authentication', 'brute-force'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'EVENT_TYPE', 'IS_SUCCESS', 'ERROR_CODE'],
+      detectionLogic: 'Monitors for multiple failed login events (IS_SUCCESS = "NO") from a single CLIENT_IP or against a single USER_NAME within a short timeframe. Snowflake accounts are high-value targets due to the sensitive data they contain. Threshold of 10+ failures in 10 minutes from one source indicates automated attack.',
+      falsePositives: ['Expired service account credentials causing repeated failures', 'SSO configuration issues during identity provider changes', 'User forgetting password and retrying multiple times'],
+      tuningGuidance: 'Adjust threshold based on user population. Differentiate between single-user brute force (many attempts, one user) and password spray (few attempts per user, many users). Allowlist known SSO/SCIM integration IPs.',
+      investigationWorkflow: '1. Determine if the attack targets one user (brute force) or many (spray)\n2. Check if any login eventually succeeded from the same CLIENT_IP\n3. Review the targeted USER_NAME accounts for business criticality\n4. Check CLIENT_IP reputation in threat intelligence\n5. If external, consider IP blocking at network level',
+      criblSearchQueries: [
+        {
+          name: 'Failed logins by source IP',
+          description: 'Count failed authentication attempts per source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "NO"\n| summarize failure_count=count() by CLIENT_IP\n| where failure_count >= 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Targeted user accounts',
+          description: 'Which Snowflake accounts are being targeted',
+          query: 'dataset="$DATASET" earliest=-1h\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "NO"\n| summarize failure_count=count(), source_ips=makeset(CLIENT_IP) by USER_NAME\n| order by failure_count desc'
+        },
+        {
+          name: 'Success after failure pattern',
+          description: 'Detect successful login following multiple failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EVENT_TYPE == "LOGIN"\n| summarize successes=countif(IS_SUCCESS == "YES"), failures=countif(IS_SUCCESS == "NO") by CLIENT_IP, USER_NAME\n| where failures >= 5 AND successes >= 1\n| order by failures desc'
+        },
+        {
+          name: 'Login failure error code analysis',
+          description: 'Breakdown of failure reasons for attack characterization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "NO"\n| summarize count() by ERROR_CODE, CLIENT_IP\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-002',
+      name: 'Privileged Role Assumption',
+      objective: 'Detects users assuming highly privileged roles such as ACCOUNTADMIN, SECURITYADMIN, or SYSADMIN which grants extensive access to Snowflake resources.',
+      severity: 'Critical',
+      mitre: ['T1078.004 - Cloud Accounts', 'T1098 - Account Manipulation'],
+      tags: ['security', 'cloud-data', 'privilege-escalation', 'role-usage'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'ROLE_NAME', 'CLIENT_IP', 'EVENT_TYPE', 'IS_SUCCESS'],
+      detectionLogic: 'Monitors for users switching to or using ACCOUNTADMIN, SECURITYADMIN, or SYSADMIN roles. These roles provide unrestricted access and their use should be rare and well-controlled. Non-routine use of these roles often indicates compromised admin credentials or insider threat activity.',
+      falsePositives: ['Designated Snowflake administrators performing routine maintenance', 'Automated account provisioning systems using admin roles', 'Initial setup and configuration activities'],
+      tuningGuidance: 'Maintain a short list of users authorized to use ACCOUNTADMIN. Alert on any non-approved user assuming admin roles. Even for approved users, flag usage outside business hours.',
+      investigationWorkflow: '1. Verify the USER_NAME is authorized for the privileged role\n2. Check the CLIENT_IP — is it from expected admin locations?\n3. Review what queries were executed under the admin role\n4. Determine if the role assumption was during business hours\n5. Check if any account modifications or grants were made',
+      criblSearchQueries: [
+        {
+          name: 'Admin role usage',
+          description: 'All usage of highly privileged roles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ROLE_NAME in ("ACCOUNTADMIN", "SECURITYADMIN", "SYSADMIN")\n| summarize event_count=count() by USER_NAME, ROLE_NAME, CLIENT_IP\n| order by event_count desc'
+        },
+        {
+          name: 'Admin role usage timeline',
+          description: 'When are admin roles being used — detect off-hours usage',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ROLE_NAME in ("ACCOUNTADMIN", "SECURITYADMIN", "SYSADMIN")\n| timestats span=1h count() by ROLE_NAME\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Queries executed as admin',
+          description: 'What operations were performed under admin roles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ROLE_NAME == "ACCOUNTADMIN" AND QUERY_TEXT != ""\n| project EVENT_TIMESTAMP, USER_NAME, QUERY_TEXT, CLIENT_IP\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-003',
+      name: 'Data Exfiltration via Large Query Results',
+      objective: 'Detects unusually large data retrievals that may indicate data exfiltration from Snowflake warehouses.',
+      severity: 'High',
+      mitre: ['T1567 - Exfiltration Over Web Service', 'T1005 - Data from Local System'],
+      tags: ['security', 'cloud-data', 'data-exfiltration', 'bulk-access'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'QUERY_TEXT', 'DATABASE_NAME', 'ROLE_NAME', 'CLIENT_IP', 'WAREHOUSE_NAME'],
+      detectionLogic: 'Identifies queries that select large volumes of data, particularly those using SELECT * without WHERE clauses, COPY INTO commands to external stages, or CREATE STAGE pointing to external cloud storage. These patterns can indicate systematic data exfiltration from Snowflake.',
+      falsePositives: ['Legitimate data pipeline exports to cloud storage', 'BI tools pulling large datasets for reporting', 'Data sharing operations to authorized partners'],
+      tuningGuidance: 'Baseline normal query volumes per user and role. Alert when users exceed 3x their normal data retrieval. Focus on COPY INTO external stage operations and CREATE STAGE commands to unknown locations.',
+      investigationWorkflow: '1. Analyze the QUERY_TEXT to understand what data was accessed\n2. Check if the destination is an authorized external stage\n3. Review the USER_NAME and ROLE_NAME for authorization\n4. Calculate the volume of data retrieved\n5. Correlate with DLP or cloud storage access logs for the destination',
+      criblSearchQueries: [
+        {
+          name: 'Large data export queries',
+          description: 'COPY INTO and bulk SELECT operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where QUERY_TEXT matches regex "(?i)(copy\\s+into\\s+@|create\\s+stage|select\\s+\\*\\s+from)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, DATABASE_NAME, QUERY_TEXT, CLIENT_IP\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'External stage operations',
+          description: 'Creation or use of external stages for data export',
+          query: 'dataset="$DATASET" earliest=-7d\n| where QUERY_TEXT matches regex "(?i)(create\\s+(or\\s+replace\\s+)?stage|copy\\s+into\\s+@.*s3://|copy\\s+into\\s+@.*azure://|copy\\s+into\\s+@.*gcs://)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Bulk data access by user',
+          description: 'Users with highest data access volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| where QUERY_TEXT matches regex "(?i)select"\n| summarize query_count=count() by USER_NAME, DATABASE_NAME, ROLE_NAME\n| order by query_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-004',
+      name: 'User Account Modifications',
+      objective: 'Detects creation, alteration, or deletion of Snowflake user accounts and network policies which may indicate persistence establishment or defense evasion.',
+      severity: 'High',
+      mitre: ['T1136 - Create Account', 'T1098 - Account Manipulation'],
+      tags: ['security', 'cloud-data', 'persistence', 'account-management'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'QUERY_TEXT', 'ROLE_NAME', 'CLIENT_IP', 'IS_SUCCESS'],
+      detectionLogic: 'Monitors for CREATE USER, ALTER USER, DROP USER, and network policy modifications. Attackers with admin access commonly create backdoor accounts or modify existing accounts to maintain persistence. Also detects disabling of MFA or modification of authentication policies.',
+      falsePositives: ['IT provisioning new users as part of onboarding', 'Automated SCIM provisioning from identity provider', 'Routine password resets and MFA enrollment'],
+      tuningGuidance: 'Allowlist SCIM provisioning service accounts. Alert on any user creation from non-SCIM sources. Always alert on MFA disable or network policy changes regardless of source.',
+      investigationWorkflow: '1. Determine what account modification was made (create/alter/drop)\n2. Verify the change against HR/IT provisioning workflows\n3. Check if MFA was disabled or authentication policy weakened\n4. Review the ROLE_NAME used — only SECURITYADMIN should manage users\n5. If unauthorized, disable the created account and revert changes',
+      criblSearchQueries: [
+        {
+          name: 'User account changes',
+          description: 'All user creation, modification, and deletion events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where QUERY_TEXT matches regex "(?i)(create\\s+user|alter\\s+user|drop\\s+user)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT, CLIENT_IP, IS_SUCCESS\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Network policy modifications',
+          description: 'Changes to network policies that control access',
+          query: 'dataset="$DATASET" earliest=-7d\n| where QUERY_TEXT matches regex "(?i)(create\\s+network\\s+policy|alter\\s+network\\s+policy|drop\\s+network\\s+policy)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT, CLIENT_IP\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'MFA and auth policy changes',
+          description: 'Modifications to multi-factor authentication settings',
+          query: 'dataset="$DATASET" earliest=-30d\n| where QUERY_TEXT matches regex "(?i)(mfa|multi.factor|ext_authn_duo|password_policy)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-005',
+      name: 'Login from Anomalous Geographic Location',
+      objective: 'Detects successful logins from IP addresses not previously associated with a user account, indicating potential credential compromise.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'cloud-data', 'authentication', 'impossible-travel'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'EVENT_TYPE', 'IS_SUCCESS'],
+      detectionLogic: 'Identifies successful logins where the CLIENT_IP has not been previously associated with the USER_NAME in the past 30 days. New IP addresses for established users may indicate credential compromise, especially when combined with unusual access patterns or timing.',
+      falsePositives: ['Users traveling and connecting from hotel/airport networks', 'VPN changes providing different exit IPs', 'Home IP address changes from ISP reassignment'],
+      tuningGuidance: 'Build per-user IP baseline over 30+ days. Weight alerts by number of prior IPs (users who always connect from one IP are higher fidelity). Combine with access pattern analysis for better signal.',
+      investigationWorkflow: '1. Geolocate the new CLIENT_IP and compare to user normal locations\n2. Check if the user has other recent activity from their normal IP (impossible travel)\n3. Review what operations were performed from the new IP\n4. Contact the user to verify if the login was legitimate\n5. If unconfirmed, force session termination and password reset',
+      criblSearchQueries: [
+        {
+          name: 'New IPs per user',
+          description: 'Users logging in from previously unseen IP addresses',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "YES"\n| summarize first_seen=min(EVENT_TIMESTAMP) by USER_NAME, CLIENT_IP\n| order by first_seen desc'
+        },
+        {
+          name: 'User IP diversity',
+          description: 'Number of distinct IPs per user for anomaly scoring',
+          query: 'dataset="$DATASET" earliest=-30d\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "YES"\n| summarize ip_count=dcount(CLIENT_IP), ips=makeset(CLIENT_IP) by USER_NAME\n| order by ip_count desc'
+        },
+        {
+          name: 'Concurrent sessions from different IPs',
+          description: 'Users with overlapping sessions from multiple IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EVENT_TYPE == "LOGIN" AND IS_SUCCESS == "YES"\n| summarize ip_count=dcount(CLIENT_IP), ips=makeset(CLIENT_IP) by USER_NAME, bin(EVENT_TIMESTAMP, 1h)\n| where ip_count >= 2\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-006',
+      name: 'Warehouse or Resource Abuse',
+      objective: 'Detects creation of large warehouses or resumption of suspended warehouses by non-admin users which may indicate cryptomining or resource abuse.',
+      severity: 'Medium',
+      mitre: ['T1496 - Resource Hijacking', 'T1578 - Modify Cloud Compute Infrastructure'],
+      tags: ['security', 'cloud-data', 'resource-abuse', 'cryptomining'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'QUERY_TEXT', 'ROLE_NAME', 'WAREHOUSE_NAME', 'IS_SUCCESS'],
+      detectionLogic: 'Monitors for CREATE WAREHOUSE, ALTER WAREHOUSE RESUME, or warehouse size modifications (scaling up to X-Large or larger). Compromised Snowflake accounts can be abused for compute-intensive operations like cryptomining at the organization cost. Unexpected warehouse creation or sizing changes warrant investigation.',
+      falsePositives: ['Data engineering team creating warehouses for new pipelines', 'Auto-scaling configurations resuming warehouses during peak hours', 'Planned warehouse upgrades for performance testing'],
+      tuningGuidance: 'Allowlist roles authorized to create/modify warehouses (typically SYSADMIN). Alert on any warehouse creation by non-admin roles. Monitor for warehouses running queries not associated with business workloads.',
+      investigationWorkflow: '1. Identify what warehouse was created or modified\n2. Check the USER_NAME and ROLE_NAME authorization\n3. Review queries executed on the warehouse — are they legitimate business queries?\n4. Calculate cost implications of the warehouse size\n5. If unauthorized, suspend the warehouse immediately',
+      criblSearchQueries: [
+        {
+          name: 'Warehouse creation and modification',
+          description: 'All warehouse provisioning and scaling operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where QUERY_TEXT matches regex "(?i)(create\\s+warehouse|alter\\s+warehouse.*(resume|size))"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT, IS_SUCCESS\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Large warehouse operations',
+          description: 'Warehouses scaled to large or X-large sizes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where QUERY_TEXT matches regex "(?i)(x_large|xxlarge|4x_large|warehouse_size\\s*=)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Warehouse usage by role',
+          description: 'Which roles are consuming warehouse resources',
+          query: 'dataset="$DATASET" earliest=-7d\n| where WAREHOUSE_NAME != ""\n| summarize query_count=count() by WAREHOUSE_NAME, ROLE_NAME, USER_NAME\n| order by query_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-sec-007',
+      name: 'Data Sharing Configuration Changes',
+      objective: 'Detects creation or modification of data shares that expose organizational data to external Snowflake accounts, a potential data leak vector.',
+      severity: 'Critical',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'cloud-data', 'data-sharing', 'exfiltration'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'QUERY_TEXT', 'ROLE_NAME', 'DATABASE_NAME', 'CLIENT_IP', 'IS_SUCCESS'],
+      detectionLogic: 'Monitors for CREATE SHARE, ALTER SHARE, and GRANT statements that add databases/schemas/tables to shares or add accounts to shares. Snowflake data sharing can expose large volumes of data to external parties with a single command and is a high-risk exfiltration vector.',
+      falsePositives: ['Authorized data sharing with business partners', 'Internal data mesh sharing between organizational accounts', 'Snowflake Marketplace listing management'],
+      tuningGuidance: 'Any share creation or modification should alert. Maintain registry of approved share configurations. Alert at Critical when external account IDs are added as consumers.',
+      investigationWorkflow: '1. Identify what share was created or modified\n2. Determine what data objects were added to the share\n3. Check which consumer accounts were granted access\n4. Verify the share against approved data sharing agreements\n5. If unauthorized, revoke the share immediately and audit what was accessed',
+      criblSearchQueries: [
+        {
+          name: 'Share creation and modification',
+          description: 'All data share operations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where QUERY_TEXT matches regex "(?i)(create\\s+share|alter\\s+share|grant.*to\\s+share)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT, CLIENT_IP, IS_SUCCESS\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Consumer account additions',
+          description: 'External accounts being granted access to shares',
+          query: 'dataset="$DATASET" earliest=-30d\n| where QUERY_TEXT matches regex "(?i)(alter\\s+share.*add\\s+accounts|set\\s+accounts)"\n| project EVENT_TIMESTAMP, USER_NAME, ROLE_NAME, QUERY_TEXT\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Share operations by user',
+          description: 'Users managing data shares',
+          query: 'dataset="$DATASET" earliest=-30d\n| where QUERY_TEXT matches regex "(?i)(share)"\n| summarize share_ops=count() by USER_NAME, ROLE_NAME\n| order by share_ops desc'
+        },
+        {
+          name: 'Objects added to shares',
+          description: 'Databases and schemas being shared externally',
+          query: 'dataset="$DATASET" earliest=-30d\n| where QUERY_TEXT matches regex "(?i)(grant.*(select|usage).*to\\s+share)"\n| project EVENT_TIMESTAMP, USER_NAME, QUERY_TEXT, DATABASE_NAME\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    }
+  ],
+  'mssql-audit': [
+    {
+      id: 'msa-sec-001',
+      name: 'Brute Force Login Attempts',
+      objective: 'Detects repeated failed SQL Server authentication attempts indicating brute force attacks against database accounts.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing'],
+      tags: ['security', 'database', 'authentication', 'brute-force'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'client_ip', 'succeeded', 'application_name'],
+      detectionLogic: 'Monitors for multiple failed login events (action_id LGFL or succeeded = 0 on login actions) from a single client_ip within a short timeframe. SQL Server is frequently targeted for credential attacks, especially when SQL Authentication is enabled alongside Windows Authentication.',
+      falsePositives: ['Application connection string misconfiguration', 'Service account password expiration causing repeated failures', 'Legacy applications with hardcoded expired credentials'],
+      tuningGuidance: 'Set threshold at 10+ failures in 5 minutes per source IP. Differentiate SQL auth failures from Windows auth failures. Allowlist known application servers with connection pool retry behavior.',
+      investigationWorkflow: '1. Identify the source client_ip and determine if internal or external\n2. Check which server_principal_name accounts were targeted\n3. Determine if any login eventually succeeded (credentials compromised)\n4. Review the application_name for tool identification\n5. If external, implement IP blocking and investigate exposure',
+      criblSearchQueries: [
+        {
+          name: 'Login failures by source',
+          description: 'Failed authentication attempts grouped by source IP',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action_id == "LGFL" OR (action_id == "LGIF" AND succeeded == 0)\n| summarize failure_count=count() by client_ip\n| where failure_count >= 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Targeted accounts',
+          description: 'Which SQL accounts are being attacked',
+          query: 'dataset="$DATASET" earliest=-1h\n| where succeeded == 0 AND action_id matches regex "LG"\n| summarize failure_count=count() by server_principal_name, client_ip\n| order by failure_count desc'
+        },
+        {
+          name: 'Success after failure',
+          description: 'Detect successful login following brute force attempts',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action_id matches regex "LG"\n| summarize successes=countif(succeeded == 1), failures=countif(succeeded == 0) by client_ip, server_principal_name\n| where failures >= 5 AND successes >= 1\n| order by failures desc'
+        },
+        {
+          name: 'Login failure timeline',
+          description: 'Time pattern of failures for attack characterization',
+          query: 'dataset="$DATASET" earliest=-4h\n| where succeeded == 0 AND action_id matches regex "LG"\n| timestats span=5m count() by client_ip\n| order by event_time desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-002',
+      name: 'Privilege Escalation via Server Role Grant',
+      objective: 'Detects granting of sysadmin or other high-privilege server roles which indicates privilege escalation or unauthorized access provisioning.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078 - Valid Accounts'],
+      tags: ['security', 'database', 'privilege-escalation', 'role-grant'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'statement', 'client_ip', 'succeeded'],
+      detectionLogic: 'Monitors for ALTER SERVER ROLE ADD MEMBER and sp_addsrvrolemember statements targeting sysadmin, serveradmin, securityadmin, or dbcreator roles. Sysadmin grants provide complete control over the SQL Server instance and are the primary target for database privilege escalation.',
+      falsePositives: ['DBA team provisioning new team members with approved elevated access', 'SQL Server installation or upgrade processes requiring temp admin', 'Disaster recovery procedures requiring emergency access'],
+      tuningGuidance: 'Any sysadmin role grant should alert at Critical regardless of source. Maintain allowlist of authorized DBA accounts. Correlate with change management tickets.',
+      investigationWorkflow: '1. Identify who was granted the role and who performed the grant\n2. Verify against approved change requests or provisioning tickets\n3. Check if the granting account was itself recently compromised\n4. Review what the newly privileged account did post-grant\n5. If unauthorized, immediately remove the role membership',
+      criblSearchQueries: [
+        {
+          name: 'Server role grants',
+          description: 'All high-privilege role assignments',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(sp_addsrvrolemember|alter\\s+server\\s+role.*add\\s+member)"\n| where succeeded == 1\n| project event_time, server_principal_name, statement, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Sysadmin grants specifically',
+          description: 'Focus on sysadmin role assignments',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)sysadmin"\n| project event_time, server_principal_name, statement, client_ip, succeeded\n| order by event_time desc'
+        },
+        {
+          name: 'Role changes by grantor',
+          description: 'Who is granting elevated privileges',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)(sp_addsrvrolemember|alter\\s+server\\s+role)"\n| summarize grant_count=count() by server_principal_name, client_ip\n| order by grant_count desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-003',
+      name: 'xp_cmdshell Execution',
+      objective: 'Detects enabling or execution of xp_cmdshell which allows running operating system commands from SQL Server — a critical post-exploitation technique.',
+      severity: 'Critical',
+      mitre: ['T1059 - Command and Scripting Interpreter', 'T1505.001 - SQL Stored Procedures'],
+      tags: ['security', 'database', 'code-execution', 'xp-cmdshell'],
+      requiredFields: ['event_time', 'server_principal_name', 'statement', 'client_ip', 'succeeded', 'database_name'],
+      detectionLogic: 'Monitors for sp_configure enabling xp_cmdshell and any execution of xp_cmdshell stored procedure. This extended stored procedure is the most common method attackers use to execute OS commands after gaining SQL Server access. It should be disabled in production environments.',
+      falsePositives: ['Legacy applications that legitimately use xp_cmdshell for file operations', 'DBA emergency procedures documented in runbooks', 'SQL Server Agent jobs using cmdshell for system interactions'],
+      tuningGuidance: 'xp_cmdshell should be disabled in all production environments. Any enabling or execution should alert at Critical with zero exceptions. If business requires it, implement compensating controls and monitoring.',
+      investigationWorkflow: '1. CRITICAL — this is a high-confidence indicator of compromise\n2. Identify who enabled/executed xp_cmdshell and the commands run\n3. Check if xp_cmdshell was recently enabled (sp_configure change)\n4. Review OS-level activity from the SQL Server service account\n5. Isolate the SQL Server if unauthorized and begin incident response\n6. Check for lateral movement from the SQL Server host',
+      criblSearchQueries: [
+        {
+          name: 'xp_cmdshell usage',
+          description: 'All xp_cmdshell enable and execute events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(xp_cmdshell|sp_configure.*cmdshell)"\n| project event_time, server_principal_name, statement, client_ip, succeeded\n| order by event_time desc'
+        },
+        {
+          name: 'Advanced options and cmdshell enable',
+          description: 'Configuration changes enabling xp_cmdshell',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)sp_configure.*(show\\s+advanced|xp_cmdshell)"\n| project event_time, server_principal_name, statement, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Commands executed via cmdshell',
+          description: 'What OS commands were run through xp_cmdshell',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)exec.*xp_cmdshell"\n| project event_time, server_principal_name, statement, client_ip, database_name\n| order by event_time desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-004',
+      name: 'Database Dropped or Destructive DDL',
+      objective: 'Detects DROP DATABASE and other destructive DDL operations that may indicate sabotage, ransomware, or malicious insider activity.',
+      severity: 'High',
+      mitre: ['T1485 - Data Destruction', 'T1561 - Disk Wipe'],
+      tags: ['security', 'database', 'data-destruction', 'destructive-ddl'],
+      requiredFields: ['event_time', 'server_principal_name', 'database_name', 'statement', 'client_ip', 'succeeded', 'object_name'],
+      detectionLogic: 'Identifies DROP DATABASE, DROP TABLE, and TRUNCATE TABLE statements that succeed. These destructive operations in production environments are high-impact and should always be reviewed. SQL Server ransomware attacks commonly drop databases after exfiltrating data.',
+      falsePositives: ['Scheduled cleanup of temporary databases', 'Database migration removing deprecated objects', 'Test environment lifecycle management'],
+      tuningGuidance: 'Any DROP DATABASE on production should alert at Critical. Tag databases by environment. For non-production, log but reduce severity. TRUNCATE on sensitive tables should always alert.',
+      investigationWorkflow: '1. Identify which database or table was dropped\n2. Determine production vs. non-production classification\n3. Verify the operation against approved change requests\n4. Check for data exfiltration preceding the destructive action\n5. Verify backup recoverability and initiate restore if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Destructive DDL operations',
+          description: 'All DROP and TRUNCATE statements',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(drop\\s+(database|table)|truncate\\s+table)" AND succeeded == 1\n| project event_time, server_principal_name, database_name, object_name, statement, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Destructive operations by user',
+          description: 'Users performing destructive DDL',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)(drop\\s+(database|table)|truncate)"\n| summarize drop_count=count(), databases=makeset(database_name) by server_principal_name\n| order by drop_count desc'
+        },
+        {
+          name: 'Pre-destruction activity',
+          description: 'Activity from the same user before destructive operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where server_principal_name == "SUSPECT_USER"\n| project event_time, action_id, statement, database_name, object_name\n| order by event_time asc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-005',
+      name: 'Bulk Data Export via BCP or OPENROWSET',
+      objective: 'Detects bulk data export operations using BCP, OPENROWSET, OPENDATASOURCE, or linked server queries that may indicate data exfiltration.',
+      severity: 'High',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1005 - Data from Local System'],
+      tags: ['security', 'database', 'data-exfiltration', 'bulk-export'],
+      requiredFields: ['event_time', 'server_principal_name', 'statement', 'database_name', 'client_ip', 'succeeded'],
+      detectionLogic: 'Monitors for BULK INSERT, OPENROWSET, OPENDATASOURCE, and linked server queries that move data to external destinations. Also detects enabling of Ad Hoc Distributed Queries configuration. These mechanisms can exfiltrate data to attacker-controlled external systems.',
+      falsePositives: ['Legitimate ETL processes using linked servers', 'Scheduled data exports to partner systems', 'Database migration tools using bulk operations'],
+      tuningGuidance: 'Allowlist scheduled ETL service accounts and their expected linked server targets. Alert on any OPENROWSET/OPENDATASOURCE from interactive sessions. Focus on queries moving data to external IPs.',
+      investigationWorkflow: '1. Identify the destination of the data export (linked server, file path, URL)\n2. Determine if the destination is an authorized system\n3. Review the data being exported — is it sensitive?\n4. Check if Ad Hoc Distributed Queries was recently enabled\n5. Correlate with network logs for outbound data transfer confirmation',
+      criblSearchQueries: [
+        {
+          name: 'Bulk export operations',
+          description: 'OPENROWSET, BCP, and linked server data movements',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(openrowset|opendatasource|bulk\\s+insert|linked.*server|into\\s+outfile)"\n| project event_time, server_principal_name, statement, database_name, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Ad Hoc Distributed Queries enabling',
+          description: 'Configuration changes enabling external data access',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)sp_configure.*(ad\\s+hoc|distributed)"\n| project event_time, server_principal_name, statement, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Linked server usage patterns',
+          description: 'Data access through linked servers by user',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)(openrowset|opendatasource|\\[.*\\]\\.\\[.*\\]\\.\\[.*\\])"\n| summarize query_count=count() by server_principal_name, database_name\n| order by query_count desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-006',
+      name: 'SQL Injection Indicators',
+      objective: 'Detects SQL injection patterns in audited statements indicating application-layer attacks against SQL Server databases.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'database', 'sql-injection', 'application-attack'],
+      requiredFields: ['event_time', 'server_principal_name', 'statement', 'client_ip', 'application_name', 'database_name'],
+      detectionLogic: 'Scans the statement field for common SQL injection patterns including UNION SELECT, stacked queries with system procedures, WAITFOR DELAY (time-based blind injection), and access to sysobjects/information_schema. These patterns in application-generated queries indicate active exploitation.',
+      falsePositives: ['Legitimate queries accessing system catalog views', 'ORM-generated complex queries with dynamic SQL', 'Database monitoring tools querying system objects'],
+      tuningGuidance: 'Focus on statements from web application connections (check application_name). Allowlist known DBA tools querying system views. Require multiple injection indicators for high-confidence alerting.',
+      investigationWorkflow: '1. Analyze the full statement for injection payload identification\n2. Identify the source application_name and client_ip\n3. Determine if the injection succeeded based on query results\n4. Correlate with WAF or IIS/web server logs for the HTTP request\n5. Identify the vulnerable application endpoint\n6. Patch the vulnerability and check for data exfiltration',
+      criblSearchQueries: [
+        {
+          name: 'SQL injection patterns',
+          description: 'Statements containing injection signatures',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)(union\\s+(all\\s+)?select|waitfor\\s+delay|;\\s*(exec|xp_|sp_)|or\\s+1\\s*=\\s*1|sysobjects|information_schema\\.tables)"\n| project event_time, server_principal_name, client_ip, application_name, statement\n| order by event_time desc'
+        },
+        {
+          name: 'Injection attempts by source',
+          description: 'Source IPs with injection patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)(union\\s+select|waitfor\\s+delay|;\\s*exec)"\n| summarize attempt_count=count() by client_ip, application_name\n| order by attempt_count desc'
+        },
+        {
+          name: 'Time-based injection detection',
+          description: 'WAITFOR DELAY patterns indicating blind injection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where statement matches regex "(?i)waitfor\\s+delay"\n| project event_time, server_principal_name, client_ip, application_name, statement\n| order by event_time desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-sec-007',
+      name: 'Audit Configuration Tampering',
+      objective: 'Detects modifications to SQL Server audit specifications which may indicate an attacker attempting to disable audit logging to cover their tracks.',
+      severity: 'Medium',
+      mitre: ['T1562.002 - Disable Windows Event Logging', 'T1070 - Indicator Removal'],
+      tags: ['security', 'database', 'defense-evasion', 'audit-tampering'],
+      requiredFields: ['event_time', 'server_principal_name', 'statement', 'action_id', 'client_ip', 'succeeded'],
+      detectionLogic: 'Monitors for ALTER SERVER AUDIT, ALTER DATABASE AUDIT SPECIFICATION, DROP AUDIT, and state changes (disable) to audit objects. Attackers with elevated access commonly disable auditing before performing malicious operations to avoid detection.',
+      falsePositives: ['DBA performing authorized audit maintenance', 'Audit rotation during scheduled maintenance windows', 'Compliance team adjusting audit scope'],
+      tuningGuidance: 'Any audit modification should generate an alert. Correlate with change management. Implement file integrity monitoring on audit log files as defense-in-depth.',
+      investigationWorkflow: '1. Verify the audit change against approved change tickets\n2. Determine if auditing is still operational after the change\n3. Check for any gap in audit log coverage\n4. Review what the user did between disabling and re-enabling audit\n5. If unauthorized, restore audit configuration immediately\n6. Investigate all activity during the audit gap period',
+      criblSearchQueries: [
+        {
+          name: 'Audit configuration changes',
+          description: 'All modifications to audit specifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where statement matches regex "(?i)(alter\\s+(server\\s+)?audit|drop\\s+audit|create\\s+audit)"\n| project event_time, server_principal_name, statement, client_ip, succeeded\n| order by event_time desc'
+        },
+        {
+          name: 'Audit disable events',
+          description: 'Specific audit disable operations',
+          query: 'dataset="$DATASET" earliest=-30d\n| where statement matches regex "(?i)(alter.*audit.*state\\s*=\\s*off|disable)"\n| project event_time, server_principal_name, statement, client_ip\n| order by event_time desc'
+        },
+        {
+          name: 'Audit changes by user',
+          description: 'Who is modifying audit configurations',
+          query: 'dataset="$DATASET" earliest=-90d\n| where statement matches regex "(?i)(audit)"\n| where action_id matches regex "AL"\n| summarize change_count=count() by server_principal_name, client_ip\n| order by change_count desc'
+        },
+        {
+          name: 'Activity during audit gaps',
+          description: 'Operations performed by users who modified audit settings',
+          query: 'dataset="$DATASET" earliest=-7d\n| where server_principal_name == "SUSPECT_USER"\n| summarize count() by action_id, database_name\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'sentinelone-edr': [
+    {
+      id: 'sen-sec-001',
+      name: 'Ransomware Threat Detected',
+      objective: 'Identifies threats classified as ransomware by SentinelOne, requiring immediate containment to prevent file encryption and lateral movement.',
+      severity: 'Critical',
+      mitre: ['T1486 - Data Encrypted for Impact'],
+      tags: ['security', 'ransomware', 'endpoint', 'critical-severity'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'classification', 'mitigationStatus'],
+      detectionLogic: 'Triggers when SentinelOne classifies a threat as ransomware regardless of mitigation status. This detection captures both mitigated and unmitigated ransomware events to ensure full visibility into encryption attempts across the fleet.',
+      falsePositives: ['Legitimate encryption utilities misclassified by the engine', 'Penetration testing tools simulating ransomware behavior'],
+      tuningGuidance: 'Exclude known pen-test hostnames via agentComputerName whitelist. If specific threatName values repeatedly false-positive, add them to an exclusion list after validation.',
+      investigationWorkflow: '1. Confirm mitigationStatus — if not mitigated, isolate the endpoint immediately\n2. Identify the filePath and sha256 to determine the ransomware variant\n3. Check for lateral movement by searching for the same sha256 on other hosts\n4. Review initiatedByDescription for the parent process chain\n5. Escalate to IR team and initiate containment playbook',
+      criblSearchQueries: [
+        {
+          name: 'Ransomware detections last 24h',
+          description: 'Lists all ransomware-classified threats with mitigation status',
+          query: 'dataset="$DATASET" earliest=-24h\n| where classification == "Ransomware"\n| project createdAt, agentComputerName, threatName, mitigationStatus, filePath, sha256\n| order by createdAt desc'
+        },
+        {
+          name: 'Unmitigated ransomware threats',
+          description: 'Finds ransomware threats that have not been successfully mitigated',
+          query: 'dataset="$DATASET" earliest=-24h\n| where classification == "Ransomware" and mitigationStatus != "mitigated"\n| project createdAt, agentComputerName, threatName, mitigationStatus, filePath\n| order by createdAt desc'
+        },
+        {
+          name: 'Ransomware hash prevalence',
+          description: 'Shows how many endpoints have seen the same ransomware hash',
+          query: 'dataset="$DATASET" earliest=-7d\n| where classification == "Ransomware"\n| summarize affected_hosts = dcount(agentComputerName) by sha256, threatName\n| order by affected_hosts desc'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-002',
+      name: 'Threat Mitigation Failure',
+      objective: 'Detects threats that SentinelOne attempted to mitigate but failed, indicating the malware may still be active and requires manual intervention.',
+      severity: 'Critical',
+      mitre: ['T1562.001 - Impair Defenses: Disable or Modify Tools'],
+      tags: ['security', 'evasion', 'endpoint', 'mitigation-failure'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'classification', 'mitigationStatus', 'filePath'],
+      detectionLogic: 'Triggers when mitigationStatus indicates a failed state such as "not_mitigated" or "partially_mitigated" for any threat classification. Failed mitigations suggest the threat has defense evasion capabilities or the agent is compromised.',
+      falsePositives: ['Threats on endpoints with policy set to detect-only mode', 'File locked by another process preventing remediation'],
+      tuningGuidance: 'Filter out sites running in detect-only mode by excluding specific siteName values. Adjust time window based on SOC response SLA.',
+      investigationWorkflow: '1. Verify the endpoint policy mode — confirm it is not detect-only\n2. Attempt manual mitigation via SentinelOne console\n3. If manual mitigation fails, network-isolate the endpoint\n4. Collect forensic data from filePath and review process tree\n5. Check if the agent itself is healthy and reporting correctly',
+      criblSearchQueries: [
+        {
+          name: 'Failed mitigations last 24h',
+          description: 'All threats where automatic mitigation did not succeed',
+          query: 'dataset="$DATASET" earliest=-24h\n| where mitigationStatus in ("not_mitigated", "partially_mitigated")\n| project createdAt, agentComputerName, threatName, classification, mitigationStatus, filePath\n| order by createdAt desc'
+        },
+        {
+          name: 'Mitigation failure rate by site',
+          description: 'Shows which sites have the highest mitigation failure rates',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize total = count(), failures = countif(mitigationStatus != "mitigated") by siteName\n| extend failure_rate = round(failures * 100.0 / total, 2)\n| order by failure_rate desc'
+        },
+        {
+          name: 'Repeated failures on same host',
+          description: 'Identifies hosts with multiple mitigation failures suggesting persistent compromise',
+          query: 'dataset="$DATASET" earliest=-7d\n| where mitigationStatus != "mitigated"\n| summarize failure_count = count() by agentComputerName\n| where failure_count > 2\n| order by failure_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-003',
+      name: 'Suspicious File Execution from Temp Directory',
+      objective: 'Detects threat activity originating from temporary directories, a common staging location for malware droppers and second-stage payloads.',
+      severity: 'High',
+      mitre: ['T1204.002 - User Execution: Malicious File', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'execution', 'endpoint', 'temp-directory'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'filePath', 'sha256', 'agentOsType'],
+      detectionLogic: 'Triggers when a threat is detected with a filePath containing common temporary directory patterns (e.g., /tmp/, \\Temp\\, \\AppData\\Local\\Temp\\). Malware frequently stages payloads in temp directories to avoid detection and leverage write permissions.',
+      falsePositives: ['Legitimate software installers running from temp during updates', 'Browser-downloaded files executed from temp before being moved'],
+      tuningGuidance: 'Whitelist known installer hashes (sha256) for enterprise software. Consider excluding specific threatName values tied to known PUP detections if acceptable risk.',
+      investigationWorkflow: '1. Review the full filePath to understand the execution context\n2. Check sha256 against threat intelligence feeds\n3. Identify how the file arrived in temp — check parent process via initiatedByDescription\n4. Look for persistence mechanisms created around the same timeframe\n5. Determine if the user downloaded the file or if it was dropped by another process',
+      criblSearchQueries: [
+        {
+          name: 'Threats from temp directories',
+          description: 'All threats with file paths indicating temporary directory execution',
+          query: 'dataset="$DATASET" earliest=-24h\n| where filePath matches regex "(?i)(\\\\temp\\\\|/tmp/|\\\\appdata\\\\local\\\\temp)"\n| project createdAt, agentComputerName, threatName, filePath, sha256, agentOsType\n| order by createdAt desc'
+        },
+        {
+          name: 'Temp directory threats by OS type',
+          description: 'Breakdown of temp directory threats across operating systems',
+          query: 'dataset="$DATASET" earliest=-7d\n| where filePath matches regex "(?i)(\\\\temp\\\\|/tmp/|\\\\appdata\\\\local\\\\temp)"\n| summarize count() by agentOsType, classification\n| order by count_ desc'
+        },
+        {
+          name: 'Unique hashes from temp directories',
+          description: 'Distinct malware hashes executing from temp locations for IOC enrichment',
+          query: 'dataset="$DATASET" earliest=-7d\n| where filePath matches regex "(?i)(\\\\temp\\\\|/tmp/|\\\\appdata\\\\local\\\\temp)"\n| summarize first_seen = min(createdAt), host_count = dcount(agentComputerName) by sha256, threatName\n| order by host_count desc'
+        },
+        {
+          name: 'Timeline of temp directory activity per host',
+          description: 'Temporal pattern of temp directory threats on specific endpoints',
+          query: 'dataset="$DATASET" earliest=-7d\n| where filePath matches regex "(?i)(\\\\temp\\\\|/tmp/|\\\\appdata\\\\local\\\\temp)"\n| timestats count() by agentComputerName span=1h'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-004',
+      name: 'Multiple Threats on Single Endpoint',
+      objective: 'Identifies endpoints with multiple distinct threat detections in a short window, indicating possible active compromise with multiple malware families or tools.',
+      severity: 'High',
+      mitre: ['T1105 - Ingress Tool Transfer', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'endpoint', 'multi-threat', 'active-compromise'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'classification', 'sha256'],
+      detectionLogic: 'Triggers when a single agentComputerName has 3 or more distinct threat detections (by unique sha256) within a 1-hour window. Multiple distinct threats on one host suggest an attacker has established access and is deploying additional tools.',
+      falsePositives: ['Endpoints undergoing malware analysis or sandboxing', 'Mass PUP detection during software audits'],
+      tuningGuidance: 'Adjust the threshold from 3 to higher values in environments with frequent PUP detections. Exclude malware analysis lab hostnames. Filter by classification to focus on Malware/Trojan and exclude PUP/Adware.',
+      investigationWorkflow: '1. List all distinct threats on the endpoint within the time window\n2. Determine if threats are related (same family) or independent (multi-tool attacker)\n3. Check network connections from the endpoint for C2 communication\n4. Review the initiatedByDescription for common parent processes\n5. Isolate the endpoint if threats indicate active hands-on-keyboard activity',
+      criblSearchQueries: [
+        {
+          name: 'Hosts with multiple distinct threats',
+          description: 'Endpoints with 3+ unique threat hashes in the past hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize unique_threats = dcount(sha256), threat_list = makeset(threatName) by agentComputerName\n| where unique_threats >= 3\n| order by unique_threats desc'
+        },
+        {
+          name: 'Threat timeline for affected host',
+          description: 'Chronological list of all threats on a specific compromised endpoint',
+          query: 'dataset="$DATASET" earliest=-24h\n| where agentComputerName == "$HOSTNAME"\n| project createdAt, threatName, classification, filePath, sha256\n| order by createdAt asc'
+        },
+        {
+          name: 'Multi-threat hosts trend',
+          description: 'Daily trend of hosts experiencing multiple threat detections',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize unique_threats = dcount(sha256) by agentComputerName, bin(createdAt, 1h)\n| where unique_threats >= 3\n| timestats dcount(agentComputerName) span=1d'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-005',
+      name: 'Threat Classified as Trojan or Backdoor',
+      objective: 'Detects threats classified as trojans or backdoors which indicate deliberate malicious implants designed for persistent remote access.',
+      severity: 'High',
+      mitre: ['T1219 - Remote Access Software', 'T1071 - Application Layer Protocol'],
+      tags: ['security', 'endpoint', 'trojan', 'backdoor', 'persistence'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'classification', 'filePath', 'sha256', 'initiatedByDescription'],
+      detectionLogic: 'Triggers when the classification field contains Trojan or Backdoor indicators. These classifications represent intentionally malicious software designed to provide unauthorized remote access, exfiltrate data, or serve as a platform for further attacks.',
+      falsePositives: ['Remote administration tools classified as backdoors', 'Dual-use tools like netcat or psexec flagged as trojans'],
+      tuningGuidance: 'Whitelist approved remote admin tools by sha256. Create exceptions for specific IT-approved utilities that trigger trojan classifications. Monitor for classification changes after engine updates.',
+      investigationWorkflow: '1. Verify classification accuracy by checking sha256 against multiple threat intel sources\n2. Review initiatedByDescription to understand the execution chain\n3. Check if the trojan/backdoor established any network connections\n4. Look for persistence mechanisms (registry, scheduled tasks, services)\n5. Determine initial access vector — how did the backdoor arrive on the endpoint',
+      criblSearchQueries: [
+        {
+          name: 'Trojan and backdoor detections',
+          description: 'All threats classified as trojans or backdoors',
+          query: 'dataset="$DATASET" earliest=-24h\n| where classification matches regex "(?i)(trojan|backdoor)"\n| project createdAt, agentComputerName, threatName, classification, filePath, sha256, mitigationStatus\n| order by createdAt desc'
+        },
+        {
+          name: 'Backdoor detections by site',
+          description: 'Distribution of backdoor/trojan threats across organizational sites',
+          query: 'dataset="$DATASET" earliest=-7d\n| where classification matches regex "(?i)(trojan|backdoor)"\n| summarize count() by siteName, classification\n| order by count_ desc'
+        },
+        {
+          name: 'Execution chain analysis',
+          description: 'Parent process information for trojan/backdoor threats',
+          query: 'dataset="$DATASET" earliest=-7d\n| where classification matches regex "(?i)(trojan|backdoor)"\n| summarize count() by initiatedByDescription, threatName\n| order by count_ desc'
+        },
+        {
+          name: 'Trojan hash IOC extraction',
+          description: 'Unique hashes for trojan/backdoor detections for blocking and hunting',
+          query: 'dataset="$DATASET" earliest=-30d\n| where classification matches regex "(?i)(trojan|backdoor)"\n| summarize first_seen = min(createdAt), last_seen = max(createdAt), host_count = dcount(agentComputerName) by sha256, threatName\n| order by last_seen desc'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-006',
+      name: 'Threat Activity on Server OS',
+      objective: 'Detects any threat activity on server operating systems which represent higher-value targets and should have minimal threat exposure compared to workstations.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1133 - External Remote Services'],
+      tags: ['security', 'endpoint', 'server', 'critical-asset'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'classification', 'agentOsType', 'siteName'],
+      detectionLogic: 'Triggers when a threat is detected on an endpoint where agentOsType indicates a server operating system (Windows Server, Linux server). Servers should have tightly controlled software and minimal user interaction, making any threat detection noteworthy.',
+      falsePositives: ['Servers running development workloads with test malware samples', 'Vulnerability scanners triggering detections on web servers'],
+      tuningGuidance: 'Classify server OS types accurately in your environment. Exclude development/test servers by siteName if they generate excessive noise. Consider elevating severity for production database or domain controller servers.',
+      investigationWorkflow: '1. Identify the server role and criticality (DC, database, web, file server)\n2. Determine if the threat is related to the server function (e.g., web exploit on web server)\n3. Review recent changes — patches, deployments, new software\n4. Check for lateral movement indicators from or to this server\n5. Verify server integrity and check for unauthorized accounts or services',
+      criblSearchQueries: [
+        {
+          name: 'Server threat detections',
+          description: 'All threats detected on server operating systems',
+          query: 'dataset="$DATASET" earliest=-24h\n| where agentOsType matches regex "(?i)(server|linux)"\n| project createdAt, agentComputerName, agentOsType, threatName, classification, filePath\n| order by createdAt desc'
+        },
+        {
+          name: 'Server threat frequency by hostname',
+          description: 'Servers with the most threat detections for prioritization',
+          query: 'dataset="$DATASET" earliest=-7d\n| where agentOsType matches regex "(?i)(server|linux)"\n| summarize threat_count = count(), unique_threats = dcount(threatName) by agentComputerName, agentOsType\n| order by threat_count desc'
+        },
+        {
+          name: 'Server threats over time',
+          description: 'Trend of threat detections on servers to identify spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where agentOsType matches regex "(?i)(server|linux)"\n| timestats count() by classification span=4h'
+        }
+      ]
+    },
+    {
+      id: 'sen-sec-007',
+      name: 'New Threat Name Across Fleet',
+      objective: 'Identifies previously unseen threat names appearing for the first time, which may indicate a new malware campaign targeting the organization.',
+      severity: 'Medium',
+      mitre: ['T1588.001 - Obtain Capabilities: Malware'],
+      tags: ['security', 'endpoint', 'threat-intelligence', 'new-threat'],
+      requiredFields: ['createdAt', 'agentComputerName', 'threatName', 'sha256', 'classification', 'siteName'],
+      detectionLogic: 'Compares threat names seen in the past 24 hours against the baseline of threats seen in the prior 30 days. New threat names that have never appeared before may indicate emerging campaigns or targeted attacks using novel malware.',
+      falsePositives: ['Engine updates introducing new naming conventions for existing threats', 'Reclassification of previously seen threats under new names'],
+      tuningGuidance: 'Maintain a baseline window of 30 days minimum. After engine updates, allow a 48-hour grace period for new classification names to stabilize. Focus investigation on threats with low global prevalence.',
+      investigationWorkflow: '1. Research the new threat name in vendor threat intelligence databases\n2. Determine if this is a naming update or genuinely new malware\n3. Check the sha256 against VirusTotal and other multi-engine scanners\n4. Identify all affected endpoints and their geographic/organizational grouping\n5. Assess whether the threat is targeted (few hosts, specific site) or widespread',
+      criblSearchQueries: [
+        {
+          name: 'New threat names in last 24h',
+          description: 'Threat names seen today that were not seen in the prior 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen = min(createdAt), host_count = dcount(agentComputerName) by threatName, classification\n| order by first_seen desc'
+        },
+        {
+          name: 'Threat name baseline',
+          description: 'All distinct threat names seen in the past 30 days for comparison',
+          query: 'dataset="$DATASET" earliest=-30d latest=-24h\n| summarize count() by threatName\n| order by count_ desc'
+        },
+        {
+          name: 'New threat spread analysis',
+          description: 'How quickly new threats are spreading across sites',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize host_count = dcount(agentComputerName), site_count = dcount(siteName) by threatName, sha256\n| where host_count >= 1\n| order by site_count desc, host_count desc'
+        },
+        {
+          name: 'Hourly new threat detections',
+          description: 'Time distribution of new threat detections to identify burst patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats dcount(threatName) span=1h'
+        }
+      ]
+    }
+  ],
+  'proofpoint-email': [
+    {
+      id: 'ppf-sec-001',
+      name: 'High-Confidence Phishing Detected',
+      objective: 'Identifies emails with high phishing scores that successfully reached recipients, indicating active credential harvesting or social engineering campaigns targeting the organization.',
+      severity: 'Critical',
+      mitre: ['T1566.002 - Phishing: Spearphishing Link', 'T1598 - Phishing for Information'],
+      tags: ['security', 'email', 'phishing', 'credential-theft'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'phishScore', 'threatsInfoMap_threatType', 'threatsInfoMap_classification'],
+      detectionLogic: 'Triggers when phishScore exceeds 90 and threatsInfoMap_classification indicates phishing. High-confidence phishing emails that reach inboxes present immediate risk of credential compromise, especially if they mimic internal communications or trusted brands.',
+      falsePositives: ['Phishing simulation campaigns from security awareness training', 'Marketing emails with URL tracking that triggers phish detection'],
+      tuningGuidance: 'Whitelist phishing simulation sender domains. Adjust phishScore threshold based on observed false positive rates — start at 90 and lower to 75 if FP rate is acceptable. Exclude quarantined messages if focusing on delivered threats only.',
+      investigationWorkflow: '1. Determine if the email was delivered or quarantined\n2. Identify the recipient and check if they clicked any links\n3. Review the subject and sender for impersonation indicators\n4. Check if other recipients received the same campaign\n5. If clicked, initiate credential reset and session revocation for affected user',
+      criblSearchQueries: [
+        {
+          name: 'High-confidence phishing emails',
+          description: 'Emails with phishScore above threshold in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where phishScore > 90\n| project timestamp, sender, recipient, subject, phishScore, threatsInfoMap_classification\n| order by phishScore desc'
+        },
+        {
+          name: 'Phishing campaign sender analysis',
+          description: 'Top phishing senders to identify coordinated campaigns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where phishScore > 90\n| summarize recipient_count = dcount(recipient), subjects = makeset(subject) by sender\n| order by recipient_count desc'
+        },
+        {
+          name: 'Phishing targets by recipient',
+          description: 'Most targeted recipients for prioritized response',
+          query: 'dataset="$DATASET" earliest=-7d\n| where phishScore > 75\n| summarize phish_count = count() by recipient\n| order by phish_count desc\n| limit 20'
+        },
+        {
+          name: 'Phishing score trend',
+          description: 'Temporal distribution of high-confidence phishing to identify campaign waves',
+          query: 'dataset="$DATASET" earliest=-7d\n| where phishScore > 75\n| timestats count() span=1h'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-002',
+      name: 'Business Email Compromise - High Impostor Score',
+      objective: 'Detects emails with high impostor scores indicating sender impersonation, a hallmark of BEC attacks targeting executives or finance teams for fraudulent wire transfers.',
+      severity: 'Critical',
+      mitre: ['T1534 - Internal Spearphishing', 'T1656 - Impersonation'],
+      tags: ['security', 'email', 'bec', 'impersonation', 'fraud'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'impostorScore', 'spamScore'],
+      detectionLogic: 'Triggers when impostorScore exceeds 80, indicating the email appears to impersonate a known internal sender or trusted party. BEC attacks use display name spoofing or lookalike domains to trick recipients into unauthorized actions.',
+      falsePositives: ['Legitimate external contacts with names matching internal executives', 'Partner emails from domains similar to internal domains'],
+      tuningGuidance: 'Adjust impostorScore threshold based on your organization size — larger orgs may need lower thresholds. Create VIP recipient lists (CFO, controller, AP team) for elevated alerting. Whitelist known partner domains that trigger false positives.',
+      investigationWorkflow: '1. Identify which internal person is being impersonated\n2. Compare sender domain to legitimate domain for typosquatting\n3. Check if the recipient is in finance, HR, or executive leadership\n4. Review subject for urgency indicators (wire transfer, invoice, urgent)\n5. Contact the impersonated person to confirm they did not send the email\n6. Block the sender domain and quarantine related messages',
+      criblSearchQueries: [
+        {
+          name: 'High impostor score emails',
+          description: 'Emails with impostor scores indicating sender impersonation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where impostorScore > 80\n| project timestamp, sender, recipient, subject, impostorScore\n| order by impostorScore desc'
+        },
+        {
+          name: 'BEC targets analysis',
+          description: 'Recipients most frequently targeted by impersonation attacks',
+          query: 'dataset="$DATASET" earliest=-30d\n| where impostorScore > 75\n| summarize bec_count = count(), senders = makeset(sender) by recipient\n| order by bec_count desc'
+        },
+        {
+          name: 'Impostor sender domains',
+          description: 'Domains used in impersonation attempts for blocking',
+          query: 'dataset="$DATASET" earliest=-7d\n| where impostorScore > 80\n| extend sender_domain = extract("@(.+)$", 1, sender)\n| summarize count() by sender_domain\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-003',
+      name: 'Malware Attachment Delivered',
+      objective: 'Detects emails containing malware-classified attachments that were delivered rather than quarantined, indicating a gap in pre-delivery filtering.',
+      severity: 'High',
+      mitre: ['T1566.001 - Phishing: Spearphishing Attachment', 'T1204.002 - User Execution: Malicious File'],
+      tags: ['security', 'email', 'malware', 'attachment'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'messageParts_disposition', 'threatsInfoMap_threatType', 'threatsInfoMap_classification'],
+      detectionLogic: 'Triggers when threatsInfoMap_threatType indicates malware and the message was not quarantined. Delivered malware attachments represent an immediate execution risk if the recipient opens the attachment.',
+      falsePositives: ['Password-protected archives containing legitimate tools flagged as malware', 'Security team sharing malware samples via email'],
+      tuningGuidance: 'Focus on messages where quarantineFolder is empty (indicating delivery). Exclude known security team sender addresses. Consider the messageParts_disposition to determine if the attachment was inline or attached.',
+      investigationWorkflow: '1. Confirm the message was delivered to the recipient mailbox\n2. Check if the recipient opened or downloaded the attachment\n3. Correlate with endpoint detection — did EDR trigger on this file?\n4. Quarantine the message retroactively via mail admin\n5. Notify the recipient and scan their endpoint for indicators of compromise',
+      criblSearchQueries: [
+        {
+          name: 'Delivered malware attachments',
+          description: 'Emails with malware that reached recipient inboxes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where threatsInfoMap_threatType == "malware" and quarantineFolder == ""\n| project timestamp, sender, recipient, subject, threatsInfoMap_classification\n| order by timestamp desc'
+        },
+        {
+          name: 'Malware attachment sources',
+          description: 'Sender analysis for emails delivering malware',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_threatType == "malware"\n| summarize count(), recipient_count = dcount(recipient) by sender\n| order by recipient_count desc'
+        },
+        {
+          name: 'Malware delivery vs quarantine ratio',
+          description: 'Effectiveness of quarantine for malware-bearing emails',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_threatType == "malware"\n| extend was_quarantined = iff(quarantineFolder != "", "quarantined", "delivered")\n| summarize count() by was_quarantined\n| order by count_ desc'
+        },
+        {
+          name: 'Malware delivery timeline',
+          description: 'Temporal pattern of malware email delivery',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_threatType == "malware"\n| timestats count() by threatsInfoMap_classification span=4h'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-004',
+      name: 'URL-Based Threat Not Quarantined',
+      objective: 'Identifies emails containing malicious URLs that bypassed quarantine, creating risk of credential theft or drive-by download if recipients click the links.',
+      severity: 'High',
+      mitre: ['T1566.002 - Phishing: Spearphishing Link', 'T1189 - Drive-by Compromise'],
+      tags: ['security', 'email', 'url-threat', 'delivered'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'threatsInfoMap_threatType', 'threatsInfoMap_classification', 'quarantineFolder'],
+      detectionLogic: 'Triggers when threatsInfoMap_threatType is "url" with a malicious classification and the email was not placed in quarantine. URL threats that reach inboxes require rapid response since a single click can compromise credentials or deliver malware.',
+      falsePositives: ['URL shorteners flagged due to association with malicious campaigns', 'Legitimate SaaS notification emails with rewritten URLs'],
+      tuningGuidance: 'Combine with click-time telemetry if available. Focus on threatsInfoMap_classification values of "malicious" rather than "suspicious" for high-fidelity alerts. Whitelist known SaaS notification domains.',
+      investigationWorkflow: '1. Extract the malicious URL from the email metadata\n2. Determine if the URL is for credential harvesting or malware delivery\n3. Check proxy/web logs for any recipient clicks on the URL\n4. Retroactively quarantine the email\n5. If clicked, initiate response based on URL type (credential reset or endpoint scan)',
+      criblSearchQueries: [
+        {
+          name: 'Delivered URL threats',
+          description: 'Emails with malicious URLs that reached inboxes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where threatsInfoMap_threatType == "url" and quarantineFolder == ""\n| project timestamp, sender, recipient, subject, threatsInfoMap_classification\n| order by timestamp desc'
+        },
+        {
+          name: 'URL threat classification breakdown',
+          description: 'Types of URL threats being delivered',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_threatType == "url"\n| summarize total = count(), delivered = countif(quarantineFolder == "") by threatsInfoMap_classification\n| order by delivered desc'
+        },
+        {
+          name: 'Most targeted recipients for URL threats',
+          description: 'Users receiving the most URL-based threats',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_threatType == "url" and quarantineFolder == ""\n| summarize url_threats = count() by recipient\n| order by url_threats desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-005',
+      name: 'Spam Surge from Single Sender',
+      objective: 'Detects a sudden surge of high-spam-score emails from a single sender, indicating a compromised account being used for spam distribution or a targeted spam campaign.',
+      severity: 'Medium',
+      mitre: ['T1586.002 - Compromise Accounts: Email Accounts'],
+      tags: ['security', 'email', 'spam', 'compromised-account'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'spamScore', 'cluster'],
+      detectionLogic: 'Triggers when a single sender address generates more than 50 emails with spamScore above 70 within a 1-hour window. This pattern indicates either a compromised external account being weaponized or a bulk spam campaign that bypassed initial filtering.',
+      falsePositives: ['Legitimate bulk email senders with poor email hygiene', 'Marketing platforms sending high volumes through a single address'],
+      tuningGuidance: 'Adjust the volume threshold based on your organization size. Exclude known bulk senders and marketing platforms by sender domain. Consider cluster information to identify related campaigns.',
+      investigationWorkflow: '1. Check if the sender is an internal or external address\n2. If internal, investigate the account for compromise indicators\n3. Review recipient list for targeting patterns\n4. Block the sender domain at the gateway\n5. Report the compromised account to the sender organization',
+      criblSearchQueries: [
+        {
+          name: 'High-volume spam senders',
+          description: 'Senders with anomalous spam volume in the past hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| where spamScore > 70\n| summarize email_count = count(), unique_recipients = dcount(recipient) by sender\n| where email_count > 50\n| order by email_count desc'
+        },
+        {
+          name: 'Spam volume trend by sender',
+          description: 'Hourly spam volume from top senders to identify bursts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where spamScore > 70\n| summarize count() by sender, bin(timestamp, 1h)\n| order by count_ desc'
+        },
+        {
+          name: 'Spam cluster analysis',
+          description: 'Grouping spam emails by cluster to identify campaigns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where spamScore > 70\n| summarize email_count = count(), sender_count = dcount(sender) by cluster\n| order by email_count desc'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-006',
+      name: 'Executive Targeted - Multiple Threat Types',
+      objective: 'Detects when a single recipient receives multiple different threat types within a short window, suggesting they are being specifically targeted by a multi-vector campaign.',
+      severity: 'High',
+      mitre: ['T1598.003 - Phishing for Information: Spearphishing Link', 'T1566 - Phishing'],
+      tags: ['security', 'email', 'targeted-attack', 'multi-vector'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'threatsInfoMap_threatType', 'phishScore', 'impostorScore'],
+      detectionLogic: 'Triggers when a single recipient receives emails with 2 or more distinct threatsInfoMap_threatType values (e.g., url + malware + impostor) within a 4-hour window. Multi-vector targeting suggests a deliberate campaign against a specific individual.',
+      falsePositives: ['Recipients who frequently receive external email naturally see more diverse threats', 'Shared mailboxes aggregating multiple message streams'],
+      tuningGuidance: 'Focus on VIP recipients (executives, finance, IT admins). Extend the time window to 8 hours for slower campaigns. Exclude shared mailboxes and distribution lists.',
+      investigationWorkflow: '1. Identify the recipient role and determine if they are a high-value target\n2. Analyze each threat email for common sender infrastructure\n3. Determine if the threats are from the same actor using different techniques\n4. Brief the targeted individual on the campaign\n5. Increase monitoring on the recipient account and endpoint',
+      criblSearchQueries: [
+        {
+          name: 'Multi-vector targeted recipients',
+          description: 'Recipients receiving multiple threat types in a short window',
+          query: 'dataset="$DATASET" earliest=-4h\n| where threatsInfoMap_threatType != ""\n| summarize threat_types = dcount(threatsInfoMap_threatType), type_list = makeset(threatsInfoMap_threatType) by recipient\n| where threat_types >= 2\n| order by threat_types desc'
+        },
+        {
+          name: 'Threat detail for targeted recipient',
+          description: 'All threat emails received by a specific targeted user',
+          query: 'dataset="$DATASET" earliest=-24h\n| where recipient == "$RECIPIENT" and threatsInfoMap_threatType != ""\n| project timestamp, sender, subject, threatsInfoMap_threatType, threatsInfoMap_classification, phishScore, impostorScore\n| order by timestamp desc'
+        },
+        {
+          name: 'Cross-recipient campaign correlation',
+          description: 'Identifying if the same senders are targeting multiple people',
+          query: 'dataset="$DATASET" earliest=-24h\n| where threatsInfoMap_threatType != ""\n| summarize target_count = dcount(recipient), threat_types = makeset(threatsInfoMap_threatType) by sender\n| where target_count > 3\n| order by target_count desc'
+        }
+      ]
+    },
+    {
+      id: 'ppf-sec-007',
+      name: 'Quarantine Bypass - Threat Delivered Despite Classification',
+      objective: 'Identifies emails that Proofpoint classified as threats but were delivered instead of quarantined, indicating a policy gap or override that needs remediation.',
+      severity: 'Medium',
+      mitre: ['T1562.001 - Impair Defenses: Disable or Modify Tools'],
+      tags: ['security', 'email', 'policy-gap', 'configuration'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'subject', 'threatsInfoMap_threatType', 'threatsInfoMap_classification', 'quarantineFolder'],
+      detectionLogic: 'Triggers when threatsInfoMap_classification is "malicious" but quarantineFolder is empty, meaning the email was delivered despite being identified as a threat. This indicates a policy misconfiguration, admin override, or allowed sender list that is too permissive.',
+      falsePositives: ['Emails released from quarantine by administrators after review', 'Policy exceptions for specific sender domains with known FP issues'],
+      tuningGuidance: 'Track which policies are allowing delivery via cluster field. Review admin release actions separately. Focus on threatsInfoMap_classification "malicious" rather than "suspicious" to reduce noise.',
+      investigationWorkflow: '1. Identify why the email was not quarantined — check policy rules and sender allowlists\n2. Determine if this is a systemic policy gap or one-off exception\n3. Review the specific threat classification and type\n4. Remediate the policy gap with email security team\n5. Retroactively quarantine affected messages if still in mailboxes',
+      criblSearchQueries: [
+        {
+          name: 'Malicious emails bypassing quarantine',
+          description: 'Threat-classified emails that were delivered instead of quarantined',
+          query: 'dataset="$DATASET" earliest=-24h\n| where threatsInfoMap_classification == "malicious" and quarantineFolder == ""\n| project timestamp, sender, recipient, subject, threatsInfoMap_threatType\n| order by timestamp desc'
+        },
+        {
+          name: 'Quarantine bypass rate',
+          description: 'Ratio of quarantined vs delivered threats over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_classification == "malicious"\n| extend action = iff(quarantineFolder != "", "quarantined", "delivered")\n| summarize count() by action\n| order by count_ desc'
+        },
+        {
+          name: 'Bypass patterns by threat type',
+          description: 'Which threat types most frequently bypass quarantine',
+          query: 'dataset="$DATASET" earliest=-7d\n| where threatsInfoMap_classification == "malicious" and quarantineFolder == ""\n| summarize bypass_count = count() by threatsInfoMap_threatType\n| order by bypass_count desc'
+        },
+        {
+          name: 'Daily quarantine bypass trend',
+          description: 'Track if bypass rate is improving or worsening',
+          query: 'dataset="$DATASET" earliest=-30d\n| where threatsInfoMap_classification == "malicious"\n| extend bypassed = iff(quarantineFolder == "", 1, 0)\n| timestats sum(bypassed), count() span=1d'
+        }
+      ]
+    }
+  ],
+  'mimecast-email': [
+    {
+      id: 'mmc-sec-001',
+      name: 'Virus Detected in Email',
+      objective: 'Identifies emails where Mimecast detected a virus in attachments or message body, requiring immediate verification that the malicious content was blocked.',
+      severity: 'Critical',
+      mitre: ['T1566.001 - Phishing: Spearphishing Attachment', 'T1204.002 - User Execution: Malicious File'],
+      tags: ['security', 'email', 'malware', 'virus'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'subject', 'VirusFound', 'Action', 'AttachmentCount'],
+      detectionLogic: 'Triggers when VirusFound field is populated with a virus name, indicating Mimecast AV engine detected malicious content. Even when blocked, virus detections provide intelligence on active campaigns targeting the organization.',
+      falsePositives: ['EICAR test files used in email security testing', 'Password-protected archives with legitimate tools triggering heuristic detection'],
+      tuningGuidance: 'Focus on events where Action is not "block" to catch policy gaps. Track VirusFound values to identify campaign patterns. Exclude known testing senders.',
+      investigationWorkflow: '1. Verify the Action taken — confirm the email was blocked or held\n2. If delivered, immediately quarantine and notify the recipient\n3. Record the VirusFound name for threat intelligence correlation\n4. Check if the same virus was detected from other senders\n5. Verify endpoint protection would catch this if somehow executed',
+      criblSearchQueries: [
+        {
+          name: 'Virus detections last 24h',
+          description: 'All emails where Mimecast found a virus',
+          query: 'dataset="$DATASET" earliest=-24h\n| where VirusFound != ""\n| project datetime, senderAddress, recipientAddress, subject, VirusFound, Action, AttachmentCount\n| order by datetime desc'
+        },
+        {
+          name: 'Virus detection actions',
+          description: 'Breakdown of actions taken on virus-bearing emails',
+          query: 'dataset="$DATASET" earliest=-7d\n| where VirusFound != ""\n| summarize count() by Action, VirusFound\n| order by count_ desc'
+        },
+        {
+          name: 'Virus campaign tracking',
+          description: 'Track specific virus families and their volume over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where VirusFound != ""\n| timestats count() by VirusFound span=4h'
+        },
+        {
+          name: 'Virus sources',
+          description: 'Top sender addresses delivering virus-laden emails',
+          query: 'dataset="$DATASET" earliest=-7d\n| where VirusFound != ""\n| summarize virus_count = count(), unique_viruses = dcount(VirusFound) by senderAddress\n| order by virus_count desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-002',
+      name: 'Email Delivered Despite High Spam Score',
+      objective: 'Detects emails with elevated spam scores that were still delivered, indicating potential policy misconfiguration allowing spam through the gateway.',
+      severity: 'Medium',
+      mitre: ['T1566 - Phishing', 'T1586.002 - Compromise Accounts: Email Accounts'],
+      tags: ['security', 'email', 'spam', 'policy-gap'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'subject', 'SpamScore', 'Action', 'route'],
+      detectionLogic: 'Triggers when SpamScore exceeds the organization threshold (default 7) and the Action indicates delivery rather than rejection or hold. Delivered spam may contain phishing or malware that evaded content scanning.',
+      falsePositives: ['Legitimate bulk marketing emails with high spam characteristics', 'Emails from trusted senders with poor SPF/DKIM configuration'],
+      tuningGuidance: 'Adjust SpamScore threshold based on observed delivery patterns — most organizations block at 5-7. Review route field to understand which mail flow allowed delivery. Consider separate thresholds for inbound vs internal.',
+      investigationWorkflow: '1. Review the email content for phishing indicators\n2. Check why the policy allowed delivery — admin override, allowlist?\n3. Verify the SpamScore threshold in Mimecast policy\n4. Determine if the recipient interacted with the message\n5. Update policy to prevent future bypass if configuration gap found',
+      criblSearchQueries: [
+        {
+          name: 'High spam score delivered emails',
+          description: 'Emails with elevated spam scores that were delivered',
+          query: 'dataset="$DATASET" earliest=-24h\n| where SpamScore > 7 and Action == "allow"\n| project datetime, senderAddress, recipientAddress, subject, SpamScore, route\n| order by SpamScore desc'
+        },
+        {
+          name: 'Spam score distribution by action',
+          description: 'How spam scores correlate with enforcement actions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where SpamScore > 0\n| summarize count() by Action, bin(SpamScore, 1)\n| order by SpamScore desc'
+        },
+        {
+          name: 'Delivered spam by route',
+          description: 'Which mail routes are allowing high-spam-score delivery',
+          query: 'dataset="$DATASET" earliest=-7d\n| where SpamScore > 7 and Action == "allow"\n| summarize count() by route\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-003',
+      name: 'Inbound Email with No TLS Encryption',
+      objective: 'Identifies inbound emails transmitted without TLS encryption, exposing message contents to interception and indicating the sender infrastructure may be compromised or misconfigured.',
+      severity: 'Medium',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1040 - Network Sniffing'],
+      tags: ['security', 'email', 'encryption', 'tls', 'compliance'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'subject', 'TlsVersion', 'route'],
+      detectionLogic: 'Triggers when TlsVersion is empty or indicates no encryption for inbound email routes. Emails sent without TLS are vulnerable to interception in transit. While not always an attack, sudden loss of TLS from a previously-encrypted sender may indicate MitM or DNS hijacking.',
+      falsePositives: ['Legacy mail servers that do not support TLS', 'Temporary TLS failures during certificate renewals'],
+      tuningGuidance: 'Baseline which sender domains normally use TLS and alert only when previously-TLS senders stop encrypting. Focus on inbound route. Exclude known legacy domains that cannot support TLS.',
+      investigationWorkflow: '1. Identify the sender domain and check their historical TLS usage\n2. Determine if TLS loss is sudden (potential attack) or consistent (legacy)\n3. For sudden changes, investigate potential DNS hijacking of sender MX records\n4. Check if the email contains sensitive information exposed by lack of encryption\n5. Contact the sender organization if persistent and previously encrypted',
+      criblSearchQueries: [
+        {
+          name: 'Emails without TLS encryption',
+          description: 'Inbound emails transmitted without TLS protection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where (TlsVersion == "" or TlsVersion == "None") and route == "inbound"\n| project datetime, senderAddress, recipientAddress, subject, TlsVersion\n| order by datetime desc'
+        },
+        {
+          name: 'Non-TLS sender domains',
+          description: 'Domains sending without encryption ranked by volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| where (TlsVersion == "" or TlsVersion == "None") and route == "inbound"\n| extend sender_domain = extract("@(.+)$", 1, senderAddress)\n| summarize no_tls_count = count() by sender_domain\n| order by no_tls_count desc'
+        },
+        {
+          name: 'TLS version distribution',
+          description: 'Overview of TLS versions in use across all email traffic',
+          query: 'dataset="$DATASET" earliest=-7d\n| where route == "inbound"\n| summarize count() by TlsVersion\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-004',
+      name: 'High-Volume Email from Single Sender',
+      objective: 'Detects a single sender address sending an abnormally high volume of emails in a short period, potentially indicating a compromised account being used for spam or phishing distribution.',
+      severity: 'High',
+      mitre: ['T1586.002 - Compromise Accounts: Email Accounts', 'T1534 - Internal Spearphishing'],
+      tags: ['security', 'email', 'anomaly', 'compromised-account', 'volume'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'route', 'Action'],
+      detectionLogic: 'Triggers when a single senderAddress sends more than 100 emails within a 1-hour window. This volume anomaly may indicate a compromised mailbox being weaponized for internal phishing or external spam campaigns.',
+      falsePositives: ['Automated notification systems sending bulk alerts', 'Marketing platforms sending through corporate domains', 'IT systems sending password reset or onboarding emails'],
+      tuningGuidance: 'Whitelist known automated senders and marketing systems. Adjust the threshold based on your organization size. Separate thresholds for inbound vs outbound. For outbound, lower the threshold significantly.',
+      investigationWorkflow: '1. Determine if the sender is internal or external\n2. If internal, check for signs of account compromise (impossible travel, password change)\n3. Review recipient patterns — are they internal, external, or both?\n4. Check email content for phishing or spam indicators\n5. If compromised, disable the account and reset credentials',
+      criblSearchQueries: [
+        {
+          name: 'High-volume senders last hour',
+          description: 'Senders exceeding normal email volume thresholds',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize email_count = count(), unique_recipients = dcount(recipientAddress) by senderAddress, route\n| where email_count > 100\n| order by email_count desc'
+        },
+        {
+          name: 'Sender volume over time',
+          description: 'Hourly email volume for a specific sender to identify burst patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where senderAddress == "$SENDER"\n| timestats count() span=1h'
+        },
+        {
+          name: 'High-volume sender recipients',
+          description: 'Who is receiving emails from the high-volume sender',
+          query: 'dataset="$DATASET" earliest=-1h\n| where senderAddress == "$SENDER"\n| summarize count() by recipientAddress\n| order by count_ desc\n| limit 50'
+        },
+        {
+          name: 'Outbound volume anomalies',
+          description: 'Internal senders with unusual outbound volume suggesting compromise',
+          query: 'dataset="$DATASET" earliest=-1h\n| where route == "outbound"\n| summarize email_count = count() by senderAddress\n| where email_count > 50\n| order by email_count desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-005',
+      name: 'Email Rejection Spike',
+      objective: 'Identifies sudden increases in email rejections which may indicate a brute-force email campaign, directory harvest attack, or compromised infrastructure sending to invalid addresses.',
+      severity: 'High',
+      mitre: ['T1589.002 - Gather Victim Identity Information: Email Addresses', 'T1110 - Brute Force'],
+      tags: ['security', 'email', 'rejection', 'directory-harvest'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'RejectionType', 'route'],
+      detectionLogic: 'Triggers when rejections from a single sender or source exceed 20 within a 15-minute window. High rejection rates from a single source suggest directory harvesting (testing which email addresses are valid) or compromised infrastructure spraying emails.',
+      falsePositives: ['Legitimate senders with outdated mailing lists containing invalid addresses', 'Partner organizations with stale address books after employee turnover'],
+      tuningGuidance: 'Focus on RejectionType values indicating invalid recipients rather than policy blocks. Exclude known bulk senders during list cleanup periods. Track patterns over time to differentiate persistent attacks from one-time issues.',
+      investigationWorkflow: '1. Identify the rejection reason — invalid recipient suggests directory harvest\n2. Analyze the recipient pattern — are they sequential or random?\n3. Check if the sender IP is on threat intelligence blocklists\n4. Determine if any valid recipients received messages from the same sender\n5. Block the sender at the gateway and report to abuse contacts',
+      criblSearchQueries: [
+        {
+          name: 'Rejection spikes by sender',
+          description: 'Senders with high rejection counts in a short window',
+          query: 'dataset="$DATASET" earliest=-1h\n| where RejectionType != ""\n| summarize rejection_count = count() by senderAddress, RejectionType\n| where rejection_count > 20\n| order by rejection_count desc'
+        },
+        {
+          name: 'Rejection types distribution',
+          description: 'Breakdown of why emails are being rejected',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RejectionType != ""\n| summarize count() by RejectionType\n| order by count_ desc'
+        },
+        {
+          name: 'Rejection rate over time',
+          description: 'Temporal pattern of rejections to identify attack windows',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RejectionType != ""\n| timestats count() by RejectionType span=15m'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-006',
+      name: 'Suspicious Multi-Attachment Email',
+      objective: 'Detects inbound emails with an unusually high number of attachments which may be used to deliver multiple malware variants or overwhelm security scanning.',
+      severity: 'High',
+      mitre: ['T1566.001 - Phishing: Spearphishing Attachment', 'T1027 - Obfuscated Files or Information'],
+      tags: ['security', 'email', 'attachment', 'evasion'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'subject', 'AttachmentCount', 'route', 'Action'],
+      detectionLogic: 'Triggers when an inbound email contains more than 10 attachments. Excessive attachments are unusual in legitimate business email and may indicate an attempt to deliver multiple payloads or overwhelm sandbox analysis capacity.',
+      falsePositives: ['Project deliverables with many document attachments', 'Automated reports with multiple file outputs', 'Photo sharing emails with many image files'],
+      tuningGuidance: 'Adjust the attachment threshold based on business norms — creative agencies may legitimately send many attachments. Combine with VirusFound for high-confidence alerts. Exclude known automated senders.',
+      investigationWorkflow: '1. Review the email subject and sender for legitimacy\n2. Check if any attachments triggered virus detection\n3. Verify if the sender is known to the recipient\n4. Analyze attachment types if available in extended metadata\n5. If suspicious, quarantine and notify the recipient',
+      criblSearchQueries: [
+        {
+          name: 'High attachment count emails',
+          description: 'Emails with unusually many attachments',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AttachmentCount > 10 and route == "inbound"\n| project datetime, senderAddress, recipientAddress, subject, AttachmentCount, Action, VirusFound\n| order by AttachmentCount desc'
+        },
+        {
+          name: 'Attachment count distribution',
+          description: 'Normal distribution of attachment counts to calibrate thresholds',
+          query: 'dataset="$DATASET" earliest=-7d\n| where AttachmentCount > 0 and route == "inbound"\n| summarize count() by bin(AttachmentCount, 1)\n| order by AttachmentCount desc'
+        },
+        {
+          name: 'High attachment senders',
+          description: 'Senders frequently sending emails with many attachments',
+          query: 'dataset="$DATASET" earliest=-7d\n| where AttachmentCount > 10 and route == "inbound"\n| summarize email_count = count(), avg_attachments = avg(AttachmentCount) by senderAddress\n| order by email_count desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-sec-007',
+      name: 'Outbound Email Blocked - Potential Data Exfiltration',
+      objective: 'Detects outbound emails that were blocked by policy, which may indicate attempted data exfiltration, policy violations, or a compromised account trying to send sensitive data externally.',
+      severity: 'Medium',
+      mitre: ['T1048.002 - Exfiltration Over Alternative Protocol: Exfiltration Over Asymmetric Encrypted Non-C2 Protocol', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'email', 'data-exfiltration', 'dlp', 'outbound'],
+      requiredFields: ['datetime', 'senderAddress', 'recipientAddress', 'subject', 'route', 'Action', 'RejectionType'],
+      detectionLogic: 'Triggers when outbound emails are blocked or held by Mimecast policy. Blocked outbound messages may indicate DLP policy violations, attempted exfiltration of sensitive data, or an insider threat sending restricted information externally.',
+      falsePositives: ['Legitimate emails triggering overly sensitive DLP rules', 'Large attachments exceeding size limits', 'Emails to personal addresses blocked by policy'],
+      tuningGuidance: 'Focus on repeat offenders and sensitive data indicators. Correlate with DLP classification if available. Distinguish between size-based blocks and content-based blocks via RejectionType.',
+      investigationWorkflow: '1. Identify the sender and determine if the block was expected\n2. Review the RejectionType to understand what policy triggered\n3. Check if the same sender has multiple blocked attempts (persistence)\n4. Review the recipient — is it a personal email, competitor, or known bad destination?\n5. If suspicious, investigate the sender account for compromise or insider threat indicators',
+      criblSearchQueries: [
+        {
+          name: 'Blocked outbound emails',
+          description: 'Outbound emails stopped by policy',
+          query: 'dataset="$DATASET" earliest=-24h\n| where route == "outbound" and Action != "allow"\n| project datetime, senderAddress, recipientAddress, subject, Action, RejectionType\n| order by datetime desc'
+        },
+        {
+          name: 'Repeat outbound block offenders',
+          description: 'Senders with multiple blocked outbound attempts suggesting persistence',
+          query: 'dataset="$DATASET" earliest=-7d\n| where route == "outbound" and Action != "allow"\n| summarize block_count = count(), unique_recipients = dcount(recipientAddress) by senderAddress\n| where block_count > 3\n| order by block_count desc'
+        },
+        {
+          name: 'Outbound block reasons',
+          description: 'Why outbound emails are being blocked',
+          query: 'dataset="$DATASET" earliest=-7d\n| where route == "outbound" and Action != "allow"\n| summarize count() by RejectionType, Action\n| order by count_ desc'
+        },
+        {
+          name: 'Outbound blocks over time',
+          description: 'Trend of outbound email blocks to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| where route == "outbound" and Action != "allow"\n| timestats count() span=4h'
+        }
+      ]
+    }
+  ],
+  'aws-alb-logs': [
+    {
+      id: 'alb-sec-001',
+      name: 'SQL Injection Attempt in Request URL',
+      objective: 'Detects SQL injection patterns in ALB request URLs, indicating an attacker is attempting to exploit backend application vulnerabilities to access or manipulate database contents.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'web', 'sqli', 'injection', 'application-attack'],
+      requiredFields: ['timestamp', 'client_ip', 'request_url', 'elb_status_code', 'target_status_code', 'elb'],
+      detectionLogic: 'Triggers when request_url contains common SQL injection patterns such as UNION SELECT, OR 1=1, single-quote followed by SQL keywords, comment sequences (--), or hex-encoded injection attempts. Correlates with response codes to determine if exploitation may have succeeded.',
+      falsePositives: ['Legitimate application queries containing SQL keywords in parameters', 'Security scanners performing authorized vulnerability assessments', 'API endpoints that accept SQL-like syntax as intended functionality'],
+      tuningGuidance: 'Whitelist known security scanner source IPs. Exclude specific URL paths that legitimately contain SQL keywords. Focus on patterns followed by 200 response codes which may indicate successful injection.',
+      investigationWorkflow: '1. Examine the full request_url to confirm SQL injection payload\n2. Check the target_status_code — 200/302 may indicate successful exploitation\n3. Review all requests from the same client_ip for campaign scope\n4. Check if the backend application has known SQL injection vulnerabilities\n5. Determine if WAF rules should be updated to block this pattern\n6. Review database logs for unusual queries during the attack window',
+      criblSearchQueries: [
+        {
+          name: 'SQL injection patterns in URLs',
+          description: 'Requests containing common SQL injection indicators',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|\\x27|--\\s|;\\s*drop|;\\s*insert|benchmark\\(|sleep\\()"\n| project timestamp, client_ip, request_url, elb_status_code, target_status_code, elb\n| order by timestamp desc'
+        },
+        {
+          name: 'SQLi sources by IP',
+          description: 'Attacker IPs sending the most SQL injection attempts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|\\x27--|;\\s*drop)"\n| summarize attempt_count = count(), unique_urls = dcount(request_url) by client_ip\n| order by attempt_count desc'
+        },
+        {
+          name: 'Successful SQLi indicators',
+          description: 'SQL injection attempts that received 200 responses suggesting success',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1)" and target_status_code == "200"\n| project timestamp, client_ip, request_url, target_status_code\n| order by timestamp desc'
+        },
+        {
+          name: 'SQLi attack timeline',
+          description: 'Temporal distribution of injection attempts to identify campaigns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_url matches regex "(?i)(union\\s+select|or\\s+1\\s*=\\s*1|\\x27--)"\n| timestats count() by client_ip span=1h'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-002',
+      name: 'Path Traversal Attack Attempt',
+      objective: 'Identifies directory traversal attempts in request URLs aimed at accessing files outside the webroot, potentially exposing configuration files, credentials, or system information.',
+      severity: 'High',
+      mitre: ['T1083 - File and Directory Discovery', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'web', 'path-traversal', 'lfi'],
+      requiredFields: ['timestamp', 'client_ip', 'request_url', 'target_status_code', 'elb'],
+      detectionLogic: 'Triggers when request_url contains directory traversal sequences (../, ..\\, %2e%2e) or attempts to access well-known sensitive files (/etc/passwd, /etc/shadow, web.config, .env). These patterns indicate an attacker probing for local file inclusion vulnerabilities.',
+      falsePositives: ['Legitimate relative URL paths in application routes', 'Web crawlers following malformed links containing ../'],
+      tuningGuidance: 'Exclude known application paths that legitimately use relative navigation. Focus on patterns targeting sensitive file paths. Correlate with 200 status codes for confirmed exposure.',
+      investigationWorkflow: '1. Verify the request is a genuine traversal attempt vs legitimate URL\n2. Check target_status_code — 200 indicates the file was served (critical)\n3. Identify all requests from the attacking client_ip\n4. Determine what files the attacker may have accessed\n5. Patch the vulnerable application endpoint\n6. Rotate any credentials that may have been exposed',
+      criblSearchQueries: [
+        {
+          name: 'Path traversal attempts',
+          description: 'Requests containing directory traversal patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url matches regex "(\\.\\./|\\.\\.\\\\/|%2e%2e|/etc/passwd|/etc/shadow|\\.env|web\\.config)"\n| project timestamp, client_ip, request_url, target_status_code, elb\n| order by timestamp desc'
+        },
+        {
+          name: 'Successful traversal attempts',
+          description: 'Path traversal requests that may have succeeded',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url matches regex "(\\.\\./|%2e%2e|/etc/passwd)" and target_status_code == "200"\n| project timestamp, client_ip, request_url\n| order by timestamp desc'
+        },
+        {
+          name: 'Traversal attack sources',
+          description: 'Source IPs performing path traversal attacks',
+          query: 'dataset="$DATASET" earliest=-7d\n| where request_url matches regex "(\\.\\./|%2e%2e)"\n| summarize attempt_count = count() by client_ip\n| order by attempt_count desc'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-003',
+      name: 'Anomalous HTTP Error Rate from Single IP',
+      objective: 'Detects a single client IP generating an abnormally high rate of 4xx/5xx errors, indicating automated scanning, brute-force attacks, or application enumeration.',
+      severity: 'High',
+      mitre: ['T1595.002 - Active Scanning: Vulnerability Scanning', 'T1110 - Brute Force'],
+      tags: ['security', 'web', 'scanning', 'brute-force', 'enumeration'],
+      requiredFields: ['timestamp', 'client_ip', 'elb_status_code', 'request_url', 'elb'],
+      detectionLogic: 'Triggers when a single client_ip generates more than 100 requests with 4xx or 5xx elb_status_code within a 5-minute window. High error rates from a single source indicate automated tooling probing the application for vulnerabilities or valid paths.',
+      falsePositives: ['Misconfigured applications generating client-side errors', 'Load testing from known IP ranges', 'Mobile apps with broken API endpoints causing retries'],
+      tuningGuidance: 'Whitelist known load testing and monitoring IPs. Adjust threshold based on application traffic volume. Distinguish between 403 (access denied, may be brute force) and 404 (path enumeration) for different response procedures.',
+      investigationWorkflow: '1. Categorize the error codes — 401/403 suggests brute force, 404 suggests enumeration\n2. Review the request_url patterns for scanning tool signatures\n3. Check the user_agent for known scanner tools\n4. Determine if the IP is from a known hosting/VPN provider\n5. Block the IP at WAF or security group if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'High error rate IPs',
+          description: 'Client IPs generating excessive HTTP errors',
+          query: 'dataset="$DATASET" earliest=-5m\n| where elb_status_code matches regex "^[45]"\n| summarize error_count = count(), unique_urls = dcount(request_url) by client_ip\n| where error_count > 100\n| order by error_count desc'
+        },
+        {
+          name: 'Error type breakdown by attacker IP',
+          description: 'Distribution of error codes from suspicious IPs',
+          query: 'dataset="$DATASET" earliest=-1h\n| where client_ip == "$ATTACKER_IP"\n| summarize count() by elb_status_code\n| order by count_ desc'
+        },
+        {
+          name: 'Scanning activity timeline',
+          description: 'Temporal pattern of error-generating requests',
+          query: 'dataset="$DATASET" earliest=-24h\n| where elb_status_code matches regex "^[45]"\n| summarize error_count = count() by client_ip, bin(timestamp, 5m)\n| where error_count > 50\n| order by error_count desc'
+        },
+        {
+          name: 'Top targeted URLs',
+          description: 'Most frequently requested URLs returning errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| where elb_status_code matches regex "^[45]" and client_ip == "$ATTACKER_IP"\n| summarize count() by request_url\n| order by count_ desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-004',
+      name: 'Suspicious User Agent - Known Attack Tools',
+      objective: 'Identifies requests from user agents associated with known attack tools, scanners, or exploitation frameworks, indicating active reconnaissance or exploitation attempts.',
+      severity: 'High',
+      mitre: ['T1595.002 - Active Scanning: Vulnerability Scanning', 'T1592 - Gather Victim Host Information'],
+      tags: ['security', 'web', 'reconnaissance', 'attack-tools'],
+      requiredFields: ['timestamp', 'client_ip', 'request_url', 'user_agent', 'elb_status_code', 'elb'],
+      detectionLogic: 'Triggers when the user_agent field matches patterns associated with known attack tools including sqlmap, nikto, nmap, dirbuster, gobuster, nuclei, burp, hydra, or common bot signatures used in automated attacks.',
+      falsePositives: ['Authorized penetration testing using these tools', 'Security vendors performing contracted assessments', 'Bug bounty researchers with approved scope'],
+      tuningGuidance: 'Maintain an allowlist of authorized pen-test source IPs. Update the tool signature list regularly as new tools emerge. Consider that sophisticated attackers spoof user agents — absence of tool signatures does not mean absence of scanning.',
+      investigationWorkflow: '1. Identify the specific tool from the user_agent string\n2. Determine if this is authorized testing (check pen-test schedule)\n3. Review all activity from the source IP for scope and intent\n4. Check what the scanner discovered (200 responses = exposed endpoints)\n5. Block unauthorized scanners at WAF and report source IP',
+      criblSearchQueries: [
+        {
+          name: 'Known attack tool user agents',
+          description: 'Requests from recognized offensive security tools',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user_agent matches regex "(?i)(sqlmap|nikto|nmap|dirbuster|gobuster|nuclei|burpsuite|hydra|masscan|zgrab|wpscan)"\n| project timestamp, client_ip, user_agent, request_url, elb_status_code\n| order by timestamp desc'
+        },
+        {
+          name: 'Attack tool usage by IP',
+          description: 'Which IPs are using offensive tools and their request volumes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where user_agent matches regex "(?i)(sqlmap|nikto|nmap|dirbuster|gobuster|nuclei|burpsuite|hydra)"\n| summarize request_count = count(), tools = makeset(user_agent) by client_ip\n| order by request_count desc'
+        },
+        {
+          name: 'Scanner success rate',
+          description: 'What scanners are successfully finding (200 responses)',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user_agent matches regex "(?i)(sqlmap|nikto|nuclei|gobuster)" and target_status_code == "200"\n| project timestamp, client_ip, user_agent, request_url\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-005',
+      name: 'Slow HTTP Attack - Extended Processing Time',
+      objective: 'Detects requests with abnormally long processing times that may indicate slow HTTP DoS attacks (Slowloris, RUDY) designed to exhaust backend connection pools.',
+      severity: 'Medium',
+      mitre: ['T1499.001 - Endpoint Denial of Service: OS Exhaustion Flood', 'T1499.002 - Endpoint Denial of Service: Service Exhaustion Flood'],
+      tags: ['security', 'web', 'dos', 'slow-http', 'availability'],
+      requiredFields: ['timestamp', 'client_ip', 'request_processing_time', 'target_processing_time', 'response_processing_time', 'elb', 'request_url'],
+      detectionLogic: 'Triggers when request_processing_time or target_processing_time exceeds abnormal thresholds (e.g., > 30 seconds) from multiple connections by the same client_ip. Slow HTTP attacks deliberately hold connections open to exhaust server resources.',
+      falsePositives: ['Legitimate long-running API requests (file uploads, report generation)', 'Backend application performance issues causing slow responses', 'WebSocket connections with long-lived sessions'],
+      tuningGuidance: 'Baseline normal processing times per application endpoint. Exclude known long-running endpoints (uploads, exports). Focus on multiple concurrent slow connections from the same IP. Consider request_processing_time separately from target_processing_time.',
+      investigationWorkflow: '1. Determine if slow connections are from one IP or distributed\n2. Check if backend services are experiencing resource exhaustion\n3. Review the request_url — is it hitting endpoints known for long processing?\n4. Compare current connection pool usage against capacity\n5. Implement connection timeout policies if not already in place\n6. Block offending IPs and consider rate limiting',
+      criblSearchQueries: [
+        {
+          name: 'Abnormally slow requests',
+          description: 'Requests with processing times exceeding normal thresholds',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_processing_time > 30 or target_processing_time > 30\n| project timestamp, client_ip, request_url, request_processing_time, target_processing_time, response_processing_time\n| order by request_processing_time desc'
+        },
+        {
+          name: 'Slow HTTP attack sources',
+          description: 'IPs with multiple slow connections suggesting deliberate attack',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_processing_time > 10\n| summarize slow_count = count(), avg_time = avg(request_processing_time) by client_ip\n| where slow_count > 10\n| order by slow_count desc'
+        },
+        {
+          name: 'Processing time trend',
+          description: 'Overall processing time trends to identify DoS impact',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats avg(request_processing_time), avg(target_processing_time), percentile(target_processing_time, 95) span=5m'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-006',
+      name: 'Weak or Deprecated SSL/TLS Protocol Usage',
+      objective: 'Identifies connections using deprecated or weak SSL/TLS protocols (SSLv3, TLS 1.0, TLS 1.1) which are vulnerable to known attacks and indicate clients that need upgrading.',
+      severity: 'Medium',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1600 - Weaken Encryption'],
+      tags: ['security', 'web', 'encryption', 'tls', 'compliance'],
+      requiredFields: ['timestamp', 'client_ip', 'ssl_protocol', 'ssl_cipher', 'request_url', 'user_agent', 'elb'],
+      detectionLogic: 'Triggers when ssl_protocol indicates use of SSLv3, TLSv1, or TLSv1.1. These deprecated protocols have known vulnerabilities (POODLE, BEAST, etc.) and should be disabled. Connections using them indicate legacy clients or potential downgrade attacks.',
+      falsePositives: ['Legacy IoT devices or embedded systems that cannot be upgraded', 'Older mobile applications pending updates', 'Legacy partner integrations using outdated TLS stacks'],
+      tuningGuidance: 'Inventory known legacy clients that require old TLS versions and track their migration timeline. Plan ALB policy updates to disable TLS 1.0/1.1. Monitor for sudden appearance of old protocols from new IPs (possible downgrade attack).',
+      investigationWorkflow: '1. Identify the client using the deprecated protocol via client_ip and user_agent\n2. Determine if this is a known legacy system or new/unexpected\n3. Check if the same IP also connects with modern protocols (downgrade indicator)\n4. Plan deprecation timeline for old protocol support\n5. Notify application owners of clients needing TLS upgrade',
+      criblSearchQueries: [
+        {
+          name: 'Deprecated TLS protocol usage',
+          description: 'Connections using weak or deprecated TLS versions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ssl_protocol in ("SSLv3", "TLSv1", "TLSv1.1")\n| project timestamp, client_ip, ssl_protocol, ssl_cipher, user_agent, request_url\n| order by timestamp desc'
+        },
+        {
+          name: 'Weak protocol usage by client',
+          description: 'Clients using deprecated protocols ranked by request volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ssl_protocol in ("SSLv3", "TLSv1", "TLSv1.1")\n| summarize request_count = count(), protocols = makeset(ssl_protocol) by client_ip, user_agent\n| order by request_count desc'
+        },
+        {
+          name: 'TLS version distribution',
+          description: 'Overall TLS version usage across all ALB traffic',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by ssl_protocol\n| order by count_ desc'
+        },
+        {
+          name: 'Weak cipher usage',
+          description: 'Deprecated ciphers still in use that should be removed from ALB policy',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ssl_protocol in ("SSLv3", "TLSv1", "TLSv1.1")\n| summarize count() by ssl_cipher\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'alb-sec-007',
+      name: 'High-Volume Requests to Single Endpoint - DDoS Indicator',
+      objective: 'Detects volumetric attacks targeting a specific application endpoint, which may indicate a Layer 7 DDoS attack aimed at exhausting backend resources for a particular service.',
+      severity: 'Critical',
+      mitre: ['T1499.002 - Endpoint Denial of Service: Service Exhaustion Flood'],
+      tags: ['security', 'web', 'ddos', 'availability', 'volumetric'],
+      requiredFields: ['timestamp', 'client_ip', 'request_url', 'elb_status_code', 'target_status_code', 'elb', 'target_processing_time'],
+      detectionLogic: 'Triggers when a single request_url path receives more than 10000 requests within a 5-minute window from multiple distinct client_ip addresses, especially when accompanied by increasing target_processing_time or elevated 5xx error rates indicating backend stress.',
+      falsePositives: ['Viral content generating legitimate traffic spikes', 'Marketing campaigns driving high traffic to landing pages', 'API endpoints used by large-scale mobile apps'],
+      tuningGuidance: 'Baseline normal request rates per endpoint and set thresholds at 5-10x normal. Distinguish between single-IP flooding (easier to block) and distributed attacks. Correlate with backend health metrics for confirmation.',
+      investigationWorkflow: '1. Identify the targeted endpoint and its normal traffic baseline\n2. Determine if the traffic is from many IPs (distributed) or few (single source)\n3. Check if backend is degrading (increased processing time, 5xx errors)\n4. Engage AWS Shield and WAF rate limiting rules\n5. Consider geographic blocking if attack sources are concentrated\n6. Scale backend if legitimate traffic is mixed with attack traffic',
+      criblSearchQueries: [
+        {
+          name: 'High-volume endpoint requests',
+          description: 'URLs receiving abnormally high request volumes',
+          query: 'dataset="$DATASET" earliest=-5m\n| extend url_path = extract("^(https?://[^/]+[^?]*)", 1, request_url)\n| summarize request_count = count(), unique_ips = dcount(client_ip) by url_path\n| where request_count > 10000\n| order by request_count desc'
+        },
+        {
+          name: 'DDoS source distribution',
+          description: 'Geographic and IP distribution of high-volume traffic',
+          query: 'dataset="$DATASET" earliest=-5m\n| where request_url contains "$TARGET_PATH"\n| summarize request_count = count() by client_ip\n| order by request_count desc\n| limit 50'
+        },
+        {
+          name: 'Backend stress indicators',
+          description: 'Processing time and error rate correlation during volume spike',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_url contains "$TARGET_PATH"\n| timestats avg(target_processing_time), countif(target_status_code matches regex "^5") as error_5xx, count() as total span=1m'
+        },
+        {
+          name: 'Attack vs normal traffic comparison',
+          description: 'Compare current volume against baseline for the targeted endpoint',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_url contains "$TARGET_PATH"\n| timestats count() span=5m'
+        }
+      ]
+    }
+  ],
+  'fortinet-fortigate': [
+    {
+      id: 'fgt-sec-001',
+      name: 'Firewall Policy Deny with High Data Transfer',
+      objective: 'Detects blocked connections that had significant data transfer before being denied, indicating the firewall may have interrupted an active data exfiltration attempt or C2 communication.',
+      severity: 'Critical',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1071 - Application Layer Protocol'],
+      tags: ['security', 'firewall', 'exfiltration', 'data-transfer'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'action', 'sentbyte', 'rcvdbyte', 'service', 'policyid'],
+      detectionLogic: 'Triggers when action is "deny" or "dropped" but sentbyte or rcvdbyte exceeds 10MB, indicating substantial data was transferred before the policy blocked the connection. This can occur when policies are applied mid-session or when connection tracking identifies threats after initial allow.',
+      falsePositives: ['Long-lived legitimate connections interrupted by policy changes', 'Large file downloads blocked by URL category changes mid-transfer', 'Backup or sync processes hitting newly applied deny rules'],
+      tuningGuidance: 'Adjust the byte threshold based on your environment — 10MB is a starting point. Focus on outbound sentbyte (data leaving the network). Correlate with threat level and destination reputation.',
+      investigationWorkflow: '1. Identify the source endpoint and destination IP\n2. Determine what service/port was used for the transfer\n3. Check destination IP reputation and geolocation\n4. Calculate total data transferred (sentbyte + rcvdbyte) before the block\n5. Investigate the source endpoint for compromise indicators\n6. Check if this connection was allowed previously and why it was denied now',
+      criblSearchQueries: [
+        {
+          name: 'Denied connections with large data transfer',
+          description: 'Blocked sessions that transferred significant data before denial',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action in ("deny", "dropped") and (sentbyte > 10000000 or rcvdbyte > 10000000)\n| project date, time, srcip, dstip, service, sentbyte, rcvdbyte, policyid, action\n| order by sentbyte desc'
+        },
+        {
+          name: 'Top exfiltration candidates',
+          description: 'Denied connections ranked by outbound data volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action in ("deny", "dropped") and sentbyte > 5000000\n| summarize total_sent = sum(sentbyte), session_count = count() by srcip, dstip\n| order by total_sent desc'
+        },
+        {
+          name: 'Denied high-transfer destinations',
+          description: 'Destination IPs receiving large data volumes before connection denial',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action in ("deny", "dropped") and sentbyte > 1000000\n| summarize total_bytes = sum(sentbyte), source_count = dcount(srcip) by dstip, service\n| order by total_bytes desc'
+        },
+        {
+          name: 'Data transfer before deny trend',
+          description: 'Temporal pattern of high-transfer denials',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action in ("deny", "dropped") and sentbyte > 5000000\n| timestats sum(sentbyte) span=4h'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-002',
+      name: 'Outbound Connection to Non-Standard Port',
+      objective: 'Detects outbound connections to unusual destination ports that may indicate C2 communication, data exfiltration tunnels, or malware using non-standard ports to evade detection.',
+      severity: 'High',
+      mitre: ['T1571 - Non-Standard Port', 'T1572 - Protocol Tunneling'],
+      tags: ['security', 'firewall', 'c2', 'non-standard-port', 'evasion'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'dstport', 'action', 'service', 'sentbyte', 'rcvdbyte'],
+      detectionLogic: 'Triggers when outbound allowed connections use destination ports outside the standard set (80, 443, 53, 25, 587, 993, 995) with significant data transfer. C2 frameworks commonly use high ports or non-standard ports to avoid inspection by security tools that focus on standard traffic.',
+      falsePositives: ['Legitimate SaaS applications using non-standard ports', 'VPN connections to partner networks on custom ports', 'Development and staging environments using high ports'],
+      tuningGuidance: 'Maintain a whitelist of approved non-standard ports by destination. Focus on ports with bidirectional communication (rcvdbyte > 0). Exclude known SaaS and cloud service IP ranges. Consider the volume and duration of connections.',
+      investigationWorkflow: '1. Identify the application using the non-standard port\n2. Check destination IP reputation and ownership\n3. Verify if this is an approved application or shadow IT\n4. Review data transfer volume for exfiltration indicators\n5. If unknown, block the port/destination and investigate the source endpoint',
+      criblSearchQueries: [
+        {
+          name: 'Non-standard port outbound connections',
+          description: 'Allowed outbound traffic to unusual ports with data transfer',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "accept" and dstport !in (80, 443, 53, 25, 587, 993, 995, 22) and sentbyte > 1000\n| project date, time, srcip, dstip, dstport, service, sentbyte, rcvdbyte, duration\n| order by sentbyte desc'
+        },
+        {
+          name: 'Unusual port frequency analysis',
+          description: 'Most commonly used non-standard ports across the environment',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "accept" and dstport !in (80, 443, 53, 25, 587, 993, 995, 22)\n| summarize connection_count = count(), total_bytes = sum(sentbyte), unique_sources = dcount(srcip) by dstport\n| order by connection_count desc\n| limit 30'
+        },
+        {
+          name: 'Single source using many non-standard ports',
+          description: 'Sources connecting to multiple unusual ports suggesting scanning or C2',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "accept" and dstport !in (80, 443, 53, 25, 587, 993, 995, 22)\n| summarize unique_ports = dcount(dstport), unique_destinations = dcount(dstip) by srcip\n| where unique_ports > 5\n| order by unique_ports desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-003',
+      name: 'Excessive Denied Connections from Single Source',
+      objective: 'Identifies internal hosts generating a high volume of denied connections, which may indicate malware attempting lateral movement, a misconfigured system, or active reconnaissance within the network.',
+      severity: 'High',
+      mitre: ['T1046 - Network Service Scanning', 'T1021 - Remote Services'],
+      tags: ['security', 'firewall', 'lateral-movement', 'scanning', 'internal'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'dstport', 'action', 'policyid'],
+      detectionLogic: 'Triggers when a single srcip generates more than 500 denied connections within a 10-minute window to multiple distinct dstip or dstport combinations. This pattern indicates network scanning, worm propagation, or misconfigured applications aggressively retrying failed connections.',
+      falsePositives: ['Misconfigured monitoring tools scanning blocked segments', 'Network discovery tools used by IT during maintenance', 'Applications with aggressive retry logic hitting firewall rules'],
+      tuningGuidance: 'Whitelist known network management and monitoring tool IPs. Adjust threshold based on network size. Differentiate between single-port scans (service enumeration) and multi-port scans (host reconnaissance) for severity adjustment.',
+      investigationWorkflow: '1. Identify the source host and its normal function\n2. Categorize the scan — is it single port/many hosts or single host/many ports?\n3. Check if the source endpoint has any EDR alerts\n4. Verify with the system owner if this is authorized scanning\n5. If unauthorized, isolate the endpoint and investigate for malware\n6. Review what the source could reach if the deny rules were not in place',
+      criblSearchQueries: [
+        {
+          name: 'High-volume deny sources',
+          description: 'Internal IPs generating excessive denied connections',
+          query: 'dataset="$DATASET" earliest=-10m\n| where action in ("deny", "dropped")\n| summarize deny_count = count(), unique_dstip = dcount(dstip), unique_dstport = dcount(dstport) by srcip\n| where deny_count > 500\n| order by deny_count desc'
+        },
+        {
+          name: 'Scan target analysis',
+          description: 'Destinations targeted by a scanning source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action in ("deny", "dropped") and srcip == "$SCANNER_IP"\n| summarize count() by dstip, dstport\n| order by count_ desc\n| limit 50'
+        },
+        {
+          name: 'Deny spike timeline',
+          description: 'When did the denied connection spike begin for the source',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action in ("deny", "dropped") and srcip == "$SCANNER_IP"\n| timestats count() span=5m'
+        },
+        {
+          name: 'Fleet-wide deny anomalies',
+          description: 'All sources with anomalous deny rates for fleet comparison',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action in ("deny", "dropped")\n| summarize deny_count = count() by srcip\n| where deny_count > 100\n| order by deny_count desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-004',
+      name: 'Long-Duration Session to External IP',
+      objective: 'Detects sessions with abnormally long durations to external IPs which may indicate persistent C2 beaconing channels, covert tunnels, or unauthorized VPN connections.',
+      severity: 'High',
+      mitre: ['T1071.001 - Application Layer Protocol: Web Protocols', 'T1573 - Encrypted Channel'],
+      tags: ['security', 'firewall', 'c2', 'persistence', 'long-session'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'dstport', 'duration', 'sentbyte', 'rcvdbyte', 'service'],
+      detectionLogic: 'Triggers when session duration exceeds 8 hours to a single external destination with bidirectional data transfer. Persistent long-lived connections to external hosts are atypical for most business applications and may indicate C2 infrastructure, reverse shells, or covert tunnels.',
+      falsePositives: ['Legitimate VPN connections to partner networks', 'Long-lived WebSocket connections for real-time applications', 'Video conferencing sessions during long meetings'],
+      tuningGuidance: 'Whitelist known VPN and SaaS destination IPs. Focus on sessions with periodic small data transfers (beaconing pattern) rather than bulk streaming. Adjust duration threshold based on normal business application session lengths.',
+      investigationWorkflow: '1. Identify the destination IP and check reputation/ownership\n2. Analyze the data transfer pattern — is it beaconing (periodic small transfers)?\n3. Determine the service/application making the connection\n4. Verify with the user/system owner if the connection is expected\n5. If suspicious, capture and analyze the traffic for protocol anomalies',
+      criblSearchQueries: [
+        {
+          name: 'Long-duration external sessions',
+          description: 'Sessions exceeding 8 hours to external destinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "accept" and duration > 28800\n| project date, time, srcip, dstip, dstport, service, duration, sentbyte, rcvdbyte\n| order by duration desc'
+        },
+        {
+          name: 'Persistent connections by destination',
+          description: 'External IPs with the longest aggregate connection time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "accept" and duration > 3600\n| summarize total_duration = sum(duration), session_count = count(), total_sent = sum(sentbyte) by srcip, dstip, dstport\n| order by total_duration desc'
+        },
+        {
+          name: 'Beaconing pattern detection',
+          description: 'Sources with many short-interval connections to same destination',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "accept"\n| summarize session_count = count(), avg_duration = avg(duration) by srcip, dstip\n| where session_count > 50 and avg_duration < 60\n| order by session_count desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-005',
+      name: 'DNS over Non-Standard Port',
+      objective: 'Detects DNS traffic on ports other than 53, which may indicate DNS tunneling, C2 communication disguised as DNS, or protocol evasion attempts.',
+      severity: 'Medium',
+      mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1572 - Protocol Tunneling'],
+      tags: ['security', 'firewall', 'dns-tunneling', 'c2', 'evasion'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'dstport', 'service', 'action', 'sentbyte'],
+      detectionLogic: 'Triggers when the service field indicates DNS but the dstport is not 53, or when connections to known DNS-over-HTTPS ports (443) show DNS service classification. Attackers use DNS tunneling on non-standard ports to exfiltrate data or maintain C2 channels while evading traditional DNS monitoring.',
+      falsePositives: ['DNS-over-HTTPS (DoH) to legitimate resolvers like 1.1.1.1 or 8.8.8.8', 'DNS-over-TLS on port 853 to trusted resolvers', 'Internal DNS servers running on non-standard ports in lab environments'],
+      tuningGuidance: 'Whitelist known DoH/DoT resolver IPs (Cloudflare, Google, Quad9). Focus on DNS to unknown external IPs on unusual ports. Monitor sentbyte for DNS tunneling — legitimate DNS queries transfer minimal data.',
+      investigationWorkflow: '1. Identify the destination — is it a known DNS resolver or unknown IP?\n2. Check the data transfer volume — DNS tunneling shows elevated sentbyte\n3. Review the source endpoint for malware indicators\n4. Block non-approved DNS resolvers at the firewall\n5. Implement DNS sinkholing for the suspicious destination',
+      criblSearchQueries: [
+        {
+          name: 'DNS on non-standard ports',
+          description: 'DNS service traffic not using port 53',
+          query: 'dataset="$DATASET" earliest=-24h\n| where service == "DNS" and dstport != 53\n| project date, time, srcip, dstip, dstport, action, sentbyte, rcvdbyte\n| order by sentbyte desc'
+        },
+        {
+          name: 'High-volume DNS by source',
+          description: 'Sources with abnormal DNS data volumes suggesting tunneling',
+          query: 'dataset="$DATASET" earliest=-24h\n| where service == "DNS"\n| summarize total_sent = sum(sentbyte), query_count = count() by srcip, dstip, dstport\n| where total_sent > 1000000\n| order by total_sent desc'
+        },
+        {
+          name: 'Non-standard DNS destinations',
+          description: 'External IPs receiving DNS traffic on unusual ports',
+          query: 'dataset="$DATASET" earliest=-7d\n| where service == "DNS" and dstport != 53\n| summarize count(), total_bytes = sum(sentbyte) by dstip, dstport\n| order by total_bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-006',
+      name: 'Critical Severity Event from FortiGate',
+      objective: 'Captures events logged at critical or emergency severity levels by FortiGate, indicating the device has identified conditions requiring immediate attention such as attacks, system failures, or security violations.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1562.004 - Impair Defenses: Disable or Modify System Firewall'],
+      tags: ['security', 'firewall', 'critical-event', 'device-health'],
+      requiredFields: ['date', 'time', 'level', 'subtype', 'logid', 'srcip', 'dstip', 'devname', 'vd'],
+      detectionLogic: 'Triggers when the level field is "critical", "emergency", or "alert". FortiGate reserves these severity levels for the most significant events — active attacks, system compromise, resource exhaustion, or security feature failures that demand immediate SOC response.',
+      falsePositives: ['HA failover events generating critical-level logs', 'IPS signature updates temporarily triggering alert-level events', 'Hardware health alerts for non-security components'],
+      tuningGuidance: 'Differentiate by subtype — security subtypes need immediate response while system subtypes may be operational. Create separate handling for each devname if multiple FortiGates have different risk profiles.',
+      investigationWorkflow: '1. Identify the subtype to determine the nature of the critical event\n2. Check the logid against FortiGate documentation for specific event details\n3. If security-related, identify source and destination IPs involved\n4. Verify the FortiGate device health and HA status\n5. Correlate with other security tools for multi-source confirmation\n6. Escalate per severity-based response playbook',
+      criblSearchQueries: [
+        {
+          name: 'Critical severity events',
+          description: 'All critical/emergency/alert level FortiGate events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where level in ("critical", "emergency", "alert")\n| project date, time, level, subtype, logid, srcip, dstip, devname, vd\n| order by date desc, time desc'
+        },
+        {
+          name: 'Critical events by subtype',
+          description: 'Categorization of critical events by type',
+          query: 'dataset="$DATASET" earliest=-7d\n| where level in ("critical", "emergency", "alert")\n| summarize count() by subtype, level, devname\n| order by count_ desc'
+        },
+        {
+          name: 'Critical event trend',
+          description: 'Temporal distribution of critical events to identify spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where level in ("critical", "emergency", "alert")\n| timestats count() by level span=4h'
+        },
+        {
+          name: 'Critical events by device',
+          description: 'Which FortiGate devices are generating the most critical events',
+          query: 'dataset="$DATASET" earliest=-7d\n| where level in ("critical", "emergency", "alert")\n| summarize critical_count = count() by devname, vd\n| order by critical_count desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-sec-007',
+      name: 'Policy ID Zero or Implicit Deny Traffic',
+      objective: 'Detects traffic hitting the implicit deny rule (policy ID 0) which may indicate misconfigured systems, unauthorized applications, or reconnaissance activity probing firewall boundaries.',
+      severity: 'Medium',
+      mitre: ['T1046 - Network Service Scanning', 'T1018 - Remote System Discovery'],
+      tags: ['security', 'firewall', 'policy', 'misconfiguration', 'reconnaissance'],
+      requiredFields: ['date', 'time', 'srcip', 'dstip', 'dstport', 'action', 'policyid', 'service', 'devname'],
+      detectionLogic: 'Triggers when policyid is 0 (implicit deny) with elevated volume from a single source. Traffic hitting the implicit deny means no explicit policy matched, suggesting either a new unauthorized application, network misconfiguration, or deliberate probing of firewall rule boundaries.',
+      falsePositives: ['Newly deployed applications before firewall rules are created', 'DHCP or broadcast traffic not matched by explicit policies', 'Network changes creating temporary routing asymmetries'],
+      tuningGuidance: 'Baseline implicit deny volume per source and alert on deviations. Exclude known broadcast/multicast traffic. Focus on sources that previously had no implicit deny hits (new behavior). Separate internal-to-internal from internal-to-external patterns.',
+      investigationWorkflow: '1. Identify what the source is trying to reach (dstip, dstport)\n2. Determine if this is a new application needing a firewall rule\n3. Check if the source was recently deployed or changed\n4. If the traffic pattern looks like scanning, investigate for compromise\n5. Create explicit deny rules with logging for known-bad patterns\n6. Work with network team to create allow rules for legitimate new traffic',
+      criblSearchQueries: [
+        {
+          name: 'Implicit deny hits',
+          description: 'Traffic hitting policy ID 0 (implicit deny rule)',
+          query: 'dataset="$DATASET" earliest=-24h\n| where policyid == 0\n| project date, time, srcip, dstip, dstport, service, devname\n| order by date desc, time desc'
+        },
+        {
+          name: 'Top implicit deny sources',
+          description: 'Sources generating the most implicit deny traffic',
+          query: 'dataset="$DATASET" earliest=-24h\n| where policyid == 0\n| summarize deny_count = count(), unique_destinations = dcount(dstip), unique_ports = dcount(dstport) by srcip\n| order by deny_count desc'
+        },
+        {
+          name: 'Implicit deny destinations',
+          description: 'What destinations are being reached via implicit deny',
+          query: 'dataset="$DATASET" earliest=-24h\n| where policyid == 0\n| summarize count() by dstip, dstport, service\n| order by count_ desc\n| limit 30'
+        },
+        {
+          name: 'Implicit deny volume trend',
+          description: 'Trend of implicit deny traffic to spot new applications or scanning',
+          query: 'dataset="$DATASET" earliest=-7d\n| where policyid == 0\n| timestats count() span=1h'
+        }
+      ]
+    }
+  ],
+  'cisco-firepower': [
+    {
+      id: 'cfp-sec-001',
+      name: 'Repeated Intrusion Policy Blocks from Single Source',
+      objective: 'Detects a single source IP triggering multiple intrusion policy blocks, indicating active exploitation attempts or persistent scanning against protected assets.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1595 - Active Scanning'],
+      tags: ['security', 'intrusion-detection', 'exploit-attempt'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'AccessControlRuleAction', 'SignatureID', 'IntrrusionPolicy'],
+      detectionLogic: 'Aggregates events where AccessControlRuleAction is Block and an IntrrusionPolicy is matched, grouping by SourceIP over a sliding window. Triggers when a single source generates 10 or more blocked intrusion events within 15 minutes, suggesting coordinated exploitation rather than incidental traffic.',
+      falsePositives: ['Vulnerability scanners run by internal security teams', 'Penetration testing engagements with authorized source IPs'],
+      tuningGuidance: 'Whitelist known vulnerability scanner IPs. Adjust the threshold count and time window based on baseline intrusion block volume. Exclude scheduled scan windows.',
+      investigationWorkflow: '1. Identify the source IP and determine if it is internal or external\n2. Review the SignatureIDs triggered to understand the attack types attempted\n3. Check if any events resulted in Allow actions indicating partial success\n4. Correlate with destination asset criticality and patch status\n5. Block the source at the perimeter if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'Top blocked intrusion sources',
+          description: 'Identifies source IPs with the most intrusion-related blocks in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Block" AND IntrrusionPolicy != ""\n| summarize count() by SourceIP, SignatureID\n| order by count_ desc'
+        },
+        {
+          name: 'Intrusion block timeline for specific source',
+          description: 'Shows temporal pattern of intrusion blocks from a specific source IP',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Block" AND SourceIP == "$SUSPECT_IP"\n| timestats count() by SignatureID span=5m'
+        },
+        {
+          name: 'Destination targets of blocked source',
+          description: 'Maps which internal assets a blocked source attempted to reach',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Block" AND SourceIP == "$SUSPECT_IP"\n| summarize count() by DestinationIP, DestinationPort, Protocol\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-002',
+      name: 'Allowed Traffic to Known Malicious Signature',
+      objective: 'Detects events where traffic matching a known intrusion signature was allowed through rather than blocked, indicating a potential policy misconfiguration or evasion.',
+      severity: 'Critical',
+      mitre: ['T1071 - Application Layer Protocol', 'T1562.004 - Disable or Modify System Firewall'],
+      tags: ['security', 'policy-gap', 'allowed-exploit'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'AccessControlRuleAction', 'SignatureID', 'IntrrusionPolicy', 'AccessControlRuleName'],
+      detectionLogic: 'Identifies events where a SignatureID is populated (indicating intrusion detection match) but the AccessControlRuleAction is Allow or Trust rather than Block. This reveals gaps where the intrusion policy detected malicious traffic but the access control rule permitted it to pass.',
+      falsePositives: ['Rules intentionally set to monitor-only mode during tuning phases', 'Low-confidence signatures with high false positive rates set to alert-only'],
+      tuningGuidance: 'Maintain a list of SignatureIDs intentionally set to detect-only mode. Exclude those from alerting. Focus on signatures with severity >= High that are in Allow state.',
+      investigationWorkflow: '1. Review the AccessControlRuleName that allowed the traffic\n2. Determine if the rule is intentionally permissive or misconfigured\n3. Analyze the SignatureID to understand the threat type and severity\n4. Check the destination host for indicators of compromise\n5. Engage firewall team to correct policy if misconfiguration confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Allowed traffic with signature matches',
+          description: 'Finds all events where intrusion signatures fired but traffic was allowed',
+          query: 'dataset="$DATASET" earliest=-24h\n| where SignatureID != "" AND AccessControlRuleAction in ("Allow", "Trust")\n| summarize count() by SignatureID, AccessControlRuleName, AccessControlRuleAction\n| order by count_ desc'
+        },
+        {
+          name: 'Source-destination pairs for allowed signature hits',
+          description: 'Maps communication pairs where known-bad signatures were permitted',
+          query: 'dataset="$DATASET" earliest=-24h\n| where SignatureID != "" AND AccessControlRuleAction in ("Allow", "Trust")\n| summarize count() by SourceIP, DestinationIP, DestinationPort, SignatureID\n| order by count_ desc'
+        },
+        {
+          name: 'Timeline of allowed signature events',
+          description: 'Temporal view of signature matches that were not blocked',
+          query: 'dataset="$DATASET" earliest=-7d\n| where SignatureID != "" AND AccessControlRuleAction in ("Allow", "Trust")\n| timestats count() by AccessControlRuleName span=1h'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-003',
+      name: 'Outbound Traffic on Non-Standard Ports',
+      objective: 'Detects internal hosts initiating outbound connections on uncommon high ports, which may indicate command-and-control communication or data exfiltration tunnels.',
+      severity: 'High',
+      mitre: ['T1571 - Non-Standard Port', 'T1041 - Exfiltration Over C2 Channel'],
+      tags: ['security', 'c2-detection', 'exfiltration', 'non-standard-port'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'DestinationPort', 'Protocol', 'EgressInterface', 'AccessControlRuleAction'],
+      detectionLogic: 'Identifies outbound connections (egress interface matched) using TCP/UDP on destination ports outside standard ranges (not 80, 443, 53, 25, 587, 993, 995, 22, 3389) where the action is Allow. Flags sources with more than 50 connections to non-standard ports within an hour as potential C2 beaconing.',
+      falsePositives: ['Applications using non-standard ports for legitimate services (VPN clients, custom apps)', 'Cloud services operating on high ports', 'Development environments with custom service ports'],
+      tuningGuidance: 'Build a baseline of legitimate non-standard port usage. Add approved application ports to an exclusion list. Focus on ports rarely seen in the environment. Correlate with threat intelligence for known C2 ports.',
+      investigationWorkflow: '1. Identify the source host and its business function\n2. Determine if the destination port corresponds to any known service\n3. Check the destination IP against threat intelligence feeds\n4. Review connection frequency and data volume for beaconing patterns\n5. Inspect the host for malware or unauthorized applications',
+      criblSearchQueries: [
+        {
+          name: 'Outbound non-standard port connections',
+          description: 'Lists outbound connections using non-standard destination ports',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Allow" AND DestinationPort !in (80, 443, 53, 25, 587, 993, 995, 22, 3389)\n| summarize count() by SourceIP, DestinationIP, DestinationPort, Protocol\n| order by count_ desc'
+        },
+        {
+          name: 'Non-standard port frequency by source',
+          description: 'Shows which internal hosts use non-standard ports most frequently',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Allow" AND DestinationPort !in (80, 443, 53, 25, 587, 993, 995, 22, 3389)\n| summarize distinct_ports=dcount(DestinationPort), total_conns=count() by SourceIP\n| where distinct_ports > 5\n| order by total_conns desc'
+        },
+        {
+          name: 'Beaconing pattern detection on non-standard ports',
+          description: 'Identifies regular interval connections suggesting C2 beaconing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Allow" AND DestinationPort !in (80, 443, 53, 25, 587, 993, 995, 22, 3389)\n| timestats count() by SourceIP, DestinationPort span=10m\n| order by SourceIP, DestinationPort'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-004',
+      name: 'Cross-Zone Traffic Policy Violation',
+      objective: 'Detects traffic flowing between network zones that bypasses expected segmentation policies, indicating potential lateral movement or policy misconfiguration.',
+      severity: 'High',
+      mitre: ['T1021 - Remote Services', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'lateral-movement', 'segmentation-violation', 'zone-policy'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'IngressInterface', 'EgressInterface', 'AccessControlRuleName', 'AccessControlRuleAction', 'Protocol', 'DestinationPort'],
+      detectionLogic: 'Monitors for allowed connections between interfaces representing different security zones (e.g., DMZ to internal, guest to production) that do not match expected cross-zone policy rules. Triggers when traffic crosses zones via rules not in the approved cross-zone ruleset, indicating either lateral movement or unintended rule permissiveness.',
+      falsePositives: ['Legitimate cross-zone services like DNS or authentication traffic', 'Newly deployed services not yet documented in zone policy', 'Load balancer health checks traversing zones'],
+      tuningGuidance: 'Define approved cross-zone interface pairs and their associated rule names. Exclude known legitimate cross-zone traffic. Alert on new interface pairings not previously observed.',
+      investigationWorkflow: '1. Map the ingress and egress interfaces to their respective zones\n2. Determine if the access control rule was intended for cross-zone use\n3. Identify what service is being accessed across zone boundaries\n4. Check if the source host is compromised or misconfigured\n5. Validate zone segmentation policies with the network team',
+      criblSearchQueries: [
+        {
+          name: 'Cross-zone allowed traffic summary',
+          description: 'Shows all allowed traffic traversing different ingress/egress interfaces',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Allow" AND IngressInterface != EgressInterface\n| summarize count() by IngressInterface, EgressInterface, AccessControlRuleName\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual cross-zone source-destination pairs',
+          description: 'Identifies specific host pairs communicating across zones',
+          query: 'dataset="$DATASET" earliest=-24h\n| where AccessControlRuleAction == "Allow" AND IngressInterface != EgressInterface\n| summarize count() by SourceIP, DestinationIP, DestinationPort, IngressInterface, EgressInterface\n| order by count_ desc'
+        },
+        {
+          name: 'Cross-zone traffic trend',
+          description: 'Shows temporal trends in cross-zone traffic to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| where IngressInterface != EgressInterface\n| timestats count() by IngressInterface, EgressInterface span=1h'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-005',
+      name: 'High Volume Connection Attempts Indicating Port Scan',
+      objective: 'Detects a single source attempting connections to many destination ports on one or more targets, characteristic of network reconnaissance and port scanning activity.',
+      severity: 'High',
+      mitre: ['T1046 - Network Service Scanning', 'T1595.001 - Scanning IP Blocks'],
+      tags: ['security', 'reconnaissance', 'port-scan', 'network-discovery'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'DestinationPort', 'Protocol', 'AccessControlRuleAction'],
+      detectionLogic: 'Counts distinct destination ports attempted by each source IP within a 10-minute window. Triggers when a single source attempts connections to more than 25 unique destination ports, regardless of whether the connections were allowed or blocked. This pattern strongly indicates port scanning behavior.',
+      falsePositives: ['Network monitoring tools performing service discovery', 'Vulnerability scanners during scheduled scans', 'Load balancers or service mesh health checks probing multiple ports'],
+      tuningGuidance: 'Whitelist authorized scanning tools by source IP. Adjust the port count threshold based on environment. Consider separate thresholds for internal vs. external sources.',
+      investigationWorkflow: '1. Determine if the source IP belongs to an authorized scanning tool\n2. Identify the target hosts and whether they contain sensitive services\n3. Analyze the port sequence to determine scan type (sequential, common ports, etc.)\n4. Check if any scanned ports led to successful connections\n5. If unauthorized, block the source and investigate the originating host',
+      criblSearchQueries: [
+        {
+          name: 'Port scan detection by source',
+          description: 'Identifies sources attempting many unique destination ports',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize unique_ports=dcount(DestinationPort), targets=dcount(DestinationIP) by SourceIP\n| where unique_ports > 25\n| order by unique_ports desc'
+        },
+        {
+          name: 'Port distribution for suspect scanner',
+          description: 'Shows which ports a suspected scanner attempted',
+          query: 'dataset="$DATASET" earliest=-1h\n| where SourceIP == "$SUSPECT_IP"\n| summarize count() by DestinationPort, DestinationIP, AccessControlRuleAction\n| order by DestinationPort asc'
+        },
+        {
+          name: 'Scan activity timeline',
+          description: 'Temporal view of scanning behavior from a specific source',
+          query: 'dataset="$DATASET" earliest=-4h\n| where SourceIP == "$SUSPECT_IP"\n| timestats dcount(DestinationPort) as unique_ports, count() as total_attempts span=5m'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-006',
+      name: 'DNS over Non-Standard Port',
+      objective: 'Detects DNS traffic (Protocol UDP/TCP to port 53) originating from or directed to non-standard infrastructure, potentially indicating DNS tunneling or exfiltration over DNS.',
+      severity: 'Medium',
+      mitre: ['T1048.003 - Exfiltration Over Unencrypted Non-C2 Protocol', 'T1572 - Protocol Tunneling'],
+      tags: ['security', 'dns-tunneling', 'exfiltration', 'protocol-abuse'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'DestinationPort', 'SourcePort', 'Protocol', 'AccessControlRuleAction'],
+      detectionLogic: 'Identifies DNS-like traffic patterns where the source port is 53 (indicating a response from unauthorized DNS server) or traffic to port 53 directed at IPs that are not the organizations designated DNS servers. Also detects TCP connections to port 53 which may indicate zone transfers or DNS tunneling tools.',
+      falsePositives: ['Secondary DNS servers not yet documented', 'Cloud-based DNS resolvers (8.8.8.8, 1.1.1.1) if not routed through corporate DNS', 'IoT devices with hardcoded DNS settings'],
+      tuningGuidance: 'Maintain a list of authorized DNS server IPs. Exclude known legitimate external DNS resolvers if permitted by policy. Focus on TCP/53 traffic and DNS to unknown destinations.',
+      investigationWorkflow: '1. Identify the destination IP receiving DNS traffic and determine if it is authorized\n2. Check if the source host should be making direct DNS queries\n3. Analyze query volume and patterns for tunneling indicators\n4. Inspect packet sizes for anomalously large DNS responses\n5. If tunneling suspected, capture and analyze DNS payload content',
+      criblSearchQueries: [
+        {
+          name: 'DNS traffic to non-corporate resolvers',
+          description: 'Finds DNS traffic directed at unauthorized DNS servers',
+          query: 'dataset="$DATASET" earliest=-24h\n| where DestinationPort == 53 AND DestinationIP !in ("$DNS_SERVER_1", "$DNS_SERVER_2")\n| summarize count() by SourceIP, DestinationIP, Protocol\n| order by count_ desc'
+        },
+        {
+          name: 'TCP DNS connections',
+          description: 'Lists TCP-based DNS connections which may indicate tunneling',
+          query: 'dataset="$DATASET" earliest=-24h\n| where DestinationPort == 53 AND Protocol == "TCP"\n| summarize count() by SourceIP, DestinationIP\n| order by count_ desc'
+        },
+        {
+          name: 'DNS volume anomalies by host',
+          description: 'Shows hosts generating unusual volumes of DNS traffic',
+          query: 'dataset="$DATASET" earliest=-24h\n| where DestinationPort == 53\n| timestats count() by SourceIP span=1h\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cfp-sec-007',
+      name: 'Repeated Access Control Rule Action Changes',
+      objective: 'Detects when the same source-destination pair alternates between Allow and Block actions across different rules, potentially indicating rule conflict exploitation or firewall evasion techniques.',
+      severity: 'Medium',
+      mitre: ['T1562.004 - Disable or Modify System Firewall', 'T1036 - Masquerading'],
+      tags: ['security', 'firewall-evasion', 'policy-conflict', 'rule-manipulation'],
+      requiredFields: ['timestamp', 'SourceIP', 'DestinationIP', 'AccessControlRuleName', 'AccessControlRuleAction', 'DestinationPort', 'Protocol'],
+      detectionLogic: 'Identifies source-destination pairs where traffic matches multiple access control rules with conflicting actions (both Allow and Block) within a short time window. This pattern suggests an attacker may be modifying traffic characteristics to match permissive rules while being blocked by others, or indicates rule ordering issues being exploited.',
+      falsePositives: ['Applications that use multiple protocols where some are allowed and others blocked by policy', 'Hosts with both permitted and denied service access by design', 'Rule updates during change windows causing temporary conflicts'],
+      tuningGuidance: 'Focus on pairs where the same destination port sees both Allow and Block actions. Exclude known multi-protocol applications. Set minimum threshold of alternating actions to reduce noise.',
+      investigationWorkflow: '1. Identify which rules are allowing vs blocking the traffic\n2. Determine if the traffic characteristics differ between allowed and blocked events\n3. Review rule ordering to check for unintended permissiveness\n4. Assess whether the source is deliberately crafting packets to match permissive rules\n5. Coordinate with firewall team to resolve rule conflicts',
+      criblSearchQueries: [
+        {
+          name: 'Source-destination pairs with conflicting actions',
+          description: 'Finds communication pairs experiencing both Allow and Block actions',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize actions=dcount(AccessControlRuleAction), rules=dcount(AccessControlRuleName) by SourceIP, DestinationIP, DestinationPort\n| where actions > 1\n| order by rules desc'
+        },
+        {
+          name: 'Rule conflict detail for specific pair',
+          description: 'Shows the specific rules and actions for a conflicting source-destination pair',
+          query: 'dataset="$DATASET" earliest=-24h\n| where SourceIP == "$SOURCE" AND DestinationIP == "$DEST"\n| summarize count() by AccessControlRuleName, AccessControlRuleAction, Protocol, DestinationPort\n| order by AccessControlRuleName'
+        },
+        {
+          name: 'Action alternation timeline',
+          description: 'Shows temporal pattern of alternating actions for a specific pair',
+          query: 'dataset="$DATASET" earliest=-24h\n| where SourceIP == "$SOURCE" AND DestinationIP == "$DEST"\n| timestats count() by AccessControlRuleAction span=15m'
+        }
+      ]
+    }
+  ],
+  'juniper-srx': [
+    {
+      id: 'jnp-sec-001',
+      name: 'High-Volume Session Creation from Single Source',
+      objective: 'Detects a single source address creating an excessive number of sessions in a short period, indicative of DDoS attacks, port scans, or worm propagation.',
+      severity: 'Critical',
+      mitre: ['T1498 - Network Denial of Service', 'T1046 - Network Service Scanning'],
+      tags: ['security', 'dos', 'session-flood', 'reconnaissance'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'session_id', 'action', 'destination_port', 'protocol'],
+      detectionLogic: 'Counts distinct session_ids created by each source_address within a 5-minute window. Triggers when a single source generates more than 500 unique sessions, which far exceeds normal application behavior and indicates automated scanning, DDoS, or malware propagation.',
+      falsePositives: ['Load testing tools generating high session counts', 'NAT devices aggregating many users behind a single IP', 'Web crawlers or content delivery systems'],
+      tuningGuidance: 'Adjust session count threshold based on environment baseline. Exclude known NAT gateway IPs or load testing sources. Consider separate thresholds for internal vs external sources.',
+      investigationWorkflow: '1. Identify the source address and determine if it is a NAT device or individual host\n2. Analyze target distribution to determine if scanning or flooding\n3. Check if sessions are being established or just initiated (SYN flood vs full connections)\n4. Review bytes_from_client/bytes_from_server for data transfer patterns\n5. Implement rate limiting or block the source if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'Top session creators',
+          description: 'Identifies source addresses creating the most sessions',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize session_count=dcount(session_id), targets=dcount(destination_address) by source_address\n| where session_count > 500\n| order by session_count desc'
+        },
+        {
+          name: 'Session creation rate over time',
+          description: 'Shows the rate of session creation for a specific source',
+          query: 'dataset="$DATASET" earliest=-4h\n| where source_address == "$SUSPECT_IP"\n| timestats dcount(session_id) as sessions span=5m'
+        },
+        {
+          name: 'Target analysis for high-volume source',
+          description: 'Maps destinations and ports targeted by the suspicious source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where source_address == "$SUSPECT_IP"\n| summarize count() by destination_address, destination_port, protocol\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-002',
+      name: 'Policy Deny Actions with Large Data Transfer',
+      objective: 'Detects sessions that transferred significant data before being denied by policy, suggesting successful data exfiltration that was only blocked at session teardown or policy re-evaluation.',
+      severity: 'Critical',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1030 - Data Transfer Size Limits'],
+      tags: ['security', 'exfiltration', 'data-loss', 'policy-bypass'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'bytes_from_client', 'bytes_from_server', 'action', 'policy_name', 'service_name'],
+      detectionLogic: 'Identifies sessions where the action is deny or reject but bytes_from_client or bytes_from_server exceeds a threshold (e.g., 10MB). This indicates data was transferred before the policy blocked the session, which can happen with mid-session policy changes or application-level inspection delays.',
+      falsePositives: ['Large file downloads that timeout and get reset by policy', 'Streaming sessions terminated by session timeout policies', 'Backup jobs that exceed session limits'],
+      tuningGuidance: 'Set byte threshold appropriate to the environment. Exclude known large-transfer services. Focus on sessions to external destinations with high client-to-server byte ratios.',
+      investigationWorkflow: '1. Identify the source and destination of the session with high data transfer\n2. Determine why the policy denied the session after data was transferred\n3. Calculate total data volume exfiltrated before the deny action\n4. Check if the destination is an external or known-bad address\n5. Review the source host for compromise indicators',
+      criblSearchQueries: [
+        {
+          name: 'Denied sessions with significant data transfer',
+          description: 'Finds denied/rejected sessions that transferred substantial data',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action in ("deny", "reject") AND (bytes_from_client > 10000000 OR bytes_from_server > 10000000)\n| summarize total_client=sum(bytes_from_client), total_server=sum(bytes_from_server) by source_address, destination_address, service_name, policy_name\n| order by total_client desc'
+        },
+        {
+          name: 'Data transfer trend for suspect sessions',
+          description: 'Shows data transfer patterns for denied high-volume sessions over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action in ("deny", "reject") AND bytes_from_client > 10000000\n| timestats sum(bytes_from_client) as total_bytes span=1h'
+        },
+        {
+          name: 'Policy effectiveness analysis',
+          description: 'Reviews which policies are allowing data transfer before deny',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action in ("deny", "reject")\n| summarize avg_bytes=avg(bytes_from_client), max_bytes=max(bytes_from_client), session_count=count() by policy_name\n| where max_bytes > 1000000\n| order by max_bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-003',
+      name: 'Unauthorized Zone Traversal Attempts',
+      objective: 'Detects attempts to establish connections between security zones that violate expected network segmentation, indicating lateral movement or misconfigured policies.',
+      severity: 'High',
+      mitre: ['T1021 - Remote Services', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'zone-violation', 'lateral-movement', 'segmentation'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'zone_src', 'zone_dst', 'action', 'policy_name', 'destination_port'],
+      detectionLogic: 'Monitors for session attempts between zone pairs that should not normally communicate (e.g., guest-to-internal, DMZ-to-management). Triggers on any allowed traffic between defined restricted zone pairs, or high volumes of denied traffic suggesting active probing across zone boundaries.',
+      falsePositives: ['Management traffic from jump boxes that traverse zones legitimately', 'Monitoring systems that need cross-zone access', 'Emergency access during incident response'],
+      tuningGuidance: 'Define restricted zone pairs in a lookup table. Whitelist approved cross-zone services. Set different alert thresholds for allowed vs denied cross-zone traffic.',
+      investigationWorkflow: '1. Identify the source and destination zones involved in the traversal\n2. Determine if the policy that allowed/denied the traffic is correct\n3. Check if the source host is authorized for cross-zone communication\n4. Investigate the source host for compromise if unauthorized\n5. Review zone policy configurations for unintended permissiveness',
+      criblSearchQueries: [
+        {
+          name: 'Cross-zone traffic summary',
+          description: 'Summarizes all traffic flows between security zones',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize total=count(), allowed=countif(action == "allow"), denied=countif(action == "deny") by zone_src, zone_dst\n| order by denied desc'
+        },
+        {
+          name: 'Denied cross-zone attempts by source',
+          description: 'Identifies sources attempting blocked zone traversals',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "deny" AND zone_src != zone_dst\n| summarize attempts=count(), unique_dests=dcount(destination_address) by source_address, zone_src, zone_dst\n| where attempts > 10\n| order by attempts desc'
+        },
+        {
+          name: 'Allowed traffic in restricted zone pairs',
+          description: 'Shows traffic allowed between zones that should be restricted',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "allow" AND zone_src == "$RESTRICTED_SRC" AND zone_dst == "$RESTRICTED_DST"\n| summarize count() by source_address, destination_address, destination_port, service_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-004',
+      name: 'Asymmetric Data Transfer Indicating Exfiltration',
+      objective: 'Detects sessions with highly asymmetric data transfer ratios where significantly more data flows from client to server, suggesting bulk data upload or exfiltration.',
+      severity: 'High',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'exfiltration', 'data-loss-prevention', 'anomaly'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'bytes_from_client', 'bytes_from_server', 'service_name', 'zone_src', 'zone_dst'],
+      detectionLogic: 'Calculates the ratio of bytes_from_client to bytes_from_server for each session. Flags sessions where bytes_from_client exceeds 100MB and the client-to-server ratio is greater than 10:1, indicating massive one-directional data upload inconsistent with normal browsing or API usage.',
+      falsePositives: ['Backup operations uploading data to cloud storage', 'Large file uploads to sanctioned cloud services', 'Video conferencing uploads', 'Database replication to remote sites'],
+      tuningGuidance: 'Adjust byte threshold and ratio based on normal upload patterns. Exclude known backup destinations and approved cloud services. Focus on sessions to external or unusual destinations.',
+      investigationWorkflow: '1. Identify the source host and its business function\n2. Determine the destination and whether it is a sanctioned service\n3. Calculate total data volume uploaded across all flagged sessions\n4. Check if the data transfer correlates with known business processes\n5. If unauthorized, investigate the source for data staging and compromise',
+      criblSearchQueries: [
+        {
+          name: 'High-volume outbound data transfers',
+          description: 'Identifies sessions with large asymmetric client-to-server data flow',
+          query: 'dataset="$DATASET" earliest=-24h\n| where bytes_from_client > 100000000\n| extend ratio = bytes_from_client / (bytes_from_server + 1)\n| where ratio > 10\n| summarize total_uploaded=sum(bytes_from_client) by source_address, destination_address, service_name\n| order by total_uploaded desc'
+        },
+        {
+          name: 'Data exfiltration timeline',
+          description: 'Shows data upload volume over time for suspicious sources',
+          query: 'dataset="$DATASET" earliest=-7d\n| where source_address == "$SUSPECT_IP" AND bytes_from_client > 1000000\n| timestats sum(bytes_from_client) as uploaded_bytes span=1h'
+        },
+        {
+          name: 'Top upload destinations by zone',
+          description: 'Maps where large uploads are being sent across zone boundaries',
+          query: 'dataset="$DATASET" earliest=-24h\n| where bytes_from_client > 10000000\n| summarize total_bytes=sum(bytes_from_client), sessions=count() by destination_address, zone_dst, service_name\n| order by total_bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-005',
+      name: 'Session to Known Malicious Service Ports',
+      objective: 'Detects allowed sessions to destination ports commonly associated with malware, backdoors, or unauthorized remote access tools.',
+      severity: 'High',
+      mitre: ['T1571 - Non-Standard Port', 'T1219 - Remote Access Software'],
+      tags: ['security', 'malware', 'backdoor', 'remote-access'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'destination_port', 'action', 'protocol', 'service_name', 'policy_name'],
+      detectionLogic: 'Monitors for allowed sessions to destination ports known to be used by malware families, RATs, and unauthorized tools (e.g., 4444/Metasploit, 5555/Android Debug, 6667/IRC C2, 1080/SOCKS proxy, 9001/Tor). Triggers on any successful connection to these ports from internal sources.',
+      falsePositives: ['Legitimate services running on coincidentally matching ports', 'Development environments using common tool ports', 'Security research or honeypot systems'],
+      tuningGuidance: 'Maintain and regularly update the malicious port list. Cross-reference with service_name field to exclude legitimate services. Add known development/lab subnets to exclusions.',
+      investigationWorkflow: '1. Verify whether the destination port is hosting a legitimate service\n2. Check the destination address against threat intelligence\n3. Investigate the source host for malware or unauthorized tools\n4. Review the policy that allowed the connection\n5. Block the traffic and isolate the source if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'Connections to suspicious ports',
+          description: 'Lists allowed sessions to commonly malicious destination ports',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "allow" AND destination_port in (4444, 5555, 6667, 1080, 9001, 31337, 12345, 65535)\n| summarize count() by source_address, destination_address, destination_port, service_name\n| order by count_ desc'
+        },
+        {
+          name: 'Source hosts connecting to suspicious ports',
+          description: 'Identifies internal hosts making connections to malicious ports',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "allow" AND destination_port in (4444, 5555, 6667, 1080, 9001, 31337, 12345, 65535)\n| summarize unique_ports=dcount(destination_port), unique_dests=dcount(destination_address), sessions=count() by source_address\n| order by sessions desc'
+        },
+        {
+          name: 'Temporal pattern of suspicious port usage',
+          description: 'Shows when suspicious port connections occur to identify patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "allow" AND destination_port in (4444, 5555, 6667, 1080, 9001, 31337, 12345, 65535)\n| timestats count() by destination_port span=4h'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-006',
+      name: 'Policy Permit-All Rule Usage',
+      objective: 'Detects traffic matching overly permissive firewall rules (permit-all or any-any policies), which represent security risks and potential policy governance failures.',
+      severity: 'Medium',
+      mitre: ['T1562.004 - Disable or Modify System Firewall', 'T1078 - Valid Accounts'],
+      tags: ['security', 'policy-hygiene', 'misconfiguration', 'compliance'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'policy_name', 'action', 'service_name', 'zone_src', 'zone_dst'],
+      detectionLogic: 'Identifies traffic matching policies with names suggesting overly permissive configurations (containing "any", "permit-all", "allow-all", "temp", "test") or the default policy. High volumes of traffic through such rules indicate either misconfiguration or intentional circumvention of proper security controls.',
+      falsePositives: ['Temporary rules created during emergencies that were not yet removed', 'Lab environments with intentionally permissive policies', 'Default policies that are expected to handle specific traffic types'],
+      tuningGuidance: 'Define patterns for policy names considered overly permissive. Set thresholds for acceptable traffic volume through such rules. Alert on new permit-all rules appearing.',
+      investigationWorkflow: '1. Identify which policy_name is overly permissive\n2. Determine who created the rule and when\n3. Assess the traffic flowing through it for legitimate business need\n4. Propose a more restrictive replacement rule\n5. Work with firewall team to implement least-privilege policy',
+      criblSearchQueries: [
+        {
+          name: 'Traffic through permissive policies',
+          description: 'Shows volume of traffic matching overly permissive rule names',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "allow"\n| summarize session_count=count(), unique_sources=dcount(source_address), unique_dests=dcount(destination_address) by policy_name\n| order by session_count desc'
+        },
+        {
+          name: 'Services used through permissive rules',
+          description: 'Lists services leveraging overly permissive policies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where policy_name matches regex "(?i)(any|permit.all|allow.all|temp|test|default)"\n| summarize count() by service_name, zone_src, zone_dst\n| order by count_ desc'
+        },
+        {
+          name: 'Permissive rule usage trend',
+          description: 'Shows if traffic through permissive rules is growing over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where policy_name matches regex "(?i)(any|permit.all|allow.all|temp|test|default)"\n| timestats count() by policy_name span=1d'
+        }
+      ]
+    },
+    {
+      id: 'jnp-sec-007',
+      name: 'Long-Duration Sessions Indicating Persistent Access',
+      objective: 'Detects abnormally long-lived sessions that may represent persistent backdoor connections, tunnels, or command-and-control channels maintaining continuous access.',
+      severity: 'Medium',
+      mitre: ['T1571 - Non-Standard Port', 'T1573 - Encrypted Channel', 'T1090 - Proxy'],
+      tags: ['security', 'persistence', 'c2', 'tunnel', 'long-session'],
+      requiredFields: ['timestamp', 'source_address', 'destination_address', 'session_id', 'bytes_from_client', 'bytes_from_server', 'service_name', 'destination_port'],
+      detectionLogic: 'Identifies sessions with durations exceeding normal thresholds (e.g., lasting longer than 8 hours continuously). Correlates with low, periodic data transfer patterns typical of C2 keepalive mechanisms. Sessions with small, regular data exchanges over extended periods are prioritized over high-bandwidth persistent connections (which are more likely VPNs or backups).',
+      falsePositives: ['VPN tunnels and site-to-site connections', 'Database replication sessions', 'Monitoring and management connections', 'Websocket connections for real-time applications'],
+      tuningGuidance: 'Exclude known persistent connection services (VPN, replication). Focus on sessions with low intermittent data transfer. Set duration thresholds appropriate for the environment. Compare against baseline session duration distribution.',
+      investigationWorkflow: '1. Identify the service and destination for the long-lived session\n2. Analyze data transfer patterns for C2 beaconing characteristics\n3. Determine if the session corresponds to a known persistent service\n4. Check the source host for indicators of compromise\n5. If unauthorized, terminate the session and investigate the endpoint',
+      criblSearchQueries: [
+        {
+          name: 'Longest active sessions',
+          description: 'Identifies the longest-duration sessions in the environment',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), total_client_bytes=sum(bytes_from_client), total_server_bytes=sum(bytes_from_server) by session_id, source_address, destination_address, destination_port\n| extend duration_hours = (last_seen - first_seen) / 3600\n| where duration_hours > 8\n| order by duration_hours desc'
+        },
+        {
+          name: 'Low-bandwidth persistent sessions',
+          description: 'Finds long sessions with minimal data transfer suggesting C2',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize total_bytes=sum(bytes_from_client) + sum(bytes_from_server), events=count() by session_id, source_address, destination_address, destination_port\n| where events > 100 AND total_bytes < 1000000\n| order by events desc'
+        },
+        {
+          name: 'Persistent session destinations',
+          description: 'Maps where long-lived sessions are connecting to',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize session_count=count(), avg_bytes=avg(bytes_from_client + bytes_from_server) by destination_address, destination_port, service_name\n| where session_count > 1000\n| order by session_count desc'
+        }
+      ]
+    }
+  ],
+  'zeek-logs': [
+    {
+      id: 'zek-sec-001',
+      name: 'DNS Tunneling via Excessive Query Volume',
+      objective: 'Detects hosts generating anomalously high DNS query volumes, a hallmark of DNS tunneling tools used for data exfiltration or covert command-and-control communication.',
+      severity: 'Critical',
+      mitre: ['T1048.003 - Exfiltration Over Unencrypted Non-C2 Protocol', 'T1572 - Protocol Tunneling'],
+      tags: ['security', 'dns-tunneling', 'exfiltration', 'c2'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'proto', 'service', 'orig_bytes', 'resp_bytes'],
+      detectionLogic: 'Identifies source hosts (id_orig_h) generating more than 1000 DNS queries (id_resp_p == 53) within a 10-minute window. DNS tunneling tools like iodine, dnscat2, and dns2tcp generate high query volumes with encoded data in subdomains. Correlates with high orig_bytes relative to normal DNS traffic.',
+      falsePositives: ['Active Directory domain controllers performing bulk DNS resolution', 'DNS prefetch features in web browsers', 'Monitoring tools performing mass DNS lookups', 'Mail servers doing SPF/DKIM lookups'],
+      tuningGuidance: 'Baseline normal DNS query rates per host type. Set higher thresholds for known DNS-heavy roles (DCs, mail servers). Focus on hosts exceeding 3x their historical average.',
+      investigationWorkflow: '1. Identify the source host and its normal DNS query patterns\n2. Analyze the DNS server being queried for authorization\n3. Review query content for encoded data patterns (long subdomain labels)\n4. Check orig_bytes and resp_bytes for asymmetric data transfer over DNS\n5. Isolate the host and scan for DNS tunneling tools',
+      criblSearchQueries: [
+        {
+          name: 'High-volume DNS sources',
+          description: 'Identifies hosts with abnormally high DNS query counts',
+          query: 'dataset="$DATASET" earliest=-1h\n| where id_resp_p == 53\n| summarize query_count=count(), total_orig_bytes=sum(orig_bytes) by id_orig_h\n| where query_count > 1000\n| order by query_count desc'
+        },
+        {
+          name: 'DNS byte analysis for tunneling',
+          description: 'Shows DNS sessions with high byte counts suggesting data encoding',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_resp_p == 53 AND orig_bytes > 500\n| summarize avg_bytes=avg(orig_bytes), max_bytes=max(orig_bytes), count() by id_orig_h\n| where avg_bytes > 200\n| order by avg_bytes desc'
+        },
+        {
+          name: 'DNS query rate timeline',
+          description: 'Temporal view of DNS query volume per source for pattern detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_resp_p == 53\n| timestats count() by id_orig_h span=10m\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-002',
+      name: 'Connection to Rare External Destination with High Data Transfer',
+      objective: 'Detects connections to external IPs never or rarely seen before that involve significant data transfer, indicating potential data exfiltration to attacker-controlled infrastructure.',
+      severity: 'Critical',
+      mitre: ['T1041 - Exfiltration Over C2 Channel', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'exfiltration', 'rare-destination', 'anomaly-detection'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'orig_bytes', 'resp_bytes', 'duration', 'conn_state'],
+      detectionLogic: 'Identifies established connections (conn_state in SF, S1, RSTO, RSTR) to destination IPs with fewer than 5 total historical connections across the environment, where orig_bytes exceeds 50MB. Rare destinations receiving large uploads are high-priority indicators of exfiltration to newly provisioned attacker infrastructure.',
+      falsePositives: ['New cloud service endpoints being accessed for the first time', 'Software updates from new CDN nodes', 'One-time large file transfers to legitimate but uncommon destinations'],
+      tuningGuidance: 'Build a baseline of known destination IPs over 30 days. Exclude IPs belonging to major cloud providers and CDNs. Adjust the rarity threshold and byte threshold based on environment size.',
+      investigationWorkflow: '1. Identify the rare destination IP and perform threat intelligence lookups\n2. Determine what data was transferred based on volume and duration\n3. Check if the source host shows other indicators of compromise\n4. Analyze the connection timing relative to business hours\n5. Block the destination and forensically analyze the source host',
+      criblSearchQueries: [
+        {
+          name: 'Rare destinations with high data transfer',
+          description: 'Finds connections to uncommon IPs with large outbound data',
+          query: 'dataset="$DATASET" earliest=-24h\n| where conn_state in ("SF", "S1", "RSTO", "RSTR") AND orig_bytes > 50000000\n| summarize total_sent=sum(orig_bytes), connection_count=count() by id_orig_h, id_resp_h, id_resp_p\n| order by total_sent desc'
+        },
+        {
+          name: 'Destination rarity analysis',
+          description: 'Identifies how commonly each destination has been seen',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize total_conns=count(), unique_sources=dcount(id_orig_h) by id_resp_h\n| where total_conns < 5\n| order by total_conns asc'
+        },
+        {
+          name: 'Large transfer timeline for suspect source',
+          description: 'Shows when large outbound transfers occurred from a specific host',
+          query: 'dataset="$DATASET" earliest=-7d\n| where id_orig_h == "$SUSPECT_IP" AND orig_bytes > 10000000\n| timestats sum(orig_bytes) as total_sent span=1h'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-003',
+      name: 'Internal Network Scanning Activity',
+      objective: 'Detects hosts scanning the internal network by connecting to many destinations on the same port, characteristic of lateral movement reconnaissance or worm propagation.',
+      severity: 'High',
+      mitre: ['T1046 - Network Service Scanning', 'T1018 - Remote System Discovery'],
+      tags: ['security', 'reconnaissance', 'internal-scan', 'lateral-movement'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'proto', 'conn_state', 'history'],
+      detectionLogic: 'Counts distinct destination IPs (id_resp_h) contacted by each source on the same destination port within a 10-minute window. Triggers when a host contacts more than 20 unique internal IPs on the same port, especially with rejected connections (conn_state REJ or S0) indicating closed ports or unreachable hosts.',
+      falsePositives: ['Network management and monitoring tools performing discovery', 'Vulnerability scanners during authorized scans', 'Service mesh or container orchestration health checks'],
+      tuningGuidance: 'Whitelist authorized scanning tools. Set higher thresholds for known management subnets. Focus on sources with high REJ or S0 conn_states indicating failed connections.',
+      investigationWorkflow: '1. Identify the scanning source and verify it is not an authorized tool\n2. Determine which ports are being scanned to understand the target service\n3. Check conn_state distribution to confirm scanning behavior\n4. Investigate the source host for malware or unauthorized access\n5. Isolate the host if scanning is confirmed unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Horizontal scan detection',
+          description: 'Identifies hosts connecting to many destinations on the same port',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize unique_dests=dcount(id_resp_h) by id_orig_h, id_resp_p\n| where unique_dests > 20\n| order by unique_dests desc'
+        },
+        {
+          name: 'Scan success rate analysis',
+          description: 'Shows connection state distribution for suspected scanning',
+          query: 'dataset="$DATASET" earliest=-1h\n| where id_orig_h == "$SUSPECT_IP"\n| summarize count() by id_resp_p, conn_state\n| order by count_ desc'
+        },
+        {
+          name: 'Scanning timeline',
+          description: 'Temporal pattern of scanning activity from a specific host',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_orig_h == "$SUSPECT_IP"\n| timestats dcount(id_resp_h) as unique_targets span=10m'
+        },
+        {
+          name: 'Targets successfully reached',
+          description: 'Lists destinations where the scanner established connections',
+          query: 'dataset="$DATASET" earliest=-1h\n| where id_orig_h == "$SUSPECT_IP" AND conn_state in ("SF", "S1")\n| summarize count() by id_resp_h, id_resp_p, service\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-004',
+      name: 'Beaconing Behavior Detection via Connection Regularity',
+      objective: 'Detects command-and-control beaconing by identifying connections from internal hosts to external destinations at regular intervals, a signature behavior of malware phone-home mechanisms.',
+      severity: 'High',
+      mitre: ['T1071 - Application Layer Protocol', 'T1573 - Encrypted Channel'],
+      tags: ['security', 'c2', 'beaconing', 'malware'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'duration', 'orig_bytes', 'resp_bytes', 'conn_state'],
+      detectionLogic: 'Analyzes connection timing patterns between source-destination pairs over 24 hours. Calculates inter-connection intervals and flags pairs with low standard deviation in timing (< 10% of mean interval), suggesting automated periodic callbacks. Combines timing regularity with small, consistent payload sizes typical of C2 check-ins.',
+      falsePositives: ['NTP synchronization', 'Heartbeat monitoring connections', 'Scheduled automated tasks (cron jobs, health checks)', 'Software update check intervals'],
+      tuningGuidance: 'Exclude known periodic services (NTP, monitoring agents). Filter by minimum connection count (require 20+ connections). Adjust timing regularity threshold based on observed legitimate periodic services.',
+      investigationWorkflow: '1. Confirm the regular interval pattern by reviewing connection timestamps\n2. Analyze payload sizes for consistency suggesting encoded C2 commands\n3. Check the destination against threat intelligence feeds\n4. Look for data exfiltration in the resp_bytes field during beacon responses\n5. Capture traffic for deeper protocol analysis if C2 suspected',
+      criblSearchQueries: [
+        {
+          name: 'Regular interval connections',
+          description: 'Identifies source-destination pairs with many connections suggesting periodicity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where conn_state in ("SF", "S1")\n| summarize conn_count=count(), avg_orig=avg(orig_bytes), avg_resp=avg(resp_bytes) by id_orig_h, id_resp_h, id_resp_p\n| where conn_count > 50 AND avg_orig < 5000\n| order by conn_count desc'
+        },
+        {
+          name: 'Connection timing analysis for suspect pair',
+          description: 'Shows timestamps for a specific source-destination pair to identify regularity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_orig_h == "$SOURCE" AND id_resp_h == "$DEST"\n| extend hour = hourofday(ts)\n| summarize count() by hour\n| order by hour asc'
+        },
+        {
+          name: 'Beacon payload consistency',
+          description: 'Analyzes payload size consistency for suspected beaconing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_orig_h == "$SOURCE" AND id_resp_h == "$DEST"\n| summarize avg_orig=avg(orig_bytes), stdev_orig=stdev(orig_bytes), avg_resp=avg(resp_bytes), stdev_resp=stdev(resp_bytes), count() by id_resp_p'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-005',
+      name: 'Unusual Protocol on Standard Port',
+      objective: 'Detects connections where the identified service protocol does not match the expected service for the destination port, indicating protocol tunneling or evasion techniques.',
+      severity: 'High',
+      mitre: ['T1572 - Protocol Tunneling', 'T1001.003 - Protocol Impersonation'],
+      tags: ['security', 'protocol-anomaly', 'tunneling', 'evasion'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'proto', 'service', 'orig_bytes', 'resp_bytes'],
+      detectionLogic: 'Cross-references the Zeek-identified service field against expected services for standard ports (e.g., port 443 should be ssl/tls, port 80 should be http, port 53 should be dns). Flags connections where the detected service mismatches the port, such as SSH tunneled over port 443 or non-HTTP traffic on port 80.',
+      falsePositives: ['Legitimate services running on non-standard ports', 'HTTP-based APIs on unusual ports', 'Development environments with non-standard configurations'],
+      tuningGuidance: 'Define expected port-to-service mappings. Exclude known legitimate mismatches (e.g., HTTPS on port 8443). Focus on standard well-known ports with unexpected services.',
+      investigationWorkflow: '1. Identify the actual protocol detected by Zeek on the mismatched port\n2. Determine if the destination is using the port legitimately\n3. Check for tunneling tools (SSH over 443, DNS over 80)\n4. Analyze traffic volume and patterns for covert channel indicators\n5. Investigate the source host for unauthorized tunneling software',
+      criblSearchQueries: [
+        {
+          name: 'Protocol-port mismatches',
+          description: 'Finds connections where detected service does not match expected port service',
+          query: 'dataset="$DATASET" earliest=-24h\n| where (id_resp_p == 443 AND service != "ssl") OR (id_resp_p == 80 AND service != "http") OR (id_resp_p == 53 AND service != "dns") OR (id_resp_p == 22 AND service != "ssh")\n| summarize count() by id_orig_h, id_resp_h, id_resp_p, service\n| order by count_ desc'
+        },
+        {
+          name: 'Non-HTTP traffic on web ports',
+          description: 'Lists connections on ports 80/443 using non-web protocols',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_resp_p in (80, 443) AND service !in ("http", "ssl", "")\n| summarize count(), total_bytes=sum(orig_bytes + resp_bytes) by id_orig_h, id_resp_h, service\n| order by total_bytes desc'
+        },
+        {
+          name: 'SSH on non-standard ports',
+          description: 'Finds SSH service detected on ports other than 22',
+          query: 'dataset="$DATASET" earliest=-24h\n| where service == "ssh" AND id_resp_p != 22\n| summarize count() by id_orig_h, id_resp_h, id_resp_p\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-006',
+      name: 'Connection State Anomaly - Excessive Rejected Connections',
+      objective: 'Detects hosts experiencing a high ratio of rejected or reset connections, indicating either brute-force attacks, service probing, or a compromised host attempting lateral movement.',
+      severity: 'Medium',
+      mitre: ['T1110 - Brute Force', 'T1046 - Network Service Scanning'],
+      tags: ['security', 'brute-force', 'failed-connections', 'anomaly'],
+      requiredFields: ['ts', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'conn_state', 'proto', 'history'],
+      detectionLogic: 'Calculates the ratio of failed connection states (REJ, S0, RSTOS0, RSTRH) to total connections per source host. Triggers when a host has more than 80% failed connections with a minimum of 100 total connection attempts, indicating systematic probing or brute-force activity.',
+      falsePositives: ['Decommissioned servers still receiving connection attempts', 'DNS or service discovery failures during network changes', 'Monitoring tools with stale endpoint lists'],
+      tuningGuidance: 'Adjust failure ratio and minimum count thresholds. Exclude known monitoring systems. Consider separate thresholds for different conn_state types (REJ vs S0 indicate different failure modes).',
+      investigationWorkflow: '1. Determine the predominant conn_state for failed connections\n2. Identify target services based on destination ports\n3. Check if failures are against a single target (brute force) or many (scanning)\n4. Review history field for protocol-level anomalies\n5. Investigate source host for malware if internal, or block if external',
+      criblSearchQueries: [
+        {
+          name: 'Hosts with high connection failure rates',
+          description: 'Identifies sources with predominantly failed connections',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize total=count(), failed=countif(conn_state in ("REJ", "S0", "RSTOS0", "RSTRH")) by id_orig_h\n| extend failure_rate = (failed * 100) / total\n| where failure_rate > 80 AND total > 100\n| order by failed desc'
+        },
+        {
+          name: 'Failure type breakdown for suspect host',
+          description: 'Shows distribution of connection states for a specific host',
+          query: 'dataset="$DATASET" earliest=-1h\n| where id_orig_h == "$SUSPECT_IP"\n| summarize count() by conn_state, id_resp_p\n| order by count_ desc'
+        },
+        {
+          name: 'Failed connection timeline',
+          description: 'Temporal view of connection failures for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_orig_h == "$SUSPECT_IP" AND conn_state in ("REJ", "S0", "RSTOS0", "RSTRH")\n| timestats count() by conn_state span=15m'
+        }
+      ]
+    },
+    {
+      id: 'zek-sec-007',
+      name: 'Missed Bytes Indicating Packet Capture Gaps',
+      objective: 'Detects connections with significant missed_bytes values, which may indicate evasion techniques designed to cause Zeek to miss malicious payloads, or infrastructure issues affecting security visibility.',
+      severity: 'Medium',
+      mitre: ['T1205 - Traffic Signaling', 'T1562.006 - Indicator Blocking'],
+      tags: ['security', 'visibility-gap', 'evasion', 'sensor-health'],
+      requiredFields: ['ts', 'uid', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'missed_bytes', 'orig_bytes', 'resp_bytes', 'duration'],
+      detectionLogic: 'Identifies connections where missed_bytes exceeds a significant threshold (e.g., greater than 10% of total connection bytes or more than 1MB absolute). High missed_bytes can indicate an attacker using fragmentation, packet manipulation, or timing attacks to evade network sensor analysis.',
+      falsePositives: ['High-bandwidth connections exceeding sensor capture capacity', 'Network tap or span port dropping packets under load', 'Asymmetric routing causing one direction to bypass the sensor'],
+      tuningGuidance: 'Baseline normal missed_bytes levels for the sensor. Set thresholds above known infrastructure limitations. Separate infrastructure-related gaps (affecting all connections) from targeted evasion (affecting specific connections).',
+      investigationWorkflow: '1. Determine if missed_bytes are concentrated on specific connections or widespread\n2. If widespread, investigate sensor health and network tap capacity\n3. If targeted, analyze the specific connections for evasion indicators\n4. Check if missed content correlates with known attack patterns\n5. Verify sensor placement and capacity planning',
+      criblSearchQueries: [
+        {
+          name: 'Connections with high missed bytes',
+          description: 'Identifies connections where significant data was missed by the sensor',
+          query: 'dataset="$DATASET" earliest=-24h\n| where missed_bytes > 1000000\n| summarize total_missed=sum(missed_bytes), connections=count() by id_orig_h, id_resp_h, id_resp_p\n| order by total_missed desc'
+        },
+        {
+          name: 'Missed bytes ratio analysis',
+          description: 'Shows the ratio of missed to captured bytes per connection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where missed_bytes > 0\n| extend total_bytes = orig_bytes + resp_bytes + missed_bytes\n| extend miss_ratio = (missed_bytes * 100) / total_bytes\n| where miss_ratio > 10\n| summarize avg_ratio=avg(miss_ratio), count() by id_resp_h, id_resp_p\n| order by avg_ratio desc'
+        },
+        {
+          name: 'Missed bytes over time',
+          description: 'Temporal view of sensor visibility gaps',
+          query: 'dataset="$DATASET" earliest=-7d\n| where missed_bytes > 0\n| timestats sum(missed_bytes) as total_missed, count() as affected_conns span=1h'
+        }
+      ]
+    }
+  ],
+  'suricata-ids': [
+    {
+      id: 'sur-sec-001',
+      name: 'Critical Severity Alerts from Multiple Sources',
+      objective: 'Detects when critical severity alerts fire from multiple distinct source IPs targeting the same destination, indicating a coordinated attack or widespread exploitation of a vulnerability.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1595 - Active Scanning'],
+      tags: ['security', 'coordinated-attack', 'critical-alert', 'multi-source'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'dest_port', 'alert_signature', 'alert_signature_id', 'alert_severity', 'alert_category'],
+      detectionLogic: 'Identifies destinations receiving critical severity (alert_severity == 1) alerts from 3 or more distinct source IPs within a 15-minute window. Multiple attackers targeting the same asset with critical signatures strongly indicates either a coordinated campaign or widespread automated exploitation of a known vulnerability.',
+      falsePositives: ['Popular services triggering low-fidelity signatures from normal traffic', 'CDN or proxy IPs appearing as multiple sources', 'Vulnerability disclosure leading to mass scanning'],
+      tuningGuidance: 'Focus on alert_signature_ids with high fidelity. Exclude known noisy signatures. Adjust the source count threshold based on infrastructure exposure level.',
+      investigationWorkflow: '1. Identify the targeted destination and its business criticality\n2. Review the alert signatures to understand the attack type\n3. Determine if any source IPs have succeeded in exploiting the target\n4. Check the target for indicators of compromise\n5. Apply emergency patching or WAF rules if vulnerability confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Multi-source critical alerts by destination',
+          description: 'Finds targets receiving critical alerts from multiple sources',
+          query: 'dataset="$DATASET" earliest=-1h\n| where alert_severity == 1\n| summarize unique_sources=dcount(src_ip), signatures=dcount(alert_signature_id) by dest_ip, dest_port\n| where unique_sources >= 3\n| order by unique_sources desc'
+        },
+        {
+          name: 'Critical alert details for specific target',
+          description: 'Shows all critical alerts targeting a specific destination',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_severity == 1 AND dest_ip == "$TARGET_IP"\n| summarize count() by src_ip, alert_signature, alert_category\n| order by count_ desc'
+        },
+        {
+          name: 'Critical alert timeline',
+          description: 'Temporal distribution of critical alerts for coordination detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_severity == 1 AND dest_ip == "$TARGET_IP"\n| timestats count() by src_ip span=15m'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-002',
+      name: 'Exploit Kit Activity Detection',
+      objective: 'Detects alert signatures categorized as exploit kit activity, indicating users may have visited compromised websites attempting drive-by downloads or browser exploitation.',
+      severity: 'Critical',
+      mitre: ['T1189 - Drive-by Compromise', 'T1203 - Exploitation for Client Execution'],
+      tags: ['security', 'exploit-kit', 'drive-by', 'malware-delivery'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'dest_port', 'alert_signature', 'alert_signature_id', 'alert_category', 'alert_severity', 'flow_id'],
+      detectionLogic: 'Monitors for alerts where alert_category contains exploit kit related terms (Exploit Kit, EK Landing, EK Redirect) or alert_signature matches known exploit kit patterns. Correlates multiple stages of exploit kit activity (redirect -> landing -> exploit -> payload) using flow_id and temporal proximity.',
+      falsePositives: ['Security researchers accessing malware analysis sites', 'Threat intelligence platforms downloading samples', 'False positives from overly broad URL-based signatures'],
+      tuningGuidance: 'Validate signature fidelity for exploit kit rules. Exclude security research subnets. Prioritize alerts showing multi-stage progression (redirect followed by landing page).',
+      investigationWorkflow: '1. Identify the internal host (src_ip) that triggered the exploit kit alerts\n2. Determine the external destination hosting the exploit kit\n3. Check for follow-on alerts indicating successful exploitation or payload download\n4. Isolate the affected endpoint immediately\n5. Perform full malware scan and forensic analysis on the endpoint',
+      criblSearchQueries: [
+        {
+          name: 'Exploit kit related alerts',
+          description: 'Finds all alerts categorized as exploit kit activity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_category matches regex "(?i)(exploit.kit|EK|drive.by)"\n| summarize count() by src_ip, dest_ip, alert_signature, alert_category\n| order by count_ desc'
+        },
+        {
+          name: 'Multi-stage exploit kit detection',
+          description: 'Correlates multiple exploit kit stages for a specific source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where src_ip == "$VICTIM_IP" AND alert_severity <= 2\n| summarize count() by alert_signature, alert_category, dest_ip, dest_port\n| order by timestamp'
+        },
+        {
+          name: 'Exploit kit destination reputation',
+          description: 'Lists external IPs involved in exploit kit alerts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_category matches regex "(?i)(exploit.kit|EK|drive.by)"\n| summarize victims=dcount(src_ip), alert_count=count() by dest_ip\n| order by victims desc'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-003',
+      name: 'Lateral Movement Tool Signatures',
+      objective: 'Detects IDS signatures associated with lateral movement tools such as PsExec, WMI, SMB exploitation, and pass-the-hash attacks between internal hosts.',
+      severity: 'High',
+      mitre: ['T1021.002 - SMB/Windows Admin Shares', 'T1047 - Windows Management Instrumentation', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'lateral-movement', 'internal-threat', 'post-exploitation'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'dest_port', 'alert_signature', 'alert_signature_id', 'alert_category', 'proto'],
+      detectionLogic: 'Monitors for alerts with signatures matching lateral movement tools and techniques: PsExec service installation, WMI remote execution, SMB exploitation (EternalBlue, MS17-010), or authentication relay attacks. Prioritizes alerts where both source and destination are internal IP addresses, indicating active lateral movement.',
+      falsePositives: ['Legitimate system administration using PsExec or WMI', 'Windows domain management operations', 'SCCM or other management tools using SMB'],
+      tuningGuidance: 'Whitelist known admin jump boxes and management servers as sources. Exclude sanctioned management tool signatures during change windows. Focus on sources not in the admin group.',
+      investigationWorkflow: '1. Verify that the source IP belongs to an authorized administrator\n2. Determine if the lateral movement tool usage was sanctioned\n3. Check if the destination shows signs of compromise\n4. Review the full alert chain for privilege escalation indicators\n5. Contain both source and destination hosts if unauthorized movement confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Lateral movement signatures',
+          description: 'Finds alerts matching known lateral movement tool patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_signature matches regex "(?i)(psexec|wmi|smb.*exploit|eternalblue|ms17.010|pass.the.hash|lateral)"\n| summarize count() by src_ip, dest_ip, alert_signature\n| order by count_ desc'
+        },
+        {
+          name: 'Internal-to-internal alert activity',
+          description: 'Shows lateral movement alerts between internal hosts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src_ip matches regex "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)"\n| where dest_ip matches regex "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)"\n| where alert_severity <= 2\n| summarize count() by src_ip, dest_ip, dest_port, alert_signature\n| order by count_ desc'
+        },
+        {
+          name: 'Lateral movement source analysis',
+          description: 'Identifies which internal hosts are triggering lateral movement alerts most',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_signature matches regex "(?i)(psexec|wmi|smb.*exploit|lateral|admin.share)"\n| summarize unique_targets=dcount(dest_ip), alert_count=count() by src_ip\n| order by unique_targets desc'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-004',
+      name: 'Command and Control Communication Patterns',
+      objective: 'Detects alerts categorized as command-and-control or trojan activity, indicating compromised hosts communicating with attacker infrastructure.',
+      severity: 'High',
+      mitre: ['T1071 - Application Layer Protocol', 'T1573 - Encrypted Channel', 'T1105 - Ingress Tool Transfer'],
+      tags: ['security', 'c2', 'trojan', 'malware-communication'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'dest_port', 'proto', 'alert_signature', 'alert_signature_id', 'alert_category', 'alert_severity', 'flow_id'],
+      detectionLogic: 'Monitors for alerts where alert_category matches C2-related categories (Trojan Activity, Command and Control, Malware CnC, A Network Trojan was Detected) or alert_signatures containing C2 tool names. Aggregates by source IP to identify hosts with persistent C2 communication patterns across multiple flow_ids.',
+      falsePositives: ['Legitimate remote access tools triggering generic C2 signatures', 'Cloud-based management agents using patterns similar to C2', 'Security tools performing threat intelligence lookups'],
+      tuningGuidance: 'Validate each alert_signature_id for fidelity in your environment. Suppress known false positive signatures after validation. Prioritize signatures from curated threat intelligence rulesets (ET Pro, Emerging Threats).',
+      investigationWorkflow: '1. Identify the internal host communicating with suspected C2\n2. Determine the C2 destination and cross-reference with threat intelligence\n3. Check for data exfiltration or additional payload downloads\n4. Immediately isolate the compromised host from the network\n5. Perform full incident response including memory forensics',
+      criblSearchQueries: [
+        {
+          name: 'C2 category alerts by source',
+          description: 'Identifies internal hosts generating C2-related alerts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_category matches regex "(?i)(trojan|command.and.control|cnc|malware|backdoor)"\n| summarize alert_count=count(), unique_dests=dcount(dest_ip), signatures=dcount(alert_signature_id) by src_ip\n| order by alert_count desc'
+        },
+        {
+          name: 'C2 destination analysis',
+          description: 'Maps external C2 infrastructure being contacted',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_category matches regex "(?i)(trojan|command.and.control|cnc|malware|backdoor)"\n| summarize victims=dcount(src_ip), alert_count=count() by dest_ip, dest_port, alert_signature\n| order by victims desc'
+        },
+        {
+          name: 'C2 communication timeline',
+          description: 'Shows temporal pattern of C2 alerts for beaconing detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where src_ip == "$VICTIM_IP" AND alert_category matches regex "(?i)(trojan|command.and.control|cnc|malware)"\n| timestats count() by alert_signature span=1h'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-005',
+      name: 'Alert Signature Suppression Gap Detection',
+      objective: 'Detects sudden drops in expected alert volumes for specific signatures, which may indicate an attacker has disabled IDS rules, modified sensor configuration, or is evading detection.',
+      severity: 'High',
+      mitre: ['T1562.001 - Disable or Modify Tools', 'T1562.006 - Indicator Blocking'],
+      tags: ['security', 'sensor-integrity', 'detection-evasion', 'rule-tampering'],
+      requiredFields: ['timestamp', 'alert_signature_id', 'alert_signature', 'alert_category', 'in_iface'],
+      detectionLogic: 'Establishes baseline alert counts per signature_id over a 7-day window. Triggers when a signature that normally fires at least 10 times daily has zero alerts for more than 4 hours during business hours. This gap may indicate rule suppression, sensor bypass, or attacker evasion of specific detection rules.',
+      falsePositives: ['Legitimate rule tuning or signature updates', 'Sensor maintenance windows', 'Network changes that eliminate traffic triggering the signature', 'Seasonal traffic pattern variations'],
+      tuningGuidance: 'Define baseline periods that account for weekday/weekend patterns. Set different gap thresholds for different signature frequencies. Exclude planned maintenance windows from alerting.',
+      investigationWorkflow: '1. Identify which signatures stopped firing and when\n2. Verify sensor health and rule configuration integrity\n3. Check if the signature was intentionally disabled or suppressed\n4. Review network traffic to confirm the triggering conditions still exist\n5. If tampering suspected, audit sensor access logs and restore rules',
+      criblSearchQueries: [
+        {
+          name: 'Alert volume baseline by signature',
+          description: 'Establishes normal daily alert counts per signature',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize daily_count=count() by alert_signature_id, alert_signature\n| extend avg_daily = daily_count / 7\n| where avg_daily > 10\n| order by avg_daily desc'
+        },
+        {
+          name: 'Recent alert gaps',
+          description: 'Identifies signatures with no recent alerts that should be active',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize recent_count=count() by alert_signature_id\n| order by recent_count asc'
+        },
+        {
+          name: 'Alert volume trend by interface',
+          description: 'Shows alert volume trends per sensor interface for health monitoring',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats count() by in_iface span=4h\n| order by in_iface'
+        },
+        {
+          name: 'Signature activity timeline',
+          description: 'Shows hourly alert activity for a specific signature',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_signature_id == "$SIG_ID"\n| timestats count() span=1h'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-006',
+      name: 'High Severity Alert Burst from Single Source',
+      objective: 'Detects a sudden burst of high-severity alerts from a single source IP in a short window, indicating active exploitation or an automated attack tool in operation.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'alert-burst', 'active-attack', 'automated-tool'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'alert_signature', 'alert_signature_id', 'alert_severity', 'alert_category', 'dest_port'],
+      detectionLogic: 'Identifies single source IPs generating more than 20 alerts with severity <= 2 (high or critical) within a 5-minute window. A burst of varied high-severity signatures from one source typically indicates an automated exploitation framework (Metasploit, Cobalt Strike scanner) actively probing for vulnerabilities.',
+      falsePositives: ['Vulnerability scanners during authorized assessments', 'Misconfigured applications generating repetitive alert-triggering traffic', 'Security testing tools in development environments'],
+      tuningGuidance: 'Whitelist authorized scanner IPs. Adjust the burst threshold and time window. Consider the diversity of signatures - more unique signatures in a burst indicates higher confidence.',
+      investigationWorkflow: '1. Review the variety of signatures triggered to identify the attack tool\n2. Determine if any targets were successfully exploited\n3. Check if the source is internal (compromised host) or external (attacker)\n4. Block the source and assess damage to targeted systems\n5. If internal, perform incident response on the compromised source',
+      criblSearchQueries: [
+        {
+          name: 'Alert bursts by source',
+          description: 'Identifies sources generating high-severity alert bursts',
+          query: 'dataset="$DATASET" earliest=-1h\n| where alert_severity <= 2\n| summarize alert_count=count(), unique_sigs=dcount(alert_signature_id), targets=dcount(dest_ip) by src_ip\n| where alert_count > 20\n| order by alert_count desc'
+        },
+        {
+          name: 'Signature diversity for burst source',
+          description: 'Shows the variety of attacks attempted by a burst source',
+          query: 'dataset="$DATASET" earliest=-1h\n| where src_ip == "$SUSPECT_IP" AND alert_severity <= 2\n| summarize count() by alert_signature, alert_category, dest_port\n| order by count_ desc'
+        },
+        {
+          name: 'Burst timeline',
+          description: 'Shows the temporal pattern of the alert burst',
+          query: 'dataset="$DATASET" earliest=-4h\n| where src_ip == "$SUSPECT_IP" AND alert_severity <= 2\n| timestats count() by alert_category span=5m'
+        }
+      ]
+    },
+    {
+      id: 'sur-sec-007',
+      name: 'Outbound Connection to Tor Exit Nodes',
+      objective: 'Detects internal hosts establishing connections to known Tor exit nodes or relay infrastructure, which may indicate data exfiltration, policy violation, or compromised hosts using anonymization.',
+      severity: 'Medium',
+      mitre: ['T1090.003 - Multi-hop Proxy', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'tor', 'anonymization', 'policy-violation', 'exfiltration'],
+      requiredFields: ['timestamp', 'src_ip', 'dest_ip', 'dest_port', 'proto', 'alert_signature', 'alert_signature_id', 'alert_category', 'flow_id'],
+      detectionLogic: 'Monitors for alerts matching Tor-related signatures (ET TOR Known Tor Exit Node, ET TOR Known Tor Relay/Router) or alert_category containing Tor-related classifications. Also detects connections to common Tor ports (9001, 9030, 9050, 9051) combined with Tor-related signatures.',
+      falsePositives: ['Security researchers accessing Tor for threat intelligence', 'Privacy-focused users in regions with approved Tor usage', 'False positives from stale Tor node lists in signature sets'],
+      tuningGuidance: 'Ensure Tor exit node lists in signatures are regularly updated. Exclude approved research systems. Consider organizational policy on Tor usage to determine severity.',
+      investigationWorkflow: '1. Identify the internal host connecting to Tor infrastructure\n2. Determine if Tor usage is authorized for this user/system\n3. Check for data exfiltration or policy violations\n4. Investigate if the host may be compromised and using Tor for C2\n5. Apply organizational policy enforcement for Tor usage',
+      criblSearchQueries: [
+        {
+          name: 'Tor-related alerts',
+          description: 'Identifies all Tor-related IDS alerts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_signature matches regex "(?i)(tor|onion|anonymiz)"\n| summarize count() by src_ip, dest_ip, dest_port, alert_signature\n| order by count_ desc'
+        },
+        {
+          name: 'Internal hosts using Tor',
+          description: 'Lists internal sources with Tor-related activity',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_signature matches regex "(?i)tor" AND src_ip matches regex "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)"\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), count() by src_ip\n| order by count_ desc'
+        },
+        {
+          name: 'Tor usage timeline',
+          description: 'Shows when Tor connections are being made',
+          query: 'dataset="$DATASET" earliest=-30d\n| where alert_signature matches regex "(?i)tor"\n| timestats count() by src_ip span=1d'
+        }
+      ]
+    }
+  ],
+  'zscaler-zpa': [
+    {
+      id: 'zpa-sec-001',
+      name: 'Impossible Travel - User Access from Geographically Distant Locations',
+      objective: 'Detects a single user accessing applications from geographically impossible locations within a short time frame, indicating credential compromise or session hijacking.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1550 - Use Alternate Authentication Material'],
+      tags: ['security', 'impossible-travel', 'account-compromise', 'credential-theft'],
+      requiredFields: ['LogTimestamp', 'User', 'ClientIP', 'ClientLatitude', 'ClientLongitude', 'Application', 'ConnectionStatus'],
+      detectionLogic: 'Calculates geographic distance between consecutive access events for the same User. Triggers when a user connects from two locations more than 500 miles apart within a 1-hour window, which is physically impossible without flight. Uses ClientLatitude and ClientLongitude to compute haversine distance between connection points.',
+      falsePositives: ['VPN usage causing apparent location changes', 'Mobile users switching between cellular and WiFi with different egress points', 'Shared service accounts used by multiple people across locations'],
+      tuningGuidance: 'Adjust distance and time thresholds. Exclude known VPN egress point pairs. Account for shared/service accounts with separate logic. Consider adding velocity calculation.',
+      investigationWorkflow: '1. Verify the two access locations and timestamps for the user\n2. Determine if a VPN or proxy could explain the location discrepancy\n3. Contact the user to confirm whether both accesses were legitimate\n4. Check if accessed applications or data are sensitive\n5. If compromise confirmed, revoke sessions and force credential reset',
+      criblSearchQueries: [
+        {
+          name: 'User location changes',
+          description: 'Identifies users connecting from multiple geographic locations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active"\n| summarize locations=dcount(ClientIP), lat_range=max(ClientLatitude)-min(ClientLatitude), lon_range=max(ClientLongitude)-min(ClientLongitude) by User\n| where lat_range > 5 OR lon_range > 5\n| order by lat_range desc'
+        },
+        {
+          name: 'Connection timeline for suspect user',
+          description: 'Shows all connections for a user to identify impossible travel',
+          query: 'dataset="$DATASET" earliest=-24h\n| where User == "$SUSPECT_USER"\n| summarize count() by LogTimestamp, ClientIP, ClientLatitude, ClientLongitude, Application\n| order by LogTimestamp asc'
+        },
+        {
+          name: 'Geographic distribution of user accesses',
+          description: 'Maps where users are connecting from to establish baselines',
+          query: 'dataset="$DATASET" earliest=-7d\n| where User == "$SUSPECT_USER"\n| summarize count(), first_seen=min(LogTimestamp), last_seen=max(LogTimestamp) by ClientIP, ClientLatitude, ClientLongitude\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-002',
+      name: 'Access to High-Value Applications from Unusual Location',
+      objective: 'Detects access to sensitive applications from geographic locations not previously associated with the user, potentially indicating compromised credentials used from attacker infrastructure.',
+      severity: 'Critical',
+      mitre: ['T1078.004 - Cloud Accounts', 'T1133 - External Remote Services'],
+      tags: ['security', 'anomalous-location', 'sensitive-app-access', 'credential-abuse'],
+      requiredFields: ['LogTimestamp', 'User', 'ClientIP', 'ClientLatitude', 'ClientLongitude', 'Application', 'AppGroup', 'ConnectionStatus'],
+      detectionLogic: 'Establishes a baseline of geographic locations (based on ClientLatitude/ClientLongitude clusters) for each user over 30 days. Triggers when a user accesses applications in sensitive AppGroups from a location cluster not seen in their historical baseline, with successful ConnectionStatus.',
+      falsePositives: ['Users traveling for business to new locations', 'Remote workers temporarily relocating', 'New employees whose baselines have not yet been established'],
+      tuningGuidance: 'Define sensitive AppGroups requiring location-based alerting. Set appropriate geographic clustering radius. Allow a grace period for new user baseline establishment.',
+      investigationWorkflow: '1. Identify the unusual location and compare against user travel records\n2. Determine which sensitive applications were accessed\n3. Verify with the user whether the access was legitimate\n4. Review what actions were taken within the accessed applications\n5. If unauthorized, terminate sessions and require re-authentication from known location',
+      criblSearchQueries: [
+        {
+          name: 'Sensitive app access from new locations',
+          description: 'Finds access to sensitive app groups from unusual coordinates',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active"\n| summarize count() by User, Application, AppGroup, ClientLatitude, ClientLongitude, ClientIP\n| order by User, count_ asc'
+        },
+        {
+          name: 'User location history baseline',
+          description: 'Establishes normal access locations for a specific user',
+          query: 'dataset="$DATASET" earliest=-30d\n| where User == "$SUSPECT_USER" AND ConnectionStatus == "Active"\n| summarize access_count=count(), apps=dcount(Application) by ClientLatitude, ClientLongitude, ClientIP\n| order by access_count desc'
+        },
+        {
+          name: 'New location access details',
+          description: 'Shows what was accessed from the unusual location',
+          query: 'dataset="$DATASET" earliest=-24h\n| where User == "$SUSPECT_USER" AND ClientIP == "$NEW_IP"\n| summarize count() by Application, AppGroup, ConnectionStatus\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-003',
+      name: 'Excessive Application Access by Single User',
+      objective: 'Detects a single user accessing an unusually high number of distinct applications within a short period, indicating potential credential compromise with automated enumeration or insider data collection.',
+      severity: 'High',
+      mitre: ['T1087 - Account Discovery', 'T1069 - Permission Groups Discovery'],
+      tags: ['security', 'enumeration', 'insider-threat', 'credential-abuse'],
+      requiredFields: ['LogTimestamp', 'User', 'Application', 'AppGroup', 'ConnectionStatus', 'ClientIP'],
+      detectionLogic: 'Counts distinct Applications accessed by each User within a 1-hour window. Triggers when a user accesses more than 15 unique applications (3x the typical user average), suggesting automated enumeration of accessible resources using compromised credentials or malicious insider activity.',
+      falsePositives: ['IT administrators performing audits of application accessibility', 'Automated service accounts with broad application access', 'Users testing access during onboarding'],
+      tuningGuidance: 'Establish per-user application access baselines. Set higher thresholds for admin roles. Exclude service accounts with known broad access patterns. Alert on deviation from individual baseline rather than fixed threshold.',
+      investigationWorkflow: '1. Compare the user application access count against their historical pattern\n2. Identify which applications were accessed that are outside normal scope\n3. Check if the access pattern suggests systematic enumeration\n4. Verify with the user whether the broad access was intentional\n5. If compromised, revoke access and audit data exposure',
+      criblSearchQueries: [
+        {
+          name: 'Users accessing many applications',
+          description: 'Identifies users with unusually broad application access',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ConnectionStatus == "Active"\n| summarize app_count=dcount(Application), group_count=dcount(AppGroup) by User, ClientIP\n| where app_count > 15\n| order by app_count desc'
+        },
+        {
+          name: 'Application enumeration pattern',
+          description: 'Shows the sequence of applications accessed by a suspect user',
+          query: 'dataset="$DATASET" earliest=-4h\n| where User == "$SUSPECT_USER"\n| summarize first_access=min(LogTimestamp) by Application, AppGroup\n| order by first_access asc'
+        },
+        {
+          name: 'Historical application usage comparison',
+          description: 'Compares recent access breadth to historical baseline',
+          query: 'dataset="$DATASET" earliest=-30d\n| where User == "$SUSPECT_USER"\n| summarize daily_apps=dcount(Application) by bin(LogTimestamp, 1d)\n| order by daily_apps desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-004',
+      name: 'Connection Failures Indicating Brute Force or Credential Stuffing',
+      objective: 'Detects excessive failed connection attempts for a user or from a source IP, indicating credential brute force, credential stuffing attacks, or misconfigured automated access.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.004 - Credential Stuffing'],
+      tags: ['security', 'brute-force', 'credential-stuffing', 'authentication-attack'],
+      requiredFields: ['LogTimestamp', 'User', 'ClientIP', 'Application', 'ConnectionStatus', 'Policy'],
+      detectionLogic: 'Counts failed ConnectionStatus events (non-Active states) per User and ClientIP combination within a 15-minute window. Triggers when a single user or IP accumulates more than 10 failed connection attempts, especially when targeting multiple applications. High failure rates followed by a success may indicate successful credential compromise.',
+      falsePositives: ['Users with expired credentials or password changes in progress', 'Misconfigured SSO integrations causing repeated failures', 'Mobile devices with cached invalid credentials'],
+      tuningGuidance: 'Distinguish between authentication failures and policy denials. Set separate thresholds for user-based vs IP-based counting. Alert at lower threshold if followed by successful connection.',
+      investigationWorkflow: '1. Determine if failures are authentication-based or policy-based\n2. Check if a successful connection followed the failures\n3. Identify the source IP and whether it is associated with the user\n4. Look for credential stuffing patterns (many users from same IP)\n5. Lock the account if brute force confirmed and initiate password reset',
+      criblSearchQueries: [
+        {
+          name: 'Failed connection attempts by user',
+          description: 'Identifies users with high connection failure rates',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ConnectionStatus != "Active"\n| summarize failures=count(), apps_attempted=dcount(Application) by User, ClientIP\n| where failures > 10\n| order by failures desc'
+        },
+        {
+          name: 'Credential stuffing from single IP',
+          description: 'Finds IPs attempting access for multiple users (credential stuffing)',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ConnectionStatus != "Active"\n| summarize unique_users=dcount(User), total_failures=count() by ClientIP\n| where unique_users > 3\n| order by unique_users desc'
+        },
+        {
+          name: 'Failure-then-success pattern',
+          description: 'Identifies users with failures followed by successful access',
+          query: 'dataset="$DATASET" earliest=-4h\n| where User == "$SUSPECT_USER"\n| summarize count() by ConnectionStatus, Application\n| order by ConnectionStatus'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-005',
+      name: 'Policy Bypass - Direct Server IP Access',
+      objective: 'Detects connections where users may be bypassing ZPA policy controls by accessing server IPs directly rather than through the designated application connector path.',
+      severity: 'High',
+      mitre: ['T1090 - Proxy', 'T1562.004 - Disable or Modify System Firewall'],
+      tags: ['security', 'policy-bypass', 'direct-access', 'connector-evasion'],
+      requiredFields: ['LogTimestamp', 'User', 'ClientIP', 'Application', 'Connector', 'ServerIP', 'Policy', 'ConnectionStatus'],
+      detectionLogic: 'Identifies connections where the ServerIP is accessed with an unusual Connector assignment or where the same ServerIP is reached through different application definitions, suggesting policy enumeration. Also detects connections where the Policy field indicates a fallback or catch-all rule rather than a specific application policy.',
+      falsePositives: ['Applications with multiple valid connector paths', 'Failover scenarios routing through backup connectors', 'New application deployments with temporary policy configurations'],
+      tuningGuidance: 'Map expected Application-to-Connector-to-ServerIP relationships. Alert on deviations from expected paths. Exclude known multi-path applications.',
+      investigationWorkflow: '1. Verify the expected connector path for the accessed application\n2. Determine why an alternate path was used\n3. Check if the policy matching is a catch-all rather than specific rule\n4. Assess whether the user is attempting to bypass access controls\n5. Remediate policy gaps and investigate user intent',
+      criblSearchQueries: [
+        {
+          name: 'Unusual connector-application pairings',
+          description: 'Finds connections using unexpected connector paths',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active"\n| summarize count() by Application, Connector, ServerIP, Policy\n| order by count_ asc'
+        },
+        {
+          name: 'Users accessing servers via multiple paths',
+          description: 'Identifies users reaching the same server through different applications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active"\n| summarize apps=dcount(Application), connectors=dcount(Connector) by User, ServerIP\n| where apps > 1 OR connectors > 1\n| order by apps desc'
+        },
+        {
+          name: 'Catch-all policy usage',
+          description: 'Shows connections matching fallback or default policies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Policy matches regex "(?i)(default|catch.all|fallback|any)"\n| summarize count() by User, Application, ServerIP, Policy\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-006',
+      name: 'Access Outside Business Hours to Sensitive Applications',
+      objective: 'Detects access to sensitive application groups during non-business hours, which may indicate compromised credentials being used when legitimate users are unlikely to notice unauthorized access.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1530 - Data from Cloud Storage Object'],
+      tags: ['security', 'off-hours-access', 'insider-threat', 'anomalous-timing'],
+      requiredFields: ['LogTimestamp', 'User', 'Application', 'AppGroup', 'ConnectionStatus', 'ClientIP', 'ClientLatitude', 'ClientLongitude'],
+      detectionLogic: 'Monitors for successful connections to designated sensitive AppGroups during non-business hours (outside 6 AM - 8 PM local time based on ClientLongitude). Triggers when users who do not historically access applications off-hours suddenly begin doing so, especially from unusual locations.',
+      falsePositives: ['On-call personnel accessing systems during incidents', 'Users in different time zones working normal hours', 'Scheduled maintenance activities by authorized administrators'],
+      tuningGuidance: 'Define sensitive AppGroups requiring off-hours monitoring. Account for user time zones using ClientLongitude. Establish per-user off-hours access baselines. Exclude known on-call rotations.',
+      investigationWorkflow: '1. Determine the user local time based on their access location\n2. Check if the user has a history of off-hours access\n3. Verify if there is an active on-call rotation or incident justifying access\n4. Review what data or applications were accessed during off-hours\n5. Contact the user to confirm legitimacy if pattern is anomalous',
+      criblSearchQueries: [
+        {
+          name: 'Off-hours access to sensitive apps',
+          description: 'Identifies access to sensitive app groups outside business hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active"\n| extend hour = hourofday(LogTimestamp)\n| where hour < 6 OR hour > 20\n| summarize count() by User, Application, AppGroup, ClientIP\n| order by count_ desc'
+        },
+        {
+          name: 'User off-hours access history',
+          description: 'Shows historical off-hours access patterns for a specific user',
+          query: 'dataset="$DATASET" earliest=-30d\n| where User == "$SUSPECT_USER" AND ConnectionStatus == "Active"\n| extend hour = hourofday(LogTimestamp)\n| where hour < 6 OR hour > 20\n| summarize count() by Application, AppGroup\n| order by count_ desc'
+        },
+        {
+          name: 'Off-hours access trend',
+          description: 'Shows whether off-hours access is increasing over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ConnectionStatus == "Active"\n| extend hour = hourofday(LogTimestamp)\n| where hour < 6 OR hour > 20\n| timestats dcount(User) as unique_users, count() as total_access span=1d'
+        }
+      ]
+    },
+    {
+      id: 'zpa-sec-007',
+      name: 'Double Encryption Disabled for Sensitive Connections',
+      objective: 'Detects connections to sensitive applications where double encryption is disabled, reducing the security posture and potentially indicating configuration tampering to facilitate data interception.',
+      severity: 'Medium',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1562.001 - Disable or Modify Tools'],
+      tags: ['security', 'encryption-downgrade', 'configuration-drift', 'data-protection'],
+      requiredFields: ['LogTimestamp', 'User', 'Application', 'AppGroup', 'DoubleEncryption', 'Connector', 'ConnectionStatus', 'Policy'],
+      detectionLogic: 'Monitors for active connections where DoubleEncryption is disabled (false/off) to applications that should require double encryption based on their AppGroup classification. Detects configuration drift where security controls have been weakened, potentially by an attacker who has gained admin access to ZPA configuration.',
+      falsePositives: ['Applications where double encryption is intentionally disabled for performance', 'Testing environments with relaxed security requirements', 'Legacy applications incompatible with double encryption'],
+      tuningGuidance: 'Define which AppGroups require double encryption. Exclude known exceptions with documented business justification. Alert on changes from enabled to disabled state for previously protected applications.',
+      investigationWorkflow: '1. Verify whether double encryption was previously enabled for this application\n2. Determine who made the configuration change to disable it\n3. Check if there is a documented business justification\n4. Assess the sensitivity of data flowing through the unencrypted path\n5. Re-enable double encryption and audit admin access to ZPA config',
+      criblSearchQueries: [
+        {
+          name: 'Connections without double encryption',
+          description: 'Identifies active connections lacking double encryption',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active" AND DoubleEncryption == "false"\n| summarize count() by Application, AppGroup, Connector, Policy\n| order by count_ desc'
+        },
+        {
+          name: 'Double encryption status by app group',
+          description: 'Shows encryption status distribution across application groups',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ConnectionStatus == "Active"\n| summarize encrypted=countif(DoubleEncryption == "true"), unencrypted=countif(DoubleEncryption == "false") by AppGroup\n| extend pct_unencrypted = (unencrypted * 100) / (encrypted + unencrypted)\n| order by pct_unencrypted desc'
+        },
+        {
+          name: 'Encryption status change detection',
+          description: 'Detects applications that recently started appearing without double encryption',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ConnectionStatus == "Active"\n| summarize latest_status=max(DoubleEncryption), count() by Application, AppGroup\n| where latest_status == "false"\n| order by count_ desc'
+        },
+        {
+          name: 'Users accessing apps without double encryption',
+          description: 'Lists users connecting to applications lacking double encryption',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ConnectionStatus == "Active" AND DoubleEncryption == "false"\n| summarize apps=dcount(Application), connections=count() by User\n| order by connections desc'
+        }
+      ]
+    }
+  ],
+  'aws-guardduty': [
+    {
+      id: 'grd-sec-001',
+      name: 'Critical Severity GuardDuty Finding',
+      objective: 'Detects GuardDuty findings with critical severity (8.0-10.0) indicating active compromise or severe threat requiring immediate response.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1078 - Valid Accounts'],
+      tags: ['security', 'aws', 'threat-detection', 'critical-alert'],
+      requiredFields: ['severity', 'type', 'title', 'accountId', 'region'],
+      detectionLogic: 'Triggers when GuardDuty reports a finding with severity >= 8.0. These findings indicate high-confidence threats such as active credential compromise, cryptocurrency mining, or data exfiltration that require immediate SOC response.',
+      falsePositives: ['Penetration testing activities generating high-severity findings', 'Security scanning tools triggering recon-based detections'],
+      tuningGuidance: 'Exclude accounts used for authorized penetration testing. Consider suppressing specific finding types that have been validated as benign in your environment.',
+      investigationWorkflow: '1. Review the finding type and title to understand the nature of the threat\n2. Identify the affected resource and account using resource_type and accountId\n3. Check for related findings in the same account and region within the last 24 hours\n4. Correlate with CloudTrail logs for the affected resource\n5. Determine if the activity aligns with authorized testing or known deployments',
+      criblSearchQueries: [
+        {
+          name: 'Critical Findings Summary',
+          description: 'Lists all critical severity GuardDuty findings in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity >= 8.0\n| summarize count() by type, title, accountId, region\n| order by count_ desc'
+        },
+        {
+          name: 'Critical Findings Timeline',
+          description: 'Shows the timeline of critical findings for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity >= 8.0\n| timestats span=1h count() by type'
+        },
+        {
+          name: 'Affected Resources',
+          description: 'Identifies resources targeted by critical findings',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity >= 8.0\n| summarize count() by resource_type, resource_instanceDetails_instanceId, accountId\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-002',
+      name: 'Unauthorized Remote Access from Malicious IP',
+      objective: 'Detects network connections from known malicious IP addresses to AWS resources, indicating potential command and control or unauthorized access attempts.',
+      severity: 'High',
+      mitre: ['T1071 - Application Layer Protocol', 'T1219 - Remote Access Software'],
+      tags: ['security', 'aws', 'network', 'c2', 'malicious-ip'],
+      requiredFields: ['type', 'action_actionType', 'service_action_networkConnectionAction_remoteIpDetails_ipAddressV4', 'resource_instanceDetails_instanceId', 'region'],
+      detectionLogic: 'Triggers on GuardDuty findings where the action type is NETWORK_CONNECTION and the finding type indicates communication with a known malicious IP (e.g., Backdoor, Trojan, or UnauthorizedAccess finding families). Correlates the remote IP with the target instance.',
+      falsePositives: ['Threat intelligence feeds with stale indicators flagging legitimate services', 'CDN or shared hosting IPs that appear on threat lists'],
+      tuningGuidance: 'Maintain a whitelist of known-good external IPs that may appear on threat lists. Filter by specific finding type prefixes to reduce noise from low-confidence detections.',
+      investigationWorkflow: '1. Extract the remote IP address and check against multiple threat intelligence sources\n2. Identify the target instance and its role/purpose in the environment\n3. Review VPC flow logs for the instance to identify full scope of communication\n4. Check if the instance has any public-facing services that could be exploited\n5. Determine if the connection was inbound (exploitation) or outbound (C2/exfiltration)',
+      criblSearchQueries: [
+        {
+          name: 'Malicious IP Connections',
+          description: 'Lists all network-based findings with remote IP details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_actionType == "NETWORK_CONNECTION"\n| summarize count() by service_action_networkConnectionAction_remoteIpDetails_ipAddressV4, resource_instanceDetails_instanceId, type\n| order by count_ desc'
+        },
+        {
+          name: 'Top Targeted Instances',
+          description: 'Identifies instances receiving the most malicious connections',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_actionType == "NETWORK_CONNECTION"\n| summarize unique_ips=dcount(service_action_networkConnectionAction_remoteIpDetails_ipAddressV4) by resource_instanceDetails_instanceId, region\n| order by unique_ips desc'
+        },
+        {
+          name: 'Network Finding Types Breakdown',
+          description: 'Categorizes network-based findings by type for triage prioritization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_actionType == "NETWORK_CONNECTION"\n| summarize count() by type, severity\n| order by severity desc'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-003',
+      name: 'EC2 Instance Cryptocurrency Mining Detection',
+      objective: 'Detects GuardDuty findings related to cryptocurrency mining activity on EC2 instances, which typically indicates compromised instances being used for unauthorized resource consumption.',
+      severity: 'High',
+      mitre: ['T1496 - Resource Hijacking'],
+      tags: ['security', 'aws', 'cryptomining', 'resource-hijacking'],
+      requiredFields: ['type', 'title', 'resource_instanceDetails_instanceId', 'accountId', 'severity'],
+      detectionLogic: 'Triggers when GuardDuty finding type contains CryptoCurrency (e.g., CryptoCurrency:EC2/BitcoinTool.B, CryptoCurrency:EC2/BitcoinTool.B!DNS). These findings indicate an EC2 instance is communicating with known cryptocurrency mining pools or running mining software.',
+      falsePositives: ['Authorized blockchain research or development environments', 'Legitimate cryptocurrency operations if part of business function'],
+      tuningGuidance: 'Suppress findings for accounts or instances explicitly authorized for blockchain/cryptocurrency workloads. Document all exceptions with business justification.',
+      investigationWorkflow: '1. Identify the compromised instance and its owner via tags and accountId\n2. Check instance launch time and any recent configuration changes\n3. Review IAM role attached to the instance for privilege escalation risk\n4. Examine network connections to known mining pool IPs\n5. Isolate the instance and capture forensic image before remediation',
+      criblSearchQueries: [
+        {
+          name: 'Cryptomining Findings',
+          description: 'Finds all cryptocurrency-related GuardDuty detections',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "CryptoCurrency"\n| summarize count() by resource_instanceDetails_instanceId, accountId, title\n| order by count_ desc'
+        },
+        {
+          name: 'Mining Activity Timeline',
+          description: 'Shows when cryptomining activity was first and last detected',
+          query: 'dataset="$DATASET" earliest=-30d\n| where type contains "CryptoCurrency"\n| summarize earliest_seen=min(updatedAt), latest_seen=max(updatedAt), count() by resource_instanceDetails_instanceId'
+        },
+        {
+          name: 'Associated Network Activity',
+          description: 'Correlates mining instances with their network connections',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "CryptoCurrency"\n| summarize count() by service_action_networkConnectionAction_remoteIpDetails_ipAddressV4, resource_instanceDetails_instanceId\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-004',
+      name: 'IAM Credential Exfiltration or Anomalous API Usage',
+      objective: 'Detects findings indicating stolen or misused IAM credentials being used from unusual locations or for anomalous API calls, suggesting credential compromise.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1528 - Steal Application Access Token'],
+      tags: ['security', 'aws', 'iam', 'credential-theft', 'initial-access'],
+      requiredFields: ['type', 'severity', 'accountId', 'resource_type', 'service_action_networkConnectionAction_remoteIpDetails_ipAddressV4'],
+      detectionLogic: 'Triggers on GuardDuty finding types related to credential misuse such as UnauthorizedAccess:IAMUser/*, Recon:IAMUser/*, or PenTest:IAMUser/*. These indicate API calls made from unusual IPs, impossible travel scenarios, or access patterns inconsistent with normal usage of the credentials.',
+      falsePositives: ['Developers accessing AWS from VPN endpoints in unusual geolocations', 'CI/CD pipelines running from new infrastructure', 'Travel causing legitimate geographic anomalies'],
+      tuningGuidance: 'Whitelist known CI/CD source IPs and VPN egress ranges. Set up suppression rules for specific IAM users with documented anomalous but authorized access patterns.',
+      investigationWorkflow: '1. Identify the IAM principal (user or role) involved in the finding\n2. Compare the source IP against known corporate IP ranges and VPN endpoints\n3. Review CloudTrail for all API calls made by this principal in the last 24 hours\n4. Check for impossible travel by comparing finding location with recent legitimate activity\n5. If confirmed compromise, rotate credentials immediately and audit all actions taken',
+      criblSearchQueries: [
+        {
+          name: 'IAM Credential Abuse Findings',
+          description: 'Lists all IAM-related credential misuse findings',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type contains "IAMUser" or type contains "IAMRole"\n| summarize count() by type, accountId, service_action_networkConnectionAction_remoteIpDetails_ipAddressV4\n| order by count_ desc'
+        },
+        {
+          name: 'Credential Misuse by Account',
+          description: 'Shows which accounts have the most credential abuse findings',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "UnauthorizedAccess" or type contains "Recon"\n| summarize finding_count=count(), unique_types=dcount(type) by accountId\n| order by finding_count desc'
+        },
+        {
+          name: 'Source IP Analysis for IAM Findings',
+          description: 'Identifies suspicious source IPs associated with credential misuse',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "IAMUser"\n| summarize count(), unique_accounts=dcount(accountId) by service_action_networkConnectionAction_remoteIpDetails_ipAddressV4\n| order by unique_accounts desc'
+        },
+        {
+          name: 'IAM Finding Severity Trend',
+          description: 'Tracks IAM credential findings over time to detect campaigns',
+          query: 'dataset="$DATASET" earliest=-14d\n| where type contains "IAMUser" or type contains "IAMRole"\n| timestats span=1d count() by severity'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-005',
+      name: 'DNS-Based Data Exfiltration Attempt',
+      objective: 'Detects GuardDuty findings indicating DNS-based data exfiltration or communication with command and control infrastructure via DNS tunneling.',
+      severity: 'High',
+      mitre: ['T1048.003 - Exfiltration Over Alternative Protocol: Exfiltration Over Unencrypted Non-C2 Protocol', 'T1071.004 - Application Layer Protocol: DNS'],
+      tags: ['security', 'aws', 'dns', 'exfiltration', 'c2'],
+      requiredFields: ['type', 'title', 'resource_instanceDetails_instanceId', 'accountId', 'action_actionType'],
+      detectionLogic: 'Triggers on GuardDuty finding types containing DNS action types such as Backdoor:EC2/DenialOfService.Dns, Trojan:EC2/DNSDataExfiltration, or any finding where action_actionType is DNS_REQUEST to malicious domains. DNS tunneling is a common technique to bypass network controls.',
+      falsePositives: ['Dynamic DNS services used by legitimate applications', 'High-volume DNS queries from monitoring or crawling systems', 'DNS-based load balancing generating unusual query patterns'],
+      tuningGuidance: 'Whitelist known dynamic DNS domains used by your applications. Tune thresholds for DNS query volume based on normal baseline for each instance role.',
+      investigationWorkflow: '1. Identify the instance making suspicious DNS queries\n2. Review the domains being queried for indicators of DNS tunneling (high entropy, long subdomains)\n3. Check for encoded data in DNS query strings\n4. Correlate with network flow logs for additional exfiltration channels\n5. Examine processes running on the instance that could be generating DNS queries',
+      criblSearchQueries: [
+        {
+          name: 'DNS-Based Findings',
+          description: 'Lists all DNS-related GuardDuty findings',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_actionType == "DNS_REQUEST" or type contains "DNS"\n| summarize count() by type, resource_instanceDetails_instanceId, accountId\n| order by count_ desc'
+        },
+        {
+          name: 'DNS Exfiltration by Instance',
+          description: 'Identifies instances with the most DNS exfiltration findings',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "DNSDataExfiltration" or type contains "DNS"\n| summarize finding_count=count() by resource_instanceDetails_instanceId, region\n| order by finding_count desc'
+        },
+        {
+          name: 'DNS Finding Trend',
+          description: 'Tracks DNS-based findings over time to identify active campaigns',
+          query: 'dataset="$DATASET" earliest=-14d\n| where action_actionType == "DNS_REQUEST"\n| timestats span=4h count() by type'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-006',
+      name: 'Multi-Region GuardDuty Finding Spike',
+      objective: 'Detects a sudden increase in GuardDuty findings across multiple regions, which may indicate a coordinated attack or widespread compromise affecting the AWS organization.',
+      severity: 'Medium',
+      mitre: ['T1580 - Cloud Infrastructure Discovery', 'T1078 - Valid Accounts'],
+      tags: ['security', 'aws', 'multi-region', 'anomaly', 'coordinated-attack'],
+      requiredFields: ['region', 'accountId', 'type', 'severity', 'updatedAt'],
+      detectionLogic: 'Triggers when findings are detected in 3 or more distinct AWS regions within a short time window (1 hour) for the same account. This pattern suggests an attacker with broad access is conducting reconnaissance or exploitation across the environment simultaneously.',
+      falsePositives: ['Multi-region deployments triggering simultaneous configuration findings', 'Organization-wide security scanning tools', 'AWS service-linked role activity generating findings in multiple regions'],
+      tuningGuidance: 'Adjust the region count threshold based on your organization\'s typical multi-region footprint. Exclude low-severity findings from the correlation to reduce noise.',
+      investigationWorkflow: '1. Identify all regions with concurrent findings and map the geographic spread\n2. Determine if a single IAM principal is responsible across regions\n3. Check for new cross-region resource creation (EC2, Lambda) that could indicate lateral movement\n4. Review organization-level CloudTrail for IAM policy changes\n5. Assess if the pattern matches known attack frameworks targeting multi-region AWS',
+      criblSearchQueries: [
+        {
+          name: 'Multi-Region Finding Distribution',
+          description: 'Shows finding distribution across regions for correlation',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize finding_count=count(), unique_types=dcount(type) by accountId, region\n| order by finding_count desc'
+        },
+        {
+          name: 'Accounts with Multi-Region Activity',
+          description: 'Identifies accounts with findings in multiple regions',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize unique_regions=dcount(region), finding_count=count() by accountId\n| where unique_regions >= 3\n| order by unique_regions desc'
+        },
+        {
+          name: 'Regional Finding Timeline',
+          description: 'Visualizes finding timing across regions for coordination detection',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=15m count() by region'
+        }
+      ]
+    },
+    {
+      id: 'grd-sec-007',
+      name: 'Reconnaissance Activity Against AWS Resources',
+      objective: 'Detects GuardDuty findings indicating port scanning, API enumeration, or other reconnaissance activities targeting AWS resources from external or internal sources.',
+      severity: 'Medium',
+      mitre: ['T1046 - Network Service Discovery', 'T1595 - Active Scanning'],
+      tags: ['security', 'aws', 'reconnaissance', 'scanning', 'discovery'],
+      requiredFields: ['type', 'title', 'action_actionType', 'service_action_networkConnectionAction_remoteIpDetails_ipAddressV4', 'resource_instanceDetails_instanceId'],
+      detectionLogic: 'Triggers on GuardDuty finding types in the Recon family (e.g., Recon:EC2/PortProbeUnprotectedPort, Recon:EC2/Portscan) or findings indicating systematic enumeration of AWS resources. Detects both external scanning of exposed services and internal lateral movement reconnaissance.',
+      falsePositives: ['Authorized vulnerability scanning tools', 'Network monitoring systems performing health checks', 'Load balancer health probes targeting multiple ports'],
+      tuningGuidance: 'Whitelist IP ranges for authorized vulnerability scanners. Suppress findings for instances running known scanning tools with appropriate tags. Adjust port probe thresholds based on environment.',
+      investigationWorkflow: '1. Determine if the scanning source is internal or external\n2. Identify which ports and services are being probed\n3. Check if any probed services are actually vulnerable or exposed\n4. Review security group configurations for the targeted instances\n5. If internal source, investigate the scanning instance for compromise indicators',
+      criblSearchQueries: [
+        {
+          name: 'Reconnaissance Findings Overview',
+          description: 'Summarizes all recon-type findings by source and target',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type contains "Recon"\n| summarize count() by type, service_action_networkConnectionAction_remoteIpDetails_ipAddressV4, resource_instanceDetails_instanceId\n| order by count_ desc'
+        },
+        {
+          name: 'Top Scanning Sources',
+          description: 'Identifies the most active scanning source IPs',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "Recon" or type contains "PortProbe"\n| summarize targets=dcount(resource_instanceDetails_instanceId), count() by service_action_networkConnectionAction_remoteIpDetails_ipAddressV4\n| order by targets desc'
+        },
+        {
+          name: 'Recon Activity Trend',
+          description: 'Shows reconnaissance activity over time to detect scan campaigns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "Recon"\n| timestats span=6h count() by type'
+        },
+        {
+          name: 'Targeted Instances',
+          description: 'Identifies which instances are most frequently scanned',
+          query: 'dataset="$DATASET" earliest=-7d\n| where type contains "Recon"\n| summarize scan_count=count(), unique_sources=dcount(service_action_networkConnectionAction_remoteIpDetails_ipAddressV4) by resource_instanceDetails_instanceId, region\n| order by scan_count desc'
+        }
+      ]
+    }
+  ],
+  'google-workspace-audit': [
+    {
+      id: 'gsw-sec-001',
+      name: 'Suspicious Admin Console Access from Unusual IP',
+      objective: 'Detects admin console access events originating from IP addresses outside known corporate ranges, which may indicate compromised administrator credentials.',
+      severity: 'Critical',
+      mitre: ['T1078.004 - Valid Accounts: Cloud Accounts', 'T1538 - Cloud Service Dashboard'],
+      tags: ['security', 'google-workspace', 'admin-abuse', 'credential-compromise'],
+      requiredFields: ['actor_email', 'ipAddress', 'id_applicationName', 'events_name', 'id_time'],
+      detectionLogic: 'Triggers when admin console actions are performed from IP addresses not in the organization\'s known IP allowlist. Correlates the actor email with known admin accounts and flags access from unexpected geolocations or hosting provider IP space.',
+      falsePositives: ['Administrators working remotely from home or travel locations', 'VPN failover routing traffic through unexpected egress points', 'New office locations not yet added to IP allowlist'],
+      tuningGuidance: 'Maintain an updated list of corporate egress IPs and VPN ranges. Consider geo-based thresholds rather than strict IP matching for organizations with distributed workforces.',
+      investigationWorkflow: '1. Verify the admin account owner and their expected location\n2. Check if the IP belongs to a known VPN, cloud provider, or residential ISP\n3. Review what admin actions were performed during the session\n4. Check for concurrent sessions from the same account at different IPs\n5. Contact the account owner to confirm legitimacy of the access',
+      criblSearchQueries: [
+        {
+          name: 'Admin Actions by IP',
+          description: 'Lists admin console actions grouped by source IP for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_applicationName == "admin"\n| summarize count() by actor_email, ipAddress, events_name\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual Admin IPs',
+          description: 'Identifies admin access from IPs seen for the first time recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| where id_applicationName == "admin"\n| summarize first_seen=min(id_time), last_seen=max(id_time), action_count=count() by ipAddress, actor_email\n| order by first_seen desc'
+        },
+        {
+          name: 'Admin Session Timeline',
+          description: 'Shows chronological admin activity for investigating specific sessions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_applicationName == "admin"\n| summarize count() by actor_email, events_name, ipAddress\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-002',
+      name: 'Mass File Sharing to External Domains',
+      objective: 'Detects bulk document sharing to external email domains which could indicate data exfiltration via Google Drive sharing permissions.',
+      severity: 'High',
+      mitre: ['T1567 - Exfiltration Over Web Service', 'T1537 - Transfer Data to Cloud Account'],
+      tags: ['security', 'google-workspace', 'data-exfiltration', 'drive', 'sharing'],
+      requiredFields: ['actor_email', 'events_name', 'events_type', 'events_parameters', 'id_time'],
+      detectionLogic: 'Triggers when a single user shares more than 10 documents externally within a 1-hour window, or shares with more than 5 distinct external domains. This pattern deviates from normal collaboration behavior and may indicate intentional data theft or a compromised account being used for exfiltration.',
+      falsePositives: ['Marketing teams sharing campaign materials with agency partners', 'Sales teams sharing proposals with multiple prospects', 'Automated workflows that share reports with external stakeholders'],
+      tuningGuidance: 'Adjust the sharing threshold based on your organization\'s normal external collaboration patterns. Whitelist known partner domains and service accounts that perform bulk sharing operations.',
+      investigationWorkflow: '1. Identify the user performing the bulk sharing and their role\n2. Enumerate all documents shared and their sensitivity classifications\n3. List all external recipients and their domain affiliations\n4. Check if sharing was to personal email accounts (gmail, outlook)\n5. Review if the user recently had access changes or is on notice period',
+      criblSearchQueries: [
+        {
+          name: 'External Sharing Volume',
+          description: 'Identifies users performing the most external sharing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "change_document_access_scope" or events_name == "change_user_access"\n| summarize share_count=count() by actor_email\n| order by share_count desc'
+        },
+        {
+          name: 'Sharing Events Detail',
+          description: 'Shows detailed sharing events with parameters for investigation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_type == "acl_change"\n| summarize count() by actor_email, events_name, events_parameters\n| order by count_ desc'
+        },
+        {
+          name: 'Hourly Sharing Rate',
+          description: 'Tracks sharing activity rate to detect burst patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where events_type == "acl_change"\n| timestats span=1h count() by actor_email'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-003',
+      name: 'User Account Suspended or Deleted by Non-Standard Admin',
+      objective: 'Detects user suspension or deletion actions performed by admin accounts that do not normally perform user lifecycle management, which could indicate insider threat or compromised admin credentials.',
+      severity: 'High',
+      mitre: ['T1531 - Account Access Removal', 'T1098 - Account Manipulation'],
+      tags: ['security', 'google-workspace', 'user-management', 'insider-threat', 'admin-abuse'],
+      requiredFields: ['actor_email', 'events_name', 'events_type', 'id_applicationName', 'id_time'],
+      detectionLogic: 'Triggers when user account suspension or deletion events are performed by administrators who have not performed these actions in the past 30 days. Establishes a baseline of which admins normally handle user lifecycle operations and alerts when unusual admins perform these sensitive actions.',
+      falsePositives: ['IT staff covering for colleagues during PTO', 'New administrators performing their first user management tasks', 'Automated deprovisioning systems using service accounts'],
+      tuningGuidance: 'Build and maintain a list of administrators authorized for user lifecycle management. Exclude service accounts used by HRIS integration systems like Workday or BambooHR connectors.',
+      investigationWorkflow: '1. Identify the admin who performed the suspension/deletion\n2. Verify this admin is authorized for user lifecycle management\n3. Check if the target users are valid offboarding cases in HRIS\n4. Look for other unusual actions by this admin in the same session\n5. Determine if the admin account itself shows signs of compromise',
+      criblSearchQueries: [
+        {
+          name: 'User Lifecycle Events',
+          description: 'Lists all user suspension and deletion events with performing admin',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "suspend_user" or events_name == "delete_user"\n| summarize count() by actor_email, events_name, id_time\n| order by id_time desc'
+        },
+        {
+          name: 'Admin Activity Baseline',
+          description: 'Shows which admins typically perform user management actions',
+          query: 'dataset="$DATASET" earliest=-30d\n| where events_name == "suspend_user" or events_name == "delete_user" or events_name == "create_user"\n| summarize action_count=count() by actor_email\n| order by action_count desc'
+        },
+        {
+          name: 'Admin Session Context',
+          description: 'Shows all actions by the suspicious admin in the same time period',
+          query: 'dataset="$DATASET" earliest=-24h\n| where id_applicationName == "admin"\n| summarize count() by actor_email, events_name, ipAddress\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-004',
+      name: 'OAuth Application Authorization Spike',
+      objective: 'Detects a spike in OAuth application authorizations which could indicate a consent phishing attack tricking users into granting access to malicious third-party applications.',
+      severity: 'High',
+      mitre: ['T1550.001 - Use Alternate Authentication Material: Application Access Token', 'T1566.002 - Phishing: Spearphishing Link'],
+      tags: ['security', 'google-workspace', 'oauth', 'consent-phishing', 'application-access'],
+      requiredFields: ['actor_email', 'events_name', 'events_type', 'events_parameters', 'id_time'],
+      detectionLogic: 'Triggers when multiple users authorize the same third-party OAuth application within a short timeframe (e.g., 5+ users within 1 hour), or when a single user authorizes more than 3 new applications in a day. This pattern is characteristic of consent phishing campaigns where attackers send links requesting OAuth permissions.',
+      falsePositives: ['Organization-wide rollout of a new sanctioned application', 'Training sessions where users are asked to authorize a tool', 'Marketplace app installations triggered by admin deployment'],
+      tuningGuidance: 'Maintain a list of sanctioned OAuth applications. Set separate thresholds for known vs unknown applications. Alert at lower thresholds for applications requesting sensitive scopes like mail or drive access.',
+      investigationWorkflow: '1. Identify the OAuth application being authorized and its publisher\n2. Review the OAuth scopes requested (especially mail, drive, admin access)\n3. List all users who authorized the application and check for phishing indicators\n4. Examine the application\'s domain and registration details\n5. If malicious, revoke all grants and notify affected users to change passwords',
+      criblSearchQueries: [
+        {
+          name: 'OAuth Authorization Events',
+          description: 'Lists recent OAuth application authorization events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "authorize"\n| summarize user_count=dcount(actor_email), count() by events_parameters\n| order by user_count desc'
+        },
+        {
+          name: 'Users Authorizing Apps',
+          description: 'Shows which users are authorizing new applications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "authorize"\n| summarize app_count=count() by actor_email\n| where app_count >= 3\n| order by app_count desc'
+        },
+        {
+          name: 'OAuth Authorization Timeline',
+          description: 'Shows the timeline of OAuth authorizations for campaign detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where events_name == "authorize"\n| timestats span=1h count() by events_parameters'
+        },
+        {
+          name: 'OAuth Scope Analysis',
+          description: 'Analyzes OAuth scopes being granted to detect over-permissioned apps',
+          query: 'dataset="$DATASET" earliest=-7d\n| where events_name == "authorize"\n| summarize count() by events_parameters, actor_email\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-005',
+      name: 'Google Workspace MFA Disabled for User',
+      objective: 'Detects when multi-factor authentication is disabled for a user account, which weakens account security and may be a precursor to account takeover.',
+      severity: 'Medium',
+      mitre: ['T1556.006 - Modify Authentication Process: Multi-Factor Authentication', 'T1098 - Account Manipulation'],
+      tags: ['security', 'google-workspace', 'mfa', 'authentication', 'account-security'],
+      requiredFields: ['actor_email', 'events_name', 'events_type', 'id_applicationName', 'id_time'],
+      detectionLogic: 'Triggers when 2-Step Verification (MFA) is disabled for any user account, whether by the user themselves or by an administrator. This is a critical security control and its removal should always be investigated, especially if it occurs outside of normal IT support workflows.',
+      falsePositives: ['IT helpdesk temporarily disabling MFA for users who lost their second factor', 'User device replacement requiring MFA re-enrollment', 'Automated user lifecycle processes during offboarding'],
+      tuningGuidance: 'Integrate with ticketing system to auto-close alerts that correlate with open MFA reset tickets. Set higher severity for privileged accounts or accounts with access to sensitive data.',
+      investigationWorkflow: '1. Determine who disabled MFA - the user themselves or an admin\n2. Check if there is a corresponding helpdesk ticket for MFA reset\n3. Verify the user\'s account for other suspicious activity (login from new IP, password change)\n4. Confirm MFA is re-enabled within expected timeframe\n5. If no legitimate reason found, treat as potential account compromise preparation',
+      criblSearchQueries: [
+        {
+          name: 'MFA Disable Events',
+          description: 'Lists all MFA disable events with actor and timing details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "2sv_disable" or events_name == "enforce_strong_authentication"\n| summarize count() by actor_email, events_name, id_time\n| order by id_time desc'
+        },
+        {
+          name: 'MFA Changes Over Time',
+          description: 'Tracks MFA enable/disable patterns to detect unusual spikes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where events_name contains "2sv"\n| timestats span=1d count() by events_name'
+        },
+        {
+          name: 'Post-MFA-Disable Activity',
+          description: 'Shows activity for accounts after MFA was disabled',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "login_success" or events_name == "2sv_disable"\n| summarize count() by actor_email, events_name, ipAddress\n| order by actor_email'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-006',
+      name: 'Bulk Email Forwarding Rule Creation',
+      objective: 'Detects creation of email forwarding rules that send copies of incoming mail to external addresses, a common persistence technique after email account compromise.',
+      severity: 'Critical',
+      mitre: ['T1114.003 - Email Collection: Email Forwarding Rule', 'T1020 - Automated Exfiltration'],
+      tags: ['security', 'google-workspace', 'email', 'forwarding', 'persistence', 'exfiltration'],
+      requiredFields: ['actor_email', 'events_name', 'events_parameters', 'ipAddress', 'id_time'],
+      detectionLogic: 'Triggers when email forwarding rules are created that route mail to external domains. Detects both user-created forwarding rules and admin-configured routing rules. Particular attention to rules forwarding to free email providers (gmail.com personal accounts, outlook.com, protonmail) which are commonly used by attackers.',
+      falsePositives: ['Employees setting up forwarding during job transitions', 'Shared mailbox forwarding to ticketing systems', 'Executive assistants configuring forwarding for their principals'],
+      tuningGuidance: 'Whitelist known internal forwarding destinations and sanctioned external systems (ticketing, CRM). Alert at Critical severity only for forwarding to free/anonymous email providers.',
+      investigationWorkflow: '1. Identify the account creating the forwarding rule and the destination address\n2. Check if the destination domain is personal, suspicious, or associated with known threats\n3. Review recent login activity for the account (new IPs, impossible travel)\n4. Determine how long the forwarding rule has been active\n5. If malicious, remove the rule immediately and audit what emails were forwarded',
+      criblSearchQueries: [
+        {
+          name: 'Email Forwarding Rule Creation',
+          description: 'Lists all email forwarding rule creation events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "create_forwarding_address" or events_name == "email_forwarding_out_of_domain"\n| summarize count() by actor_email, events_parameters, ipAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Forwarding Rules by User',
+          description: 'Shows which users have created forwarding rules recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| where events_name contains "forwarding"\n| summarize rule_count=count() by actor_email\n| order by rule_count desc'
+        },
+        {
+          name: 'Forwarding Rule Timeline',
+          description: 'Tracks forwarding rule creation over time for campaign detection',
+          query: 'dataset="$DATASET" earliest=-30d\n| where events_name contains "forwarding"\n| timestats span=1d count() by events_name'
+        },
+        {
+          name: 'Account Context for Forwarding',
+          description: 'Shows all activity for accounts that created forwarding rules',
+          query: 'dataset="$DATASET" earliest=-48h\n| where events_name contains "forwarding" or events_name == "login_success"\n| summarize count() by actor_email, events_name, ipAddress\n| order by actor_email'
+        }
+      ]
+    },
+    {
+      id: 'gsw-sec-007',
+      name: 'Admin Role Assignment to Non-Standard Account',
+      objective: 'Detects when super admin or delegated admin roles are assigned to accounts that have not previously held administrative privileges, which could indicate privilege escalation.',
+      severity: 'Medium',
+      mitre: ['T1098.003 - Account Manipulation: Additional Cloud Roles', 'T1078.004 - Valid Accounts: Cloud Accounts'],
+      tags: ['security', 'google-workspace', 'privilege-escalation', 'admin-roles', 'iam'],
+      requiredFields: ['actor_email', 'events_name', 'events_type', 'events_parameters', 'orgUnitName'],
+      detectionLogic: 'Triggers when admin role assignments are made, particularly Super Admin, User Management Admin, or Groups Admin roles. Compares against a baseline of known admin accounts and flags when new accounts receive elevated privileges, especially when the granting admin is itself a recently elevated account.',
+      falsePositives: ['Planned admin role assignments for new IT hires', 'Temporary admin elevation for break-glass scenarios', 'Role reassignment during organizational restructuring'],
+      tuningGuidance: 'Maintain a list of approved admin accounts and expected role assignments. Set higher severity for Super Admin role grants. Consider time-of-day context for role assignments.',
+      investigationWorkflow: '1. Identify who granted the admin role and who received it\n2. Verify the role assignment was approved through proper change management\n3. Check if the granting admin account shows signs of compromise\n4. Review what actions the newly elevated account performs after receiving the role\n5. Confirm the role assignment aligns with the recipient\'s job function',
+      criblSearchQueries: [
+        {
+          name: 'Admin Role Assignments',
+          description: 'Lists all admin role assignment events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where events_name == "assign_role" or events_name == "add_privilege"\n| summarize count() by actor_email, events_parameters, orgUnitName\n| order by count_ desc'
+        },
+        {
+          name: 'Role Assignment History',
+          description: 'Shows admin role assignment patterns over the past month',
+          query: 'dataset="$DATASET" earliest=-30d\n| where events_name == "assign_role"\n| summarize count() by actor_email, events_parameters\n| order by count_ desc'
+        },
+        {
+          name: 'New Admin Activity Post-Elevation',
+          description: 'Tracks activity of newly elevated admin accounts',
+          query: 'dataset="$DATASET" earliest=-48h\n| where id_applicationName == "admin"\n| summarize action_count=count(), unique_actions=dcount(events_name) by actor_email\n| order by action_count desc'
+        }
+      ]
+    }
+  ],
+  'microsoft-entra-id': [
+    {
+      id: 'ent-sec-001',
+      name: 'High-Risk Sign-In with Conditional Access Bypass',
+      objective: 'Detects sign-in events flagged as high risk that successfully bypassed conditional access policies, indicating potential credential compromise with policy misconfiguration.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1556 - Modify Authentication Process'],
+      tags: ['security', 'entra-id', 'conditional-access', 'risk-detection', 'authentication'],
+      requiredFields: ['userPrincipalName', 'riskLevelDuringSignIn', 'conditionalAccessStatus', 'ipAddress', 'location_city', 'location_countryOrRegion'],
+      detectionLogic: 'Triggers when a sign-in event has riskLevelDuringSignIn of "high" and conditionalAccessStatus is "notApplied" or "success" without requiring step-up authentication. This combination indicates that a high-risk login was not challenged by any conditional access policy, either due to policy gaps or exclusions.',
+      falsePositives: ['Service accounts excluded from conditional access policies', 'Break-glass accounts with intentional policy exclusions', 'Legacy authentication protocols bypassing modern auth policies'],
+      tuningGuidance: 'Review conditional access policy coverage to ensure high-risk sign-ins always require MFA. Exclude known break-glass accounts but maintain separate monitoring for those. Consider separate rules for medium vs high risk levels.',
+      investigationWorkflow: '1. Review the user account and determine if it should be subject to conditional access\n2. Check the IP address and location for anomalies compared to user\'s normal behavior\n3. Identify which conditional access policies should have applied but didn\'t\n4. Look for subsequent actions taken by the account after the risky sign-in\n5. If compromise confirmed, reset credentials and revoke sessions immediately',
+      criblSearchQueries: [
+        {
+          name: 'High-Risk Bypassed Sign-Ins',
+          description: 'Lists high-risk sign-ins that were not blocked by conditional access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where riskLevelDuringSignIn == "high" and conditionalAccessStatus != "failure"\n| summarize count() by userPrincipalName, ipAddress, location_countryOrRegion, conditionalAccessStatus\n| order by count_ desc'
+        },
+        {
+          name: 'Risk Level Distribution',
+          description: 'Shows distribution of risk levels vs conditional access outcomes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where riskLevelDuringSignIn != "none"\n| summarize count() by riskLevelDuringSignIn, conditionalAccessStatus\n| order by count_ desc'
+        },
+        {
+          name: 'User Risk History',
+          description: 'Tracks risk events for specific users over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where riskLevelDuringSignIn == "high"\n| timestats span=1d count() by userPrincipalName'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-002',
+      name: 'Impossible Travel Sign-In Detection',
+      objective: 'Detects when the same user account signs in from geographically distant locations within a timeframe that makes physical travel impossible, indicating credential sharing or compromise.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1550 - Use Alternate Authentication Material'],
+      tags: ['security', 'entra-id', 'impossible-travel', 'credential-compromise', 'anomaly'],
+      requiredFields: ['userPrincipalName', 'ipAddress', 'location_city', 'location_countryOrRegion', 'createdDateTime'],
+      detectionLogic: 'Triggers when the same userPrincipalName has successful sign-ins from two different countries within a 2-hour window where the geographic distance makes physical travel impossible. Uses location_countryOrRegion and location_city to determine geographic spread.',
+      falsePositives: ['Users connecting through VPN endpoints in different countries', 'Cloud sync services authenticating from multiple regions', 'Shared service accounts used by global teams'],
+      tuningGuidance: 'Exclude known VPN egress countries from impossible travel calculations. Adjust the time window based on your organization\'s VPN infrastructure. Consider distance-based thresholds rather than country-based.',
+      investigationWorkflow: '1. Map both sign-in locations and calculate if travel was physically possible\n2. Check if either IP address belongs to a known VPN or proxy service\n3. Review the applications accessed from each location\n4. Determine if the user has a history of multi-country access\n5. Contact the user to verify which session was legitimate',
+      criblSearchQueries: [
+        {
+          name: 'Multi-Country Sign-Ins',
+          description: 'Identifies users signing in from multiple countries in short windows',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status_errorCode == "0"\n| summarize unique_countries=dcount(location_countryOrRegion), locations=makeset(location_countryOrRegion) by userPrincipalName\n| where unique_countries >= 2\n| order by unique_countries desc'
+        },
+        {
+          name: 'User Location Timeline',
+          description: 'Shows chronological location changes for a user',
+          query: 'dataset="$DATASET" earliest=-48h\n| where status_errorCode == "0"\n| summarize count() by userPrincipalName, location_city, location_countryOrRegion, ipAddress\n| order by userPrincipalName'
+        },
+        {
+          name: 'Geographic Anomaly Trend',
+          description: 'Tracks multi-location sign-in patterns over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status_errorCode == "0"\n| summarize unique_countries=dcount(location_countryOrRegion) by userPrincipalName, bin(createdDateTime, 2h)\n| where unique_countries >= 2\n| order by createdDateTime desc'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-003',
+      name: 'Brute Force Authentication Attack',
+      objective: 'Detects sustained failed authentication attempts against a single account or from a single IP address, indicating a password spraying or brute force attack.',
+      severity: 'High',
+      mitre: ['T1110.001 - Brute Force: Password Guessing', 'T1110.003 - Brute Force: Password Spraying'],
+      tags: ['security', 'entra-id', 'brute-force', 'password-spray', 'authentication-attack'],
+      requiredFields: ['userPrincipalName', 'ipAddress', 'status_errorCode', 'createdDateTime', 'appDisplayName'],
+      detectionLogic: 'Triggers when more than 10 failed sign-in attempts occur for a single account within 10 minutes (brute force), or when a single IP generates failed sign-ins against more than 5 unique accounts within 30 minutes (password spray). Uses status_errorCode to identify authentication failures.',
+      falsePositives: ['Misconfigured applications repeatedly attempting authentication with stale credentials', 'Users with expired passwords on multiple devices', 'Load testing or monitoring systems'],
+      tuningGuidance: 'Adjust failure count thresholds based on your environment\'s normal authentication failure rate. Exclude service principal IPs and known monitoring systems. Consider separate thresholds for interactive vs non-interactive sign-ins.',
+      investigationWorkflow: '1. Determine if this is a targeted brute force (one account) or password spray (many accounts)\n2. Check the source IP reputation and whether it\'s a known attacker infrastructure\n3. Review if any of the targeted accounts eventually had a successful login\n4. Check if the targeted accounts follow a pattern (same department, naming convention)\n5. If successful login detected post-attack, treat as confirmed compromise',
+      criblSearchQueries: [
+        {
+          name: 'Failed Auth by Account',
+          description: 'Identifies accounts with the most authentication failures',
+          query: 'dataset="$DATASET" earliest=-1h\n| where status_errorCode != "0"\n| summarize failure_count=count() by userPrincipalName, ipAddress\n| where failure_count >= 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Password Spray Detection',
+          description: 'Identifies IPs targeting multiple accounts',
+          query: 'dataset="$DATASET" earliest=-1h\n| where status_errorCode != "0"\n| summarize unique_users=dcount(userPrincipalName), failure_count=count() by ipAddress\n| where unique_users >= 5\n| order by unique_users desc'
+        },
+        {
+          name: 'Post-Attack Success Detection',
+          description: 'Finds successful logins from IPs or accounts involved in brute force',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status_errorCode == "0"\n| summarize count() by userPrincipalName, ipAddress, appDisplayName\n| order by count_ desc'
+        },
+        {
+          name: 'Authentication Failure Trend',
+          description: 'Tracks authentication failures over time for attack pattern detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status_errorCode != "0"\n| timestats span=10m count() by ipAddress'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-004',
+      name: 'Legacy Authentication Protocol Usage',
+      objective: 'Detects sign-ins using legacy authentication protocols that cannot enforce MFA, representing a security gap that attackers frequently exploit to bypass modern security controls.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1110 - Brute Force'],
+      tags: ['security', 'entra-id', 'legacy-auth', 'mfa-bypass', 'authentication'],
+      requiredFields: ['userPrincipalName', 'appDisplayName', 'ipAddress', 'status_errorCode', 'deviceDetail_operatingSystem'],
+      detectionLogic: 'Triggers when sign-in events use legacy authentication protocols (IMAP, SMTP, POP3, ActiveSync) identified via appDisplayName patterns. These protocols cannot enforce conditional access or MFA, making them prime targets for credential stuffing attacks.',
+      falsePositives: ['Legacy mail clients that haven\'t been migrated to modern auth', 'Multifunction printers using SMTP authentication', 'Automated scan-to-email systems', 'Legacy line-of-business applications'],
+      tuningGuidance: 'Inventory all legitimate legacy auth usage before blocking. Create exceptions for documented legacy systems while working on migration plans. Monitor for new legacy auth sources appearing unexpectedly.',
+      investigationWorkflow: '1. Identify the application and protocol using legacy authentication\n2. Determine if this is a known legacy system or unexpected usage\n3. Check if the sign-in was successful and what the source IP indicates\n4. Review if the user has other modern auth sign-ins (indicating this may be attacker-initiated)\n5. Coordinate with application owners to migrate to modern authentication',
+      criblSearchQueries: [
+        {
+          name: 'Legacy Auth Usage',
+          description: 'Identifies accounts and apps using legacy authentication',
+          query: 'dataset="$DATASET" earliest=-24h\n| where appDisplayName contains "IMAP" or appDisplayName contains "SMTP" or appDisplayName contains "POP" or appDisplayName contains "ActiveSync"\n| summarize count() by userPrincipalName, appDisplayName, ipAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Legacy Auth Trend',
+          description: 'Tracks legacy authentication usage over time for migration progress',
+          query: 'dataset="$DATASET" earliest=-30d\n| where appDisplayName contains "IMAP" or appDisplayName contains "SMTP" or appDisplayName contains "POP"\n| timestats span=1d count() by appDisplayName'
+        },
+        {
+          name: 'New Legacy Auth Sources',
+          description: 'Identifies new IPs or users using legacy auth for the first time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where appDisplayName contains "IMAP" or appDisplayName contains "SMTP"\n| summarize first_seen=min(createdDateTime), count() by userPrincipalName, ipAddress, appDisplayName\n| order by first_seen desc'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-005',
+      name: 'Sign-In from Anonymizing Proxy or TOR Network',
+      objective: 'Detects authentication attempts from known anonymizing services (TOR, VPN services, proxies) that are commonly used by threat actors to mask their true origin.',
+      severity: 'High',
+      mitre: ['T1090 - Proxy', 'T1078 - Valid Accounts'],
+      tags: ['security', 'entra-id', 'anonymizer', 'tor', 'proxy', 'evasion'],
+      requiredFields: ['userPrincipalName', 'ipAddress', 'riskLevelDuringSignIn', 'location_countryOrRegion', 'status_errorCode', 'appDisplayName'],
+      detectionLogic: 'Triggers when sign-in events have elevated risk levels combined with IP addresses associated with known anonymizing services. Uses Entra ID\'s built-in risk detection which flags TOR exit nodes, anonymous proxies, and known VPN services used by attackers. Correlates with successful authentication to prioritize confirmed access.',
+      falsePositives: ['Privacy-conscious users using personal VPN services', 'Security researchers using TOR for legitimate research', 'Users in restrictive countries using VPNs to access services'],
+      tuningGuidance: 'Create a list of approved VPN services used by your organization. Focus alerts on successful authentications from anonymizers rather than failed attempts. Consider geo-context: VPN usage from countries where you have no employees is higher risk.',
+      investigationWorkflow: '1. Determine if the sign-in was successful and what was accessed\n2. Check the IP against known TOR exit node lists and commercial VPN providers\n3. Review the user\'s normal sign-in patterns for anomalies\n4. Check if the user has a legitimate reason for using anonymizing services\n5. If unauthorized, reset credentials and revoke active sessions',
+      criblSearchQueries: [
+        {
+          name: 'Risky Sign-Ins by Location',
+          description: 'Lists sign-ins with elevated risk grouped by location',
+          query: 'dataset="$DATASET" earliest=-24h\n| where riskLevelDuringSignIn == "high" or riskLevelDuringSignIn == "medium"\n| summarize count() by userPrincipalName, ipAddress, location_countryOrRegion, riskLevelDuringSignIn\n| order by count_ desc'
+        },
+        {
+          name: 'Successful Risky Authentications',
+          description: 'Finds successful logins from risky sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where riskLevelDuringSignIn != "none" and status_errorCode == "0"\n| summarize count() by userPrincipalName, ipAddress, appDisplayName, location_countryOrRegion\n| order by count_ desc'
+        },
+        {
+          name: 'Anonymizer Usage Trend',
+          description: 'Tracks risky sign-in patterns over time',
+          query: 'dataset="$DATASET" earliest=-14d\n| where riskLevelDuringSignIn == "high"\n| timestats span=1d count() by location_countryOrRegion'
+        },
+        {
+          name: 'User Risk Profile',
+          description: 'Builds risk profile for users with multiple risky sign-ins',
+          query: 'dataset="$DATASET" earliest=-30d\n| where riskLevelDuringSignIn != "none"\n| summarize high_risk=countif(riskLevelDuringSignIn == "high"), medium_risk=countif(riskLevelDuringSignIn == "medium") by userPrincipalName\n| order by high_risk desc'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-006',
+      name: 'Conditional Access Policy Modification',
+      objective: 'Detects changes to conditional access policies which could weaken security posture if done maliciously, allowing attackers to remove MFA requirements or access restrictions.',
+      severity: 'Critical',
+      mitre: ['T1556 - Modify Authentication Process', 'T1484.002 - Domain Policy Modification: Domain Trust Modification'],
+      tags: ['security', 'entra-id', 'conditional-access', 'policy-change', 'defense-evasion'],
+      requiredFields: ['userPrincipalName', 'appDisplayName', 'ipAddress', 'createdDateTime', 'status_errorCode'],
+      detectionLogic: 'Triggers when sign-in events to Azure Portal or Microsoft Graph API are followed by conditional access policy changes detected through audit logs. Monitors for administrators accessing policy management interfaces from unusual locations or at unusual times, which may indicate compromised admin credentials being used to weaken defenses.',
+      falsePositives: ['Scheduled policy updates by IT security team', 'Policy changes during incident response', 'Testing policy changes in staging environment'],
+      tuningGuidance: 'Establish a change window for conditional access policy modifications. Alert on all changes outside approved windows. Maintain a short list of administrators authorized to modify CA policies.',
+      investigationWorkflow: '1. Identify who made the policy change and from where\n2. Review what specific policy elements were modified (conditions, controls, assignments)\n3. Determine if the change weakens security posture (removing MFA, adding exclusions)\n4. Check if the admin account shows signs of compromise\n5. If unauthorized, revert the policy change and investigate the admin account',
+      criblSearchQueries: [
+        {
+          name: 'Admin Portal Access',
+          description: 'Monitors access to Azure Portal and policy management interfaces',
+          query: 'dataset="$DATASET" earliest=-24h\n| where appDisplayName == "Azure Portal" or appDisplayName == "Microsoft Graph"\n| summarize count() by userPrincipalName, ipAddress, location_countryOrRegion\n| order by count_ desc'
+        },
+        {
+          name: 'Policy Admin Sign-Ins',
+          description: 'Tracks sign-in patterns for accounts that manage conditional access',
+          query: 'dataset="$DATASET" earliest=-7d\n| where appDisplayName == "Azure Portal"\n| summarize unique_ips=dcount(ipAddress), unique_locations=dcount(location_countryOrRegion) by userPrincipalName\n| order by unique_ips desc'
+        },
+        {
+          name: 'Admin Access Timeline',
+          description: 'Shows when admins access policy management tools',
+          query: 'dataset="$DATASET" earliest=-7d\n| where appDisplayName == "Azure Portal" or appDisplayName == "Microsoft Graph"\n| timestats span=1h count() by userPrincipalName'
+        }
+      ]
+    },
+    {
+      id: 'ent-sec-007',
+      name: 'Sign-In Error Code Anomaly Indicating Token Theft',
+      objective: 'Detects patterns of specific authentication error codes that indicate token replay attacks or stolen session cookies being used from unauthorized locations.',
+      severity: 'Medium',
+      mitre: ['T1539 - Steal Web Session Cookie', 'T1550.001 - Use Alternate Authentication Material: Application Access Token'],
+      tags: ['security', 'entra-id', 'token-theft', 'session-hijack', 'credential-access'],
+      requiredFields: ['userPrincipalName', 'status_errorCode', 'ipAddress', 'deviceDetail_operatingSystem', 'appDisplayName', 'createdDateTime'],
+      detectionLogic: 'Triggers on specific error code patterns that indicate token replay or session theft, such as AADSTS50173 (token expired but reused), AADSTS50132 (session revoked), or successful sign-ins where the device OS differs from the user\'s registered devices. Detects adversary-in-the-middle attacks where session tokens are stolen and replayed from different infrastructure.',
+      falsePositives: ['Browser profile migrations causing token invalidation', 'Users switching between personal and corporate devices', 'Token cache issues after system updates'],
+      tuningGuidance: 'Focus on error codes specific to token manipulation rather than general auth failures. Correlate with impossible travel and device anomalies for higher confidence. Baseline normal device OS patterns per user.',
+      investigationWorkflow: '1. Review the specific error codes and their security implications\n2. Compare the device OS and IP with the user\'s registered devices and normal patterns\n3. Check for recent phishing emails targeting the user\n4. Look for sign-ins from attacker infrastructure (cloud hosting, VPS providers)\n5. If token theft confirmed, revoke all refresh tokens and force re-authentication',
+      criblSearchQueries: [
+        {
+          name: 'Suspicious Error Codes',
+          description: 'Identifies authentication events with error codes indicating token issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status_errorCode == "50173" or status_errorCode == "50132" or status_errorCode == "50076"\n| summarize count() by userPrincipalName, status_errorCode, ipAddress, deviceDetail_operatingSystem\n| order by count_ desc'
+        },
+        {
+          name: 'Device Anomalies',
+          description: 'Finds users authenticating from unexpected device types',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status_errorCode == "0"\n| summarize unique_os=dcount(deviceDetail_operatingSystem), os_list=makeset(deviceDetail_operatingSystem) by userPrincipalName\n| where unique_os >= 3\n| order by unique_os desc'
+        },
+        {
+          name: 'Token Error Timeline',
+          description: 'Shows token-related errors over time for pattern detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status_errorCode == "50173" or status_errorCode == "50132"\n| timestats span=1h count() by status_errorCode'
+        },
+        {
+          name: 'Post-Error Successful Auth',
+          description: 'Finds successful logins from same users who had token errors',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize failures=countif(status_errorCode != "0"), successes=countif(status_errorCode == "0") by userPrincipalName, ipAddress\n| where failures > 0 and successes > 0\n| order by failures desc'
+        }
+      ]
+    }
+  ],
+  'cyberark-pam': [
+    {
+      id: 'cyb-sec-001',
+      name: 'Privileged Session from Unauthorized Source',
+      objective: 'Detects privileged account access initiated from workstations or IP addresses not in the authorized jump server list, indicating potential credential theft or policy bypass.',
+      severity: 'Critical',
+      mitre: ['T1078.003 - Valid Accounts: Local Accounts', 'T1021 - Remote Services'],
+      tags: ['security', 'cyberark', 'privileged-access', 'unauthorized-source', 'policy-violation'],
+      requiredFields: ['user', 'source_address', 'target_account', 'target_address', 'action', 'station'],
+      detectionLogic: 'Triggers when privileged sessions are initiated from station or source_address values that are not in the approved jump server or PAM gateway list. Legitimate privileged access should always originate from designated secure access workstations (SAWs) or the CyberArk PVWA/PSM infrastructure.',
+      falsePositives: ['Emergency break-glass access from non-standard workstations', 'CyberArk infrastructure IP changes after maintenance', 'New jump servers not yet added to the allowlist'],
+      tuningGuidance: 'Maintain an accurate list of authorized PAM gateway IPs and jump server addresses. Update the list immediately after infrastructure changes. Consider auto-updating from CMDB or CyberArk configuration.',
+      investigationWorkflow: '1. Identify the source workstation/IP and determine if it is a known asset\n2. Verify the user and their authorization level for the target account\n3. Check if there is an approved change ticket or break-glass request\n4. Review what actions were performed during the privileged session\n5. If unauthorized, terminate the session and lock the privileged account',
+      criblSearchQueries: [
+        {
+          name: 'Sessions by Source',
+          description: 'Lists all privileged sessions grouped by source address',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Connect" or action == "Logon"\n| summarize count() by user, source_address, station, target_account, target_address\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual Source Addresses',
+          description: 'Identifies source addresses not commonly seen in privileged access',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "Connect" or action == "Logon"\n| summarize session_count=count(), first_seen=min(timestamp) by source_address, station\n| order by first_seen desc'
+        },
+        {
+          name: 'Source Address Baseline',
+          description: 'Establishes normal source address patterns for comparison',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action == "Connect"\n| summarize total_sessions=count(), unique_users=dcount(user) by source_address\n| order by total_sessions desc'
+        },
+        {
+          name: 'Unauthorized Source Timeline',
+          description: 'Tracks privileged access from all sources over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "Connect" or action == "Logon"\n| timestats span=4h count() by source_address'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-002',
+      name: 'Privileged Account Password Retrieval Without Session',
+      objective: 'Detects cases where privileged credentials are retrieved (copied/shown) without an associated privileged session, which may indicate credential theft for use outside the PAM system.',
+      severity: 'High',
+      mitre: ['T1555 - Credentials from Password Stores', 'T1003 - OS Credential Dumping'],
+      tags: ['security', 'cyberark', 'credential-theft', 'password-retrieval', 'policy-violation'],
+      requiredFields: ['user', 'action', 'target_account', 'safe', 'reason', 'timestamp'],
+      detectionLogic: 'Triggers when password retrieval actions (Show, Copy, Retrieve) occur without a corresponding Connect action for the same target account within a reasonable time window. Password retrieval without session establishment suggests the credentials may be used outside the PAM system, bypassing session recording and monitoring.',
+      falsePositives: ['Application teams retrieving service account passwords for configuration files', 'Emergency password retrieval for systems not integrated with PSM', 'Password rotation verification by PAM administrators'],
+      tuningGuidance: 'Categorize safes by those requiring PSM connection vs those allowing password retrieval. Set different thresholds for admin safes vs application safes. Track retrieval-to-session ratio per user.',
+      investigationWorkflow: '1. Identify the user who retrieved the password and their business justification\n2. Check if a corresponding privileged session was established within 30 minutes\n3. Review the reason field for proper documentation\n4. Verify if the target account\'s safe policy allows direct password access\n5. Check for the retrieved credentials being used from non-PAM sources',
+      criblSearchQueries: [
+        {
+          name: 'Password Retrievals',
+          description: 'Lists all password retrieval events without associated sessions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Retrieve" or action == "Copy Password" or action == "Show Password"\n| summarize count() by user, target_account, safe, reason\n| order by count_ desc'
+        },
+        {
+          name: 'Retrieval vs Session Ratio',
+          description: 'Compares password retrievals to session establishments per user',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize retrievals=countif(action == "Retrieve" or action == "Copy Password"), sessions=countif(action == "Connect") by user\n| extend ratio=todouble(retrievals) / max_of(sessions, 1)\n| order by ratio desc'
+        },
+        {
+          name: 'High-Volume Retrievers',
+          description: 'Identifies users retrieving an unusual number of passwords',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Retrieve" or action == "Copy Password"\n| summarize retrieval_count=count(), unique_accounts=dcount(target_account) by user\n| where retrieval_count >= 5\n| order by retrieval_count desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-003',
+      name: 'After-Hours Privileged Access Activity',
+      objective: 'Detects privileged account usage outside of normal business hours, which could indicate an attacker operating during low-visibility periods to avoid detection.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1098 - Account Manipulation'],
+      tags: ['security', 'cyberark', 'after-hours', 'anomaly', 'privileged-access'],
+      requiredFields: ['user', 'action', 'target_account', 'target_address', 'timestamp', 'source_address'],
+      detectionLogic: 'Triggers when privileged session activity occurs outside defined business hours (e.g., before 6 AM or after 10 PM local time, or on weekends) for users who do not normally work during those periods. Establishes a per-user baseline of working hours and alerts on significant deviations.',
+      falsePositives: ['Scheduled maintenance windows requiring overnight privileged access', 'On-call engineers responding to production incidents', 'Global teams working across time zones'],
+      tuningGuidance: 'Define business hours per user or user group based on their time zone and role. Exclude users with documented on-call schedules. Correlate with change management system for approved maintenance windows.',
+      investigationWorkflow: '1. Check if the after-hours access correlates with an approved change or incident ticket\n2. Verify the user is on the on-call rotation for the period\n3. Review what target systems were accessed and what actions were performed\n4. Compare the source address with the user\'s normal access patterns\n5. Contact the user to verify the access was intentional and authorized',
+      criblSearchQueries: [
+        {
+          name: 'After-Hours Activity',
+          description: 'Lists all privileged access events during non-business hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Connect" or action == "Logon"\n| summarize count() by user, target_account, target_address, timestamp\n| order by timestamp desc'
+        },
+        {
+          name: 'User Activity Patterns',
+          description: 'Shows typical access time patterns per user for baseline',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action == "Connect"\n| summarize session_count=count() by user, bin(timestamp, 1h)\n| order by user'
+        },
+        {
+          name: 'Weekend Activity',
+          description: 'Identifies privileged access during weekends',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "Connect" or action == "Logon"\n| summarize count() by user, target_account, source_address, timestamp\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-004',
+      name: 'Privileged Account Access to Multiple Critical Systems',
+      objective: 'Detects a single user accessing an unusually high number of privileged accounts or target systems in a short period, which may indicate lateral movement or reconnaissance using compromised PAM credentials.',
+      severity: 'High',
+      mitre: ['T1021 - Remote Services', 'T1078 - Valid Accounts', 'T1087 - Account Discovery'],
+      tags: ['security', 'cyberark', 'lateral-movement', 'enumeration', 'privilege-abuse'],
+      requiredFields: ['user', 'target_account', 'target_address', 'action', 'timestamp', 'safe'],
+      detectionLogic: 'Triggers when a single user accesses more than 5 unique target addresses or more than 7 unique target accounts within a 1-hour window. This breadth of access is unusual for normal administrative tasks and may indicate an attacker using compromised PAM credentials to move laterally through the environment.',
+      falsePositives: ['System administrators performing mass patching or configuration changes', 'PAM administrators testing connectivity to managed accounts', 'Disaster recovery exercises requiring access to multiple systems'],
+      tuningGuidance: 'Baseline normal access breadth per user role. Set higher thresholds for roles that legitimately access many systems (patch management, DR). Correlate with change tickets for mass maintenance events.',
+      investigationWorkflow: '1. Identify the user and determine their normal access patterns and scope\n2. List all target systems accessed and check if they share a common purpose\n3. Verify if there is a change ticket or incident justifying broad access\n4. Review the specific actions performed on each target system\n5. If unauthorized, disable the PAM user account and review all session recordings',
+      criblSearchQueries: [
+        {
+          name: 'Broad Access Detection',
+          description: 'Identifies users accessing many unique targets in a short period',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action == "Connect" or action == "Logon"\n| summarize unique_targets=dcount(target_address), unique_accounts=dcount(target_account) by user\n| where unique_targets >= 5 or unique_accounts >= 7\n| order by unique_targets desc'
+        },
+        {
+          name: 'User Access Breadth Trend',
+          description: 'Tracks how many systems each user accesses over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "Connect"\n| summarize unique_targets=dcount(target_address) by user, bin(timestamp, 1h)\n| where unique_targets >= 3\n| order by unique_targets desc'
+        },
+        {
+          name: 'Target System Mapping',
+          description: 'Shows all systems accessed by a specific user for investigation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Connect"\n| summarize count() by user, target_account, target_address, safe\n| order by user, count_ desc'
+        },
+        {
+          name: 'Lateral Movement Pattern',
+          description: 'Detects sequential access to multiple systems characteristic of lateral movement',
+          query: 'dataset="$DATASET" earliest=-4h\n| where action == "Connect"\n| summarize systems=makeset(target_address), system_count=dcount(target_address) by user\n| where system_count >= 5\n| order by system_count desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-005',
+      name: 'Safe Policy Violation - Unauthorized Account Access',
+      objective: 'Detects attempts to access privileged accounts in safes where the user does not have proper authorization, which may indicate privilege escalation attempts or policy misconfigurations being exploited.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1068 - Exploitation for Privilege Escalation'],
+      tags: ['security', 'cyberark', 'safe-violation', 'unauthorized-access', 'privilege-escalation'],
+      requiredFields: ['user', 'action', 'target_account', 'safe', 'severity', 'reason'],
+      detectionLogic: 'Triggers on CyberArk events with elevated severity levels indicating access denials or policy violations when users attempt to access accounts in safes they are not authorized for. Also detects when users provide suspicious or empty reason fields for access requests to high-privilege safes.',
+      falsePositives: ['Users accidentally selecting the wrong account from the vault', 'Permission changes not yet propagated causing temporary denials', 'New team members not yet provisioned with correct safe access'],
+      tuningGuidance: 'Focus on repeated violations by the same user, which indicate intentional probing rather than accidental access attempts. Set higher severity for violations against Tier 0 safes (domain admin, root accounts).',
+      investigationWorkflow: '1. Identify the user and which safe/account they attempted to access\n2. Determine if the user has any legitimate need for access to that safe\n3. Check if there are multiple violation attempts indicating systematic probing\n4. Review the user\'s normal safe access patterns for baseline comparison\n5. If deliberate probing, escalate to security leadership and HR',
+      criblSearchQueries: [
+        {
+          name: 'Access Violations',
+          description: 'Lists all access denial and policy violation events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity == "High" or severity == "Critical"\n| summarize count() by user, safe, target_account, action\n| order by count_ desc'
+        },
+        {
+          name: 'Repeated Violation Attempts',
+          description: 'Identifies users with multiple access violations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity == "High" or severity == "Critical"\n| summarize violation_count=count(), unique_safes=dcount(safe) by user\n| where violation_count >= 3\n| order by violation_count desc'
+        },
+        {
+          name: 'Safe Access Patterns',
+          description: 'Shows normal vs denied access patterns per safe',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize total_actions=count() by user, safe, action\n| order by user, safe'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-006',
+      name: 'Privileged Session to Domain Controller',
+      objective: 'Detects privileged sessions targeting domain controllers, which represent the highest-value targets in Active Directory environments and require enhanced scrutiny.',
+      severity: 'Critical',
+      mitre: ['T1078.002 - Valid Accounts: Domain Accounts', 'T1021.006 - Remote Services: Windows Remote Management'],
+      tags: ['security', 'cyberark', 'domain-controller', 'tier-zero', 'active-directory'],
+      requiredFields: ['user', 'target_account', 'target_address', 'action', 'source_address', 'timestamp'],
+      detectionLogic: 'Triggers on any privileged session connection to systems identified as domain controllers. Domain controllers are Tier 0 assets and all access should be strictly controlled, logged, and correlated with approved change tickets. Any unexpected access could indicate an attacker attempting to dump credentials or modify AD.',
+      falsePositives: ['Scheduled Active Directory maintenance tasks', 'Group Policy updates requiring DC access', 'AD health monitoring and replication checks'],
+      tuningGuidance: 'Maintain an accurate list of domain controller hostnames and IPs for matching. Set up integration with change management to auto-correlate DC access with approved changes. Alert separately for different DC access types (RDP vs PowerShell).',
+      investigationWorkflow: '1. Verify the user is a Tier 0 administrator authorized for domain controller access\n2. Check for an approved change ticket covering the DC maintenance\n3. Review the session recording for any suspicious commands (DCSync, NTDS.dit access)\n4. Check if the access time and duration match the approved change window\n5. If unauthorized, immediately alert AD security team and review DC integrity',
+      criblSearchQueries: [
+        {
+          name: 'Domain Controller Sessions',
+          description: 'Lists all privileged sessions to domain controllers',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "Connect" or action == "Logon"\n| summarize count() by user, target_account, target_address, source_address, timestamp\n| order by timestamp desc'
+        },
+        {
+          name: 'DC Access by User',
+          description: 'Shows which users access domain controllers most frequently',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action == "Connect"\n| summarize session_count=count(), last_access=max(timestamp) by user, target_address\n| order by session_count desc'
+        },
+        {
+          name: 'DC Access Timeline',
+          description: 'Tracks domain controller access patterns over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action == "Connect"\n| timestats span=4h count() by target_address'
+        }
+      ]
+    },
+    {
+      id: 'cyb-sec-007',
+      name: 'CyberArk Vault Credential Rotation Failure',
+      objective: 'Detects failed password rotation events which could indicate an attacker has changed the password outside of CyberArk, breaking the vault\'s management of the account and potentially maintaining unauthorized access.',
+      severity: 'Medium',
+      mitre: ['T1098 - Account Manipulation', 'T1556.001 - Modify Authentication Process: Domain Controller Authentication'],
+      tags: ['security', 'cyberark', 'password-rotation', 'account-takeover', 'operational'],
+      requiredFields: ['action', 'target_account', 'target_address', 'severity', 'safe', 'timestamp'],
+      detectionLogic: 'Triggers when CyberArk CPM (Central Policy Manager) password change or verification actions fail, especially for critical accounts. Failed rotations may indicate the current password in the vault no longer matches the actual password on the target system, suggesting an out-of-band password change possibly by an attacker.',
+      falsePositives: ['Target system temporarily unavailable during rotation window', 'Network connectivity issues between CPM and target', 'Account lockout due to prior failed attempts', 'Password complexity policy mismatch between vault and target'],
+      tuningGuidance: 'Set up tiered alerting: single failures for critical accounts, multiple consecutive failures for standard accounts. Exclude known maintenance windows when systems may be unavailable. Track rotation failure rates per safe for trend analysis.',
+      investigationWorkflow: '1. Identify the target account and system where rotation failed\n2. Verify the target system is online and reachable from CPM\n3. Check if someone manually changed the password outside CyberArk\n4. Review audit logs on the target system for password change events\n5. If out-of-band change detected, investigate who changed it and why',
+      criblSearchQueries: [
+        {
+          name: 'Rotation Failures',
+          description: 'Lists all password rotation failure events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action contains "CPM" or action contains "Change" or action contains "Verify"\n| where severity == "High" or severity == "Critical"\n| summarize count() by target_account, target_address, safe, action\n| order by count_ desc'
+        },
+        {
+          name: 'Consecutive Failures',
+          description: 'Identifies accounts with repeated rotation failures',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action contains "CPM" and severity != "Low"\n| summarize failure_count=count() by target_account, target_address\n| where failure_count >= 3\n| order by failure_count desc'
+        },
+        {
+          name: 'Rotation Health Trend',
+          description: 'Tracks rotation success/failure rates over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action contains "CPM" or action contains "Change"\n| timestats span=1d count() by severity'
+        }
+      ]
+    }
+  ],
+  'microsoft-defender-endpoint': [
+    {
+      id: 'mde-sec-001',
+      name: 'Suspicious PowerShell Execution with Encoded Commands',
+      objective: 'Detects PowerShell processes launched with encoded command parameters, a common technique used by attackers to obfuscate malicious payloads and evade command-line logging.',
+      severity: 'High',
+      mitre: ['T1059.001 - Command and Scripting Interpreter: PowerShell', 'T1027 - Obfuscated Files or Information'],
+      tags: ['security', 'defender-endpoint', 'powershell', 'obfuscation', 'execution'],
+      requiredFields: ['DeviceName', 'ProcessCommandLine', 'FileName', 'AccountName', 'Timestamp', 'InitiatingProcessFileName'],
+      detectionLogic: 'Triggers when PowerShell processes are detected with command-line arguments containing -encodedcommand, -enc, -e, or Base64-encoded strings. While encoded commands have legitimate uses, they are heavily favored by malware, fileless attacks, and post-exploitation frameworks like Cobalt Strike and Empire.',
+      falsePositives: ['Configuration management tools (SCCM, Intune) using encoded commands for deployment', 'Administrative scripts that encode commands to handle special characters', 'Monitoring agents that use encoded PowerShell for data collection'],
+      tuningGuidance: 'Whitelist known management tools and their expected encoded command patterns. Decode the Base64 content for additional context. Set higher severity when the parent process is unusual (e.g., Word, Excel, Outlook launching PowerShell).',
+      investigationWorkflow: '1. Decode the Base64 encoded command to understand the actual payload\n2. Identify the parent process that launched PowerShell\n3. Check if the device has endpoint protection alerts correlated with this event\n4. Review the user account context and determine if PowerShell usage is expected\n5. Look for subsequent process creation, network connections, or file writes',
+      criblSearchQueries: [
+        {
+          name: 'Encoded PowerShell Commands',
+          description: 'Finds PowerShell executions with encoded command parameters',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName == "powershell.exe" or FileName == "pwsh.exe"\n| where ProcessCommandLine contains "-enc" or ProcessCommandLine contains "-encodedcommand" or ProcessCommandLine contains "FromBase64"\n| summarize count() by DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual PowerShell Parents',
+          description: 'Identifies unusual parent processes launching PowerShell',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName == "powershell.exe" or FileName == "pwsh.exe"\n| summarize count() by InitiatingProcessFileName, DeviceName\n| order by count_ desc'
+        },
+        {
+          name: 'PowerShell Execution Timeline',
+          description: 'Tracks encoded PowerShell usage patterns over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where FileName == "powershell.exe" and ProcessCommandLine contains "-enc"\n| timestats span=4h count() by DeviceName'
+        },
+        {
+          name: 'Device PowerShell Context',
+          description: 'Shows all PowerShell activity on flagged devices for full context',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName == "powershell.exe" or FileName == "pwsh.exe"\n| summarize count() by DeviceName, AccountName, ProcessCommandLine\n| order by DeviceName'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-002',
+      name: 'Credential Dumping Tool Execution',
+      objective: 'Detects execution of known credential dumping tools (Mimikatz, ProcDump targeting LSASS, comsvcs.dll) that extract credentials from memory for lateral movement.',
+      severity: 'Critical',
+      mitre: ['T1003.001 - OS Credential Dumping: LSASS Memory', 'T1003.003 - OS Credential Dumping: NTDS'],
+      tags: ['security', 'defender-endpoint', 'credential-dumping', 'mimikatz', 'lsass'],
+      requiredFields: ['DeviceName', 'FileName', 'ProcessCommandLine', 'AccountName', 'SHA256', 'FolderPath', 'InitiatingProcessFileName'],
+      detectionLogic: 'Triggers when processes are detected that match known credential dumping tools by filename (mimikatz.exe, procdump.exe with LSASS arguments), command-line patterns (sekurlsa, lsadump, MiniDump with LSASS PID), or known malicious SHA256 hashes. Also detects comsvcs.dll abuse and direct LSASS memory access patterns.',
+      falsePositives: ['Authorized red team exercises using credential tools', 'Microsoft ProcDump used for legitimate crash dump analysis (not targeting LSASS)', 'Security testing tools running in sandboxed environments'],
+      tuningGuidance: 'Maintain a hash list of known credential dumping tools. Alert on any LSASS memory access regardless of tool name. Whitelist specific devices used for authorized security testing with time-bounded exceptions.',
+      investigationWorkflow: '1. Immediately assess if this is an authorized red team or pen test\n2. Identify the user account running the tool and check for compromise indicators\n3. Determine what credentials may have been exposed based on logged-in accounts\n4. Check for subsequent lateral movement from this device\n5. If unauthorized, isolate the device immediately and initiate incident response',
+      criblSearchQueries: [
+        {
+          name: 'Credential Tool Detection',
+          description: 'Identifies known credential dumping tool executions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "sekurlsa" or ProcessCommandLine contains "lsadump" or ProcessCommandLine contains "MiniDump" or FileName == "mimikatz.exe" or ProcessCommandLine contains "comsvcs.dll"\n| summarize count() by DeviceName, AccountName, FileName, ProcessCommandLine, FolderPath\n| order by count_ desc'
+        },
+        {
+          name: 'LSASS Access Patterns',
+          description: 'Detects processes interacting with LSASS memory',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "lsass" or FileName == "procdump.exe" or FileName == "procdump64.exe"\n| summarize count() by DeviceName, FileName, ProcessCommandLine, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'Credential Tool Hashes',
+          description: 'Lists unique hashes of suspicious executables for IOC matching',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ProcessCommandLine contains "sekurlsa" or ProcessCommandLine contains "lsadump" or ProcessCommandLine contains "MiniDump"\n| summarize count() by SHA256, FileName, FolderPath\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-003',
+      name: 'Ransomware Behavior - Mass File Encryption',
+      objective: 'Detects patterns consistent with ransomware activity including mass file renaming with new extensions, deletion of shadow copies, and high-volume file modification in short timeframes.',
+      severity: 'Critical',
+      mitre: ['T1486 - Data Encrypted for Impact', 'T1490 - Inhibit System Recovery'],
+      tags: ['security', 'defender-endpoint', 'ransomware', 'encryption', 'impact'],
+      requiredFields: ['DeviceName', 'ActionType', 'FileName', 'FolderPath', 'ProcessCommandLine', 'AccountName', 'Timestamp'],
+      detectionLogic: 'Triggers when Defender detects mass file modification or rename events (ActionType indicates file changes at volume exceeding 100 files per minute), execution of vssadmin/wmic to delete shadow copies, or processes writing files with known ransomware extensions. Also detects bcdedit commands disabling recovery mode.',
+      falsePositives: ['Legitimate encryption software (BitLocker, VeraCrypt) during deployment', 'Backup software compressing/encrypting large file sets', 'Software deployment tools performing mass file operations'],
+      tuningGuidance: 'Set file modification velocity thresholds based on normal operations. Whitelist known backup and encryption tools by SHA256 hash. The combination of shadow copy deletion with mass file modification should always be treated as critical regardless of other context.',
+      investigationWorkflow: '1. Immediately isolate the affected device from the network\n2. Identify the process responsible for the file encryption\n3. Determine the encryption scope - how many files and shares are affected\n4. Check for lateral movement to other devices\n5. Preserve evidence and engage incident response team for containment',
+      criblSearchQueries: [
+        {
+          name: 'Shadow Copy Deletion',
+          description: 'Detects attempts to delete volume shadow copies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "vssadmin" and ProcessCommandLine contains "delete" or ProcessCommandLine contains "wmic" and ProcessCommandLine contains "shadowcopy"\n| summarize count() by DeviceName, AccountName, ProcessCommandLine, Timestamp\n| order by Timestamp desc'
+        },
+        {
+          name: 'Mass File Activity',
+          description: 'Identifies devices with unusually high file modification rates',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ActionType contains "FileModified" or ActionType contains "FileRenamed" or ActionType contains "FileCreated"\n| summarize file_count=count() by DeviceName, AccountName\n| where file_count >= 100\n| order by file_count desc'
+        },
+        {
+          name: 'Recovery Inhibition Commands',
+          description: 'Detects commands that disable system recovery capabilities',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "bcdedit" and ProcessCommandLine contains "recoveryenabled" or ProcessCommandLine contains "vssadmin delete shadows"\n| summarize count() by DeviceName, ProcessCommandLine, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'Ransomware Process Chain',
+          description: 'Shows the full process tree for ransomware-like behavior',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "vssadmin" or ProcessCommandLine contains "bcdedit" or ProcessCommandLine contains "wbadmin"\n| summarize count() by DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine\n| order by DeviceName'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-004',
+      name: 'Living-off-the-Land Binary (LOLBin) Abuse',
+      objective: 'Detects abuse of legitimate Windows system binaries (LOLBins) for malicious purposes such as downloading payloads, executing arbitrary code, or bypassing application controls.',
+      severity: 'High',
+      mitre: ['T1218 - System Binary Proxy Execution', 'T1105 - Ingress Tool Transfer'],
+      tags: ['security', 'defender-endpoint', 'lolbin', 'defense-evasion', 'execution'],
+      requiredFields: ['DeviceName', 'FileName', 'ProcessCommandLine', 'FolderPath', 'AccountName', 'InitiatingProcessFileName', 'RemoteIP'],
+      detectionLogic: 'Triggers when known LOLBins (certutil, mshta, regsvr32, rundll32, msiexec, bitsadmin, wscript, cscript) are executed with command-line arguments indicating malicious use, such as downloading files from external URLs, decoding payloads, or executing code from unusual locations. Correlates with outbound network connections from these processes.',
+      falsePositives: ['Legitimate certificate operations using certutil', 'Software installation using msiexec from approved sources', 'Admin scripts using Windows scripting hosts for automation'],
+      tuningGuidance: 'Build a baseline of normal LOLBin usage patterns per device role. Focus on LOLBins making outbound network connections or executing content from temp directories. Whitelist specific command patterns used by IT management tools.',
+      investigationWorkflow: '1. Identify the LOLBin and its specific command-line arguments\n2. Determine if the LOLBin is making network connections or executing external content\n3. Check the parent process chain for initial access indicators\n4. Review if the user account should be running these system tools\n5. Look for subsequent malware execution or persistence mechanisms',
+      criblSearchQueries: [
+        {
+          name: 'LOLBin Download Activity',
+          description: 'Detects LOLBins used for downloading content from the internet',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName in ("certutil.exe", "bitsadmin.exe", "mshta.exe", "msiexec.exe")\n| where ProcessCommandLine contains "http" or ProcessCommandLine contains "url" or ProcessCommandLine contains "download"\n| summarize count() by DeviceName, FileName, ProcessCommandLine, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'LOLBin Execution Patterns',
+          description: 'Shows all LOLBin executions with their parent processes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName in ("certutil.exe", "regsvr32.exe", "rundll32.exe", "mshta.exe", "wscript.exe", "cscript.exe")\n| summarize count() by FileName, InitiatingProcessFileName, DeviceName, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'LOLBin Network Connections',
+          description: 'Identifies LOLBins making outbound network connections',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName in ("certutil.exe", "mshta.exe", "regsvr32.exe", "bitsadmin.exe") and RemoteIP != ""\n| summarize count() by FileName, RemoteIP, DeviceName, ProcessCommandLine\n| order by count_ desc'
+        },
+        {
+          name: 'LOLBin from Unusual Paths',
+          description: 'Detects LOLBins executed from non-standard system directories',
+          query: 'dataset="$DATASET" earliest=-7d\n| where FileName in ("certutil.exe", "mshta.exe", "regsvr32.exe", "rundll32.exe")\n| where FolderPath !contains "System32" and FolderPath !contains "SysWOW64"\n| summarize count() by FileName, FolderPath, DeviceName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-005',
+      name: 'Lateral Movement via Remote Service Execution',
+      objective: 'Detects patterns indicating lateral movement through remote service execution tools such as PsExec, WMI, or remote scheduled tasks being used to execute commands on other endpoints.',
+      severity: 'High',
+      mitre: ['T1021.002 - Remote Services: SMB/Windows Admin Shares', 'T1047 - Windows Management Instrumentation', 'T1569.002 - System Services: Service Execution'],
+      tags: ['security', 'defender-endpoint', 'lateral-movement', 'psexec', 'remote-execution'],
+      requiredFields: ['DeviceName', 'FileName', 'ProcessCommandLine', 'AccountName', 'RemoteIP', 'ActionType', 'InitiatingProcessFileName'],
+      detectionLogic: 'Triggers when remote execution tools are detected including PsExec (PSEXESVC.exe creation), remote WMI process creation, remote scheduled task creation, or service installation from remote sources. Detects both the source (tool execution) and destination (service creation) sides of lateral movement.',
+      falsePositives: ['IT administrators using PsExec for legitimate remote management', 'SCCM/Intune deploying software via remote services', 'Monitoring tools using WMI for data collection'],
+      tuningGuidance: 'Whitelist known management servers by IP that legitimately use remote execution. Set different thresholds for domain admins vs standard users. Focus on remote execution targeting sensitive servers or from unusual source devices.',
+      investigationWorkflow: '1. Identify the source device initiating the remote execution\n2. Determine the credentials being used for remote access\n3. Review what commands or services are being deployed remotely\n4. Check if the source device shows signs of compromise\n5. Map the full scope of lateral movement by tracing connections between devices',
+      criblSearchQueries: [
+        {
+          name: 'PsExec Activity',
+          description: 'Detects PsExec usage across the environment',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName == "PSEXESVC.exe" or FileName == "psexec.exe" or ProcessCommandLine contains "psexec"\n| summarize count() by DeviceName, AccountName, ProcessCommandLine, RemoteIP\n| order by count_ desc'
+        },
+        {
+          name: 'Remote WMI Execution',
+          description: 'Identifies WMI-based remote process execution',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ProcessCommandLine contains "wmic" and ProcessCommandLine contains "/node" or FileName == "wmiprvse.exe"\n| summarize count() by DeviceName, AccountName, ProcessCommandLine, RemoteIP\n| order by count_ desc'
+        },
+        {
+          name: 'Remote Service Installation',
+          description: 'Detects new service installations potentially from remote sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ActionType contains "ServiceInstalled" or ProcessCommandLine contains "sc create" or ProcessCommandLine contains "schtasks /create"\n| summarize count() by DeviceName, ProcessCommandLine, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'Lateral Movement Network Map',
+          description: 'Maps device-to-device connections for lateral movement visualization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FileName == "PSEXESVC.exe" or ProcessCommandLine contains "wmic" and ProcessCommandLine contains "/node"\n| summarize count() by DeviceName, RemoteIP, AccountName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-006',
+      name: 'Suspicious Binary Execution from Temp or User Directories',
+      objective: 'Detects execution of binaries from temporary directories, user download folders, or other non-standard locations which frequently indicates malware execution after initial delivery.',
+      severity: 'Medium',
+      mitre: ['T1204.002 - User Execution: Malicious File', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'defender-endpoint', 'malware', 'suspicious-execution', 'initial-access'],
+      requiredFields: ['DeviceName', 'FileName', 'FolderPath', 'SHA256', 'AccountName', 'ProcessCommandLine', 'Timestamp'],
+      detectionLogic: 'Triggers when executable files are run from paths commonly associated with malware staging: %TEMP%, %APPDATA%, Downloads folder, Recycle Bin, or ProgramData subdirectories created by non-standard installers. Prioritizes executables not seen broadly across the environment (low prevalence).',
+      falsePositives: ['Legitimate software installers running from Downloads', 'Self-extracting archives executing from temp', 'Development tools that run from user directories', 'Portable applications intentionally stored in non-standard paths'],
+      tuningGuidance: 'Build a prevalence baseline to identify truly unusual binaries vs common legitimate tools. Whitelist known installer hashes that commonly run from temp. Focus on executables with low organization-wide prevalence and no valid digital signature.',
+      investigationWorkflow: '1. Check the binary hash against threat intelligence and VirusTotal\n2. Review how the file arrived on the system (email attachment, web download, USB)\n3. Examine the binary\'s digital signature and publisher information\n4. Check device prevalence - is this binary seen on other devices\n5. If suspicious, collect the binary for sandbox analysis and block the hash',
+      criblSearchQueries: [
+        {
+          name: 'Temp Directory Executions',
+          description: 'Lists executables running from temporary and staging directories',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FolderPath contains "Temp" or FolderPath contains "AppData" or FolderPath contains "Downloads"\n| where FileName endswith ".exe" or FileName endswith ".dll" or FileName endswith ".scr"\n| summarize count() by DeviceName, FileName, FolderPath, SHA256, AccountName\n| order by count_ desc'
+        },
+        {
+          name: 'Low Prevalence Binaries',
+          description: 'Identifies binaries seen on very few devices (potential malware)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where FolderPath contains "Temp" or FolderPath contains "Downloads"\n| summarize device_count=dcount(DeviceName) by SHA256, FileName, FolderPath\n| where device_count <= 2\n| order by device_count'
+        },
+        {
+          name: 'Execution from User Directories',
+          description: 'Tracks all binary executions from user-writable locations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where FolderPath contains "Users" and (FileName endswith ".exe" or FileName endswith ".bat" or FileName endswith ".cmd")\n| summarize count() by FileName, FolderPath, DeviceName, AccountName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mde-sec-007',
+      name: 'Network Connection to Known Malicious Infrastructure',
+      objective: 'Detects outbound network connections from endpoints to IP addresses associated with known command and control servers, malware distribution, or threat actor infrastructure.',
+      severity: 'Medium',
+      mitre: ['T1071 - Application Layer Protocol', 'T1571 - Non-Standard Port', 'T1041 - Exfiltration Over C2 Channel'],
+      tags: ['security', 'defender-endpoint', 'c2', 'network', 'threat-intelligence'],
+      requiredFields: ['DeviceName', 'RemoteIP', 'FileName', 'ProcessCommandLine', 'AccountName', 'AlertSeverity', 'Timestamp'],
+      detectionLogic: 'Triggers when Defender for Endpoint detects network connections to IPs flagged by Microsoft Threat Intelligence or custom IOC lists, particularly when combined with elevated AlertSeverity. Focuses on connections initiated by non-browser processes or connections to non-standard ports which are more likely to be malicious C2 channels.',
+      falsePositives: ['Threat intelligence feeds with stale IOCs matching CDN or cloud provider IPs', 'Security tools scanning or testing connections to known bad IPs', 'DNS sinkholes causing benign traffic to resolve to flagged IPs'],
+      tuningGuidance: 'Maintain updated threat intelligence feeds and remove stale IOCs. Prioritize alerts where the connecting process is suspicious (non-browser, non-system). Correlate with other endpoint indicators for higher confidence scoring.',
+      investigationWorkflow: '1. Identify the process making the connection and its legitimacy\n2. Check the remote IP against multiple threat intelligence sources\n3. Determine if the connection was successful and data was exchanged\n4. Review other network connections from the same device for additional C2\n5. If confirmed C2, isolate the device and hunt for the associated malware',
+      criblSearchQueries: [
+        {
+          name: 'Suspicious Outbound Connections',
+          description: 'Lists outbound connections with associated alert severity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RemoteIP != "" and AlertSeverity != ""\n| summarize count() by DeviceName, RemoteIP, FileName, AlertSeverity, AccountName\n| order by AlertSeverity desc'
+        },
+        {
+          name: 'Non-Browser Network Connections',
+          description: 'Identifies network connections from non-browser processes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RemoteIP != "" and FileName !in ("chrome.exe", "firefox.exe", "msedge.exe", "iexplore.exe")\n| summarize connection_count=count(), unique_ips=dcount(RemoteIP) by DeviceName, FileName\n| where unique_ips >= 5\n| order by unique_ips desc'
+        },
+        {
+          name: 'C2 Connection Timeline',
+          description: 'Tracks connections to suspicious IPs over time for beaconing detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where RemoteIP != "" and AlertSeverity != ""\n| timestats span=1h count() by RemoteIP, DeviceName'
+        },
+        {
+          name: 'Device Network Profile',
+          description: 'Shows full network connection profile for flagged devices',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RemoteIP != ""\n| summarize unique_ips=dcount(RemoteIP), total_connections=count() by DeviceName, FileName\n| order by unique_ips desc'
+        }
+      ]
+    }
+  ],
+  'oracle-unified-audit': [
+    {
+      id: 'ora-sec-001',
+      name: 'Privileged Schema Object Access Outside Business Hours',
+      objective: 'Detects access to sensitive schema objects (SYS, SYSTEM, DBSNMP) during non-business hours, which may indicate unauthorized privileged activity or compromised credentials being used when monitoring is reduced.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1530 - Data from Cloud Storage'],
+      tags: ['security', 'privilege-abuse', 'off-hours', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'OBJECT_SCHEMA', 'ACTION_NAME', 'USERHOST'],
+      detectionLogic: 'Identifies SELECT, INSERT, UPDATE, or DELETE actions against privileged schemas (SYS, SYSTEM, DBSNMP, SYSMAN) occurring outside defined business hours (before 06:00 or after 20:00 local time). Correlates with the DBUSERNAME and USERHOST to identify the actor and origin.',
+      falsePositives: ['Scheduled batch jobs running under service accounts during maintenance windows', 'DBA performing authorized after-hours maintenance with change tickets'],
+      tuningGuidance: 'Adjust business hours window to match organizational schedule. Exclude known service accounts and scheduled job usernames. Add approved maintenance window exceptions.',
+      investigationWorkflow: '1. Identify the DBUSERNAME and USERHOST performing the access\n2. Check if a change ticket or maintenance window covers this timeframe\n3. Review SQL_TEXT for the specific operations performed\n4. Correlate with OS_USERNAME to determine if the database user maps to an expected operator\n5. Check RETURN_CODE to determine if the access was successful',
+      criblSearchQueries: [
+        {
+          name: 'Off-hours privileged schema access',
+          description: 'Finds access to privileged schemas outside business hours in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where OBJECT_SCHEMA in ("SYS", "SYSTEM", "DBSNMP", "SYSMAN")\n| where ACTION_NAME in ("SELECT", "INSERT", "UPDATE", "DELETE")\n| extend hour = datetime_part("hour", EVENT_TIMESTAMP)\n| where hour < 6 or hour > 20\n| summarize count() by DBUSERNAME, USERHOST, OBJECT_SCHEMA, ACTION_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'User activity timeline during off-hours',
+          description: 'Timeline of all actions by the suspicious user during off-hours',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour = datetime_part("hour", EVENT_TIMESTAMP)\n| where hour < 6 or hour > 20\n| summarize count() by DBUSERNAME, bin(EVENT_TIMESTAMP, 1h)\n| order by EVENT_TIMESTAMP asc'
+        },
+        {
+          name: 'Historical access pattern for user',
+          description: 'Shows whether this user typically accesses these schemas to establish baseline',
+          query: 'dataset="$DATASET" earliest=-30d\n| where OBJECT_SCHEMA in ("SYS", "SYSTEM", "DBSNMP", "SYSMAN")\n| summarize count() by DBUSERNAME, OBJECT_SCHEMA, bin(EVENT_TIMESTAMP, 1d)\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-002',
+      name: 'Multiple Authentication Failures Followed by Success',
+      objective: 'Detects brute-force or password spraying attacks against Oracle databases by identifying multiple failed authentication attempts from the same host followed by a successful login, indicating credential compromise.',
+      severity: 'Critical',
+      mitre: ['T1110 - Brute Force', 'T1110.003 - Password Spraying'],
+      tags: ['security', 'brute-force', 'authentication', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'USERHOST', 'RETURN_CODE', 'AUTHENTICATION_TYPE', 'ACTION_NAME'],
+      detectionLogic: 'Identifies patterns where 5 or more failed login attempts (RETURN_CODE 1017 for invalid credentials, 28000 for locked account) from the same USERHOST are followed by a successful authentication (RETURN_CODE 0) within a 30-minute window. Groups by source host to detect distributed attacks against multiple accounts.',
+      falsePositives: ['Application connection pools with stale credentials during password rotation', 'Users who forgot their password and retry multiple times before succeeding'],
+      tuningGuidance: 'Adjust the failure threshold based on environment. Exclude known application servers with connection pooling issues. Increase time window for slow-and-low attacks.',
+      investigationWorkflow: '1. Identify the source USERHOST and all targeted DBUSERNAME accounts\n2. Determine if the successful login used the same account as the failures or a different one\n3. Check AUTHENTICATION_TYPE to understand the authentication method used\n4. Review subsequent actions after successful login for data exfiltration indicators\n5. Correlate with network logs to identify the true source IP behind USERHOST',
+      criblSearchQueries: [
+        {
+          name: 'Failed logins by host',
+          description: 'Counts authentication failures per source host in the last hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION_NAME == "LOGON" and RETURN_CODE in (1017, 28000)\n| summarize failure_count=count() by USERHOST, DBUSERNAME\n| where failure_count >= 5\n| order by failure_count desc'
+        },
+        {
+          name: 'Successful logins after failures',
+          description: 'Identifies successful logins from hosts that had prior failures',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION_NAME == "LOGON"\n| extend is_failure = iff(RETURN_CODE != 0, 1, 0)\n| extend is_success = iff(RETURN_CODE == 0, 1, 0)\n| summarize failures=sum(is_failure), successes=sum(is_success) by USERHOST, DBUSERNAME\n| where failures >= 5 and successes >= 1\n| order by failures desc'
+        },
+        {
+          name: 'Authentication timeline for suspicious host',
+          description: 'Shows the sequence of login attempts from a specific host',
+          query: 'dataset="$DATASET" earliest=-2h\n| where ACTION_NAME == "LOGON"\n| summarize count() by USERHOST, RETURN_CODE, AUTHENTICATION_TYPE, bin(EVENT_TIMESTAMP, 5m)\n| order by EVENT_TIMESTAMP asc'
+        },
+        {
+          name: 'Post-compromise activity',
+          description: 'Shows actions taken after a successful login from a previously-failing host',
+          query: 'dataset="$DATASET" earliest=-2h\n| where RETURN_CODE == 0\n| summarize count() by DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-003',
+      name: 'Database Audit Policy Modification',
+      objective: 'Detects modifications to unified audit policies which could indicate an attacker attempting to disable auditing to cover their tracks or a malicious insider reducing monitoring coverage.',
+      severity: 'Critical',
+      mitre: ['T1562.008 - Impair Defenses: Disable or Modify Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'defense-evasion', 'audit-tampering', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'SQL_TEXT', 'UNIFIED_AUDIT_POLICIES', 'USERHOST'],
+      detectionLogic: 'Monitors for actions that modify audit configurations including CREATE AUDIT POLICY, ALTER AUDIT POLICY, DROP AUDIT POLICY, AUDIT, and NOAUDIT statements. Any modification to the audit infrastructure should be rare and tightly controlled, making unauthorized changes highly suspicious.',
+      falsePositives: ['Authorized DBA performing planned audit policy updates as part of compliance changes', 'Initial database setup or migration activities'],
+      tuningGuidance: 'Maintain a whitelist of authorized DBAs who can modify audit policies. Correlate with change management tickets. Alert on any modification by non-whitelisted users at Critical severity.',
+      investigationWorkflow: '1. Review the SQL_TEXT to understand exactly what audit policy change was made\n2. Verify the DBUSERNAME is an authorized DBA with change management approval\n3. Check if audit policies were disabled or reduced in scope\n4. Look for other suspicious activity from the same user session before and after the change\n5. Verify current audit policy state to ensure coverage has not been degraded',
+      criblSearchQueries: [
+        {
+          name: 'Audit policy modifications',
+          description: 'Finds all audit policy changes in the specified timeframe',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("CREATE AUDIT POLICY", "ALTER AUDIT POLICY", "DROP AUDIT POLICY", "AUDIT", "NOAUDIT")\n| summarize count() by DBUSERNAME, ACTION_NAME, USERHOST, EVENT_TIMESTAMP\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'SQL details of audit changes',
+          description: 'Shows the exact SQL statements used to modify audit policies',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION_NAME in ("CREATE AUDIT POLICY", "ALTER AUDIT POLICY", "DROP AUDIT POLICY", "AUDIT", "NOAUDIT")\n| project EVENT_TIMESTAMP, DBUSERNAME, ACTION_NAME, SQL_TEXT, USERHOST\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'User activity around audit change',
+          description: 'Shows all activity by the user who modified audit policies in a surrounding window',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("CREATE AUDIT POLICY", "ALTER AUDIT POLICY", "DROP AUDIT POLICY")\n| summarize count() by DBUSERNAME, ACTION_NAME, UNIFIED_AUDIT_POLICIES\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-004',
+      name: 'Bulk Data Export via SELECT on Sensitive Tables',
+      objective: 'Detects potential data exfiltration by identifying large-scale SELECT operations against tables containing sensitive data such as HR, financial, or PII-related schemas, which may indicate unauthorized data harvesting.',
+      severity: 'High',
+      mitre: ['T1005 - Data from Local System', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'data-exfiltration', 'insider-threat', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'OBJECT_SCHEMA', 'OBJECT_NAME', 'SQL_TEXT', 'USERHOST'],
+      detectionLogic: 'Identifies high-frequency SELECT operations against sensitive schemas (HR, FINANCE, PII, PAYROLL, CUSTOMERS) from a single user within a short time window. Looks for patterns suggesting bulk data extraction such as SELECT * patterns, large result set queries, or repeated queries against multiple tables in sensitive schemas.',
+      falsePositives: ['Authorized reporting jobs that query sensitive schemas on schedule', 'ETL processes that perform bulk reads for data warehouse loading', 'Annual audit queries by authorized personnel'],
+      tuningGuidance: 'Define sensitive schemas and tables specific to your organization. Establish baseline query volumes per user and schema. Exclude known ETL service accounts and reporting tools.',
+      investigationWorkflow: '1. Review the SQL_TEXT to understand what data was being queried\n2. Determine the volume and scope of data accessed across tables\n3. Check if the DBUSERNAME normally accesses these schemas\n4. Correlate with data loss prevention (DLP) logs for data movement\n5. Review USERHOST to determine if access came from an expected workstation',
+      criblSearchQueries: [
+        {
+          name: 'High-volume SELECT on sensitive schemas',
+          description: 'Identifies users with unusually high SELECT counts against sensitive schemas',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ACTION_NAME == "SELECT" and OBJECT_SCHEMA in ("HR", "FINANCE", "PII", "PAYROLL", "CUSTOMERS")\n| summarize query_count=count(), distinct_tables=dcount(OBJECT_NAME) by DBUSERNAME, OBJECT_SCHEMA, USERHOST\n| where query_count > 50 or distinct_tables > 10\n| order by query_count desc'
+        },
+        {
+          name: 'Data access pattern by user',
+          description: 'Shows the timeline and breadth of data access by a specific user',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "SELECT"\n| summarize count() by DBUSERNAME, OBJECT_SCHEMA, OBJECT_NAME, bin(EVENT_TIMESTAMP, 1h)\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'SQL text analysis for bulk patterns',
+          description: 'Looks for SELECT * or broad query patterns indicating bulk extraction',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "SELECT" and OBJECT_SCHEMA in ("HR", "FINANCE", "PII", "PAYROLL", "CUSTOMERS")\n| where SQL_TEXT contains "SELECT *" or SQL_TEXT contains "ROWNUM"\n| project EVENT_TIMESTAMP, DBUSERNAME, OBJECT_SCHEMA, OBJECT_NAME, SQL_TEXT\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-005',
+      name: 'DDL Operations on Critical Database Objects',
+      objective: 'Detects Data Definition Language operations (DROP, ALTER, TRUNCATE) on critical database objects that could indicate sabotage, ransomware preparation, or unauthorized schema modifications.',
+      severity: 'High',
+      mitre: ['T1485 - Data Destruction', 'T1565.001 - Stored Data Manipulation'],
+      tags: ['security', 'data-destruction', 'sabotage', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'OBJECT_SCHEMA', 'OBJECT_NAME', 'SQL_TEXT', 'USERHOST'],
+      detectionLogic: 'Monitors for destructive DDL operations including DROP TABLE, DROP DATABASE, TRUNCATE TABLE, ALTER TABLE DROP COLUMN, and ALTER TABLE DROP PARTITION against production schemas. These operations are rare in production and could indicate malicious activity or severe operational errors.',
+      falsePositives: ['Authorized schema migrations during planned deployment windows', 'Database maintenance operations with approved change tickets', 'Development or test environment cleanup'],
+      tuningGuidance: 'Maintain a list of production schemas where DDL should be restricted. Whitelist deployment service accounts that perform authorized migrations. Correlate with CI/CD pipeline activity.',
+      investigationWorkflow: '1. Confirm the ACTION_NAME and review SQL_TEXT for the exact DDL statement\n2. Verify the DBUSERNAME against authorized deployment accounts\n3. Check for corresponding change management tickets\n4. Determine if the operation was successful via RETURN_CODE\n5. Assess impact by identifying dependent applications and data recovery options',
+      criblSearchQueries: [
+        {
+          name: 'Destructive DDL operations',
+          description: 'Identifies DROP, TRUNCATE, and destructive ALTER operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("DROP TABLE", "TRUNCATE TABLE", "DROP INDEX", "DROP VIEW", "DROP SEQUENCE", "DROP PROCEDURE")\n| summarize count() by DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME, USERHOST\n| order by count_ desc'
+        },
+        {
+          name: 'DDL activity timeline',
+          description: 'Shows all DDL activity over time to identify bursts of destructive operations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION_NAME in ("DROP TABLE", "TRUNCATE TABLE", "ALTER TABLE", "DROP INDEX")\n| timestats count() by ACTION_NAME span=1h\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'User DDL history',
+          description: 'Historical DDL activity by the user to determine if this is normal behavior',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ACTION_NAME in ("DROP TABLE", "TRUNCATE TABLE", "ALTER TABLE", "CREATE TABLE")\n| summarize count() by DBUSERNAME, ACTION_NAME, bin(EVENT_TIMESTAMP, 1d)\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-006',
+      name: 'Database Login from New or Unusual Source Host',
+      objective: 'Detects database authentication from previously unseen source hosts, which could indicate lateral movement from a newly compromised system or unauthorized access from an unexpected network segment.',
+      severity: 'Medium',
+      mitre: ['T1078 - Valid Accounts', 'T1021 - Remote Services'],
+      tags: ['security', 'lateral-movement', 'anomalous-access', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'USERHOST', 'OS_USERNAME', 'RETURN_CODE', 'AUTHENTICATION_TYPE'],
+      detectionLogic: 'Establishes a baseline of known USERHOST values per DBUSERNAME over a 30-day lookback period. Alerts when a login occurs from a USERHOST not previously observed for that database user. Focuses on successful authentications (RETURN_CODE 0) to identify actual access rather than failed attempts.',
+      falsePositives: ['New application servers added to the environment', 'Users connecting from new workstations after hardware refresh', 'VPN IP changes causing new host appearances'],
+      tuningGuidance: 'Maintain a baseline of approved source hosts per database account. Extend the lookback window for environments with infrequent access patterns. Exclude dynamic IP ranges for VPN users.',
+      investigationWorkflow: '1. Identify the new USERHOST and determine if it belongs to the corporate network\n2. Check if the OS_USERNAME matches expected mappings for the DBUSERNAME\n3. Review what actions were performed after the login\n4. Correlate with endpoint logs to verify the source system identity\n5. Check if other database accounts also saw logins from this new host',
+      criblSearchQueries: [
+        {
+          name: 'New source hosts in last 24h',
+          description: 'Identifies login source hosts not seen in the prior 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "LOGON" and RETURN_CODE == 0\n| summarize latest_login=max(EVENT_TIMESTAMP) by DBUSERNAME, USERHOST, OS_USERNAME, AUTHENTICATION_TYPE\n| order by latest_login desc'
+        },
+        {
+          name: 'Historical host baseline per user',
+          description: 'Shows all known source hosts per user over the last 30 days',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ACTION_NAME == "LOGON" and RETURN_CODE == 0\n| summarize login_count=count(), first_seen=min(EVENT_TIMESTAMP), last_seen=max(EVENT_TIMESTAMP) by DBUSERNAME, USERHOST\n| order by DBUSERNAME asc'
+        },
+        {
+          name: 'Activity from new host',
+          description: 'Shows all operations performed from the suspicious new source host',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RETURN_CODE == 0\n| summarize count() by USERHOST, DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-sec-007',
+      name: 'Privilege Escalation via GRANT Operations',
+      objective: 'Detects unauthorized privilege grants including DBA role assignments, SYSDBA grants, or broad object privileges that could indicate privilege escalation by a compromised account or malicious insider.',
+      severity: 'Medium',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'privilege-escalation', 'account-manipulation', 'oracle'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'SQL_TEXT', 'OBJECT_NAME', 'USERHOST', 'RETURN_CODE'],
+      detectionLogic: 'Monitors GRANT operations for high-privilege role assignments (DBA, SYSDBA, SYSOPER, SELECT ANY TABLE, ALTER SYSTEM) or broad object-level privileges. Focuses on grants that expand access beyond normal operational requirements, particularly when performed by non-DBA accounts or from unusual source hosts.',
+      falsePositives: ['Authorized user provisioning by DBA team during onboarding', 'Temporary elevated privileges for approved troubleshooting with time-limited grants'],
+      tuningGuidance: 'Whitelist authorized DBA accounts that regularly perform grants. Focus alerts on high-risk grants (DBA, SYSDBA, ANY privileges). Correlate with IAM ticketing systems for approved provisioning.',
+      investigationWorkflow: '1. Review SQL_TEXT to identify the exact privileges granted and the recipient\n2. Verify the DBUSERNAME performing the grant is an authorized DBA\n3. Check if a provisioning ticket exists for this access grant\n4. Determine if the granted privileges exceed the recipient role requirements\n5. Review if the recipient account subsequently used the new privileges',
+      criblSearchQueries: [
+        {
+          name: 'High-privilege GRANT operations',
+          description: 'Finds GRANT operations for elevated privileges',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "GRANT"\n| where SQL_TEXT contains "DBA" or SQL_TEXT contains "SYSDBA" or SQL_TEXT contains "ANY" or SQL_TEXT contains "SYSOPER"\n| project EVENT_TIMESTAMP, DBUSERNAME, SQL_TEXT, USERHOST, RETURN_CODE\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'All GRANT activity',
+          description: 'Shows all privilege grants to identify patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION_NAME == "GRANT"\n| summarize count() by DBUSERNAME, USERHOST, bin(EVENT_TIMESTAMP, 1d)\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Privilege changes by non-DBA accounts',
+          description: 'Identifies grants performed by accounts not in the DBA group',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("GRANT", "REVOKE")\n| summarize grant_count=count() by DBUSERNAME, ACTION_NAME, USERHOST\n| order by grant_count desc'
+        },
+        {
+          name: 'Recipient activity post-grant',
+          description: 'Checks if newly granted privileges were immediately exercised',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "GRANT"\n| project EVENT_TIMESTAMP, DBUSERNAME, SQL_TEXT, OBJECT_NAME\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    }
+  ],
+  'salesforce-events': [
+    {
+      id: 'sfe-sec-001',
+      name: 'Mass Data Export via API',
+      objective: 'Detects potential data exfiltration through excessive API calls to data export endpoints, which may indicate a compromised account or malicious insider extracting CRM records at scale.',
+      severity: 'Critical',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'data-exfiltration', 'api-abuse', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'URI', 'API_TYPE', 'SOURCE_IP', 'STATUS_CODE'],
+      detectionLogic: 'Identifies users making an abnormally high volume of API requests targeting data query or export URIs (e.g., /services/data/vXX/query, /services/data/vXX/queryAll, bulk API endpoints) within a short time window. Thresholds are based on exceeding 3x the user baseline or absolute thresholds of 500+ API calls in an hour.',
+      falsePositives: ['Authorized ETL integrations performing scheduled bulk data syncs', 'Salesforce Data Loader operations by administrators', 'Backup solutions with API-based data extraction'],
+      tuningGuidance: 'Establish per-user API call baselines. Whitelist known integration CLIENT_NAMEs and their expected volumes. Adjust thresholds based on organization size and normal API consumption patterns.',
+      investigationWorkflow: '1. Identify the USER_ID and determine if it is a service account or interactive user\n2. Review the URIs accessed to understand what data objects were queried\n3. Check CLIENT_NAME to identify the application making the requests\n4. Compare current volume against the user historical baseline\n5. Correlate SOURCE_IP with known corporate or integration server addresses',
+      criblSearchQueries: [
+        {
+          name: 'High-volume API users',
+          description: 'Identifies users with excessive API call volumes in the last hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| where API_TYPE != ""\n| where URI contains "/query" or URI contains "/sobjects" or URI contains "/composite"\n| summarize api_count=count() by USER_ID, API_TYPE, CLIENT_NAME, SOURCE_IP\n| where api_count > 500\n| order by api_count desc'
+        },
+        {
+          name: 'Export-related URI patterns',
+          description: 'Shows access to bulk export and query endpoints',
+          query: 'dataset="$DATASET" earliest=-4h\n| where URI contains "/query" or URI contains "/queryAll" or URI contains "/job" or URI contains "/batch"\n| summarize count() by USER_ID, URI, METHOD, API_TYPE\n| order by count_ desc'
+        },
+        {
+          name: 'User API activity timeline',
+          description: 'Timeline of API activity for a specific user to identify burst patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where API_TYPE != ""\n| timestats count() by USER_ID span=15m\n| order by TIMESTAMP_DERIVED desc'
+        },
+        {
+          name: 'Source IP analysis for API calls',
+          description: 'Identifies unusual source IPs making high-volume API calls',
+          query: 'dataset="$DATASET" earliest=-24h\n| where API_TYPE != ""\n| summarize call_count=count(), distinct_users=dcount(USER_ID) by SOURCE_IP\n| where call_count > 200\n| order by call_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-002',
+      name: 'Login from Anomalous IP After Hours',
+      objective: 'Detects interactive logins to Salesforce from unusual source IPs occurring outside business hours, which may indicate credential theft or unauthorized access from attacker infrastructure.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1133 - External Remote Services'],
+      tags: ['security', 'credential-abuse', 'anomalous-login', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'SOURCE_IP', 'LOGIN_KEY', 'STATUS_CODE'],
+      detectionLogic: 'Identifies login events (EVENT_TYPE containing Login) from source IPs not previously associated with the user in the past 30 days, occurring outside business hours (before 07:00 or after 19:00). Cross-references with failed login attempts from the same IP to identify credential stuffing that eventually succeeded.',
+      falsePositives: ['Employees traveling and connecting from hotel or mobile networks', 'Users on dynamic ISP IPs that change frequently', 'VPN egress IP changes'],
+      tuningGuidance: 'Build per-user IP baseline over 30+ days. Exclude corporate VPN egress ranges. Adjust business hours for different time zones based on user location. Consider geo-IP enrichment for additional context.',
+      investigationWorkflow: '1. Determine if the SOURCE_IP belongs to a known corporate range, VPN, or cloud provider\n2. Check if the USER_ID has any other recent logins from different IPs\n3. Review LOGIN_KEY to track the full session activity after login\n4. Check for concurrent sessions from different geographic locations\n5. Verify with the user whether the login was legitimate',
+      criblSearchQueries: [
+        {
+          name: 'Off-hours logins from new IPs',
+          description: 'Identifies logins from unusual IPs during non-business hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EVENT_TYPE contains "Login"\n| where STATUS_CODE == 200\n| extend hour = datetime_part("hour", TIMESTAMP_DERIVED)\n| where hour < 7 or hour > 19\n| summarize count() by USER_ID, SOURCE_IP, LOGIN_KEY\n| order by count_ desc'
+        },
+        {
+          name: 'User login IP history',
+          description: 'Shows all IPs used by a user over the past 30 days to identify anomalies',
+          query: 'dataset="$DATASET" earliest=-30d\n| where EVENT_TYPE contains "Login" and STATUS_CODE == 200\n| summarize login_count=count(), first_seen=min(TIMESTAMP_DERIVED), last_seen=max(TIMESTAMP_DERIVED) by USER_ID, SOURCE_IP\n| order by last_seen desc'
+        },
+        {
+          name: 'Concurrent sessions from different IPs',
+          description: 'Detects users with active sessions from multiple IPs simultaneously',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EVENT_TYPE contains "Login" and STATUS_CODE == 200\n| summarize distinct_ips=dcount(SOURCE_IP), ips=make_set(SOURCE_IP) by USER_ID\n| where distinct_ips > 1\n| order by distinct_ips desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-003',
+      name: 'Salesforce Admin Permission Escalation',
+      objective: 'Detects events indicating privilege escalation within Salesforce such as profile changes, permission set assignments, or role hierarchy modifications that could grant unauthorized administrative access.',
+      severity: 'High',
+      mitre: ['T1098 - Account Manipulation', 'T1098.001 - Additional Cloud Credentials'],
+      tags: ['security', 'privilege-escalation', 'admin-abuse', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'URI', 'METHOD', 'STATUS_CODE', 'SOURCE_IP'],
+      detectionLogic: 'Monitors for API calls to permission-related URIs including /services/data/vXX/sobjects/PermissionSet, /services/data/vXX/sobjects/Profile, and setup-related endpoints using POST or PUT methods (METHOD). Alerts when these modifications come from non-administrator users or unusual source IPs.',
+      falsePositives: ['Authorized Salesforce administrators performing routine user provisioning', 'Automated user lifecycle management tools updating permissions', 'Sandbox refresh activities that reset permissions'],
+      tuningGuidance: 'Maintain a list of authorized admin USER_IDs. Exclude known provisioning service accounts. Focus on permission changes that grant elevated access levels (System Administrator profile, Modify All Data permission).',
+      investigationWorkflow: '1. Identify the USER_ID performing the permission change and verify admin status\n2. Determine what permission set or profile was modified via the URI\n3. Identify the target user who received the permission change\n4. Check if the change was part of an approved provisioning workflow\n5. Review subsequent activity by the target user for privilege abuse',
+      criblSearchQueries: [
+        {
+          name: 'Permission modification events',
+          description: 'Finds API calls that modify permissions or profiles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where METHOD in ("POST", "PUT", "PATCH")\n| where URI contains "PermissionSet" or URI contains "Profile" or URI contains "UserRole"\n| summarize count() by USER_ID, URI, METHOD, STATUS_CODE, SOURCE_IP\n| order by count_ desc'
+        },
+        {
+          name: 'Admin setup page access',
+          description: 'Shows access to Salesforce setup and administration pages',
+          query: 'dataset="$DATASET" earliest=-24h\n| where URI contains "/setup/" or URI contains "/lightning/setup/"\n| where METHOD in ("POST", "PUT", "PATCH")\n| summarize count() by USER_ID, URI, METHOD\n| order by count_ desc'
+        },
+        {
+          name: 'User permission change history',
+          description: 'Historical view of permission-related changes by user',
+          query: 'dataset="$DATASET" earliest=-7d\n| where URI contains "PermissionSet" or URI contains "Profile"\n| where METHOD in ("POST", "PUT", "PATCH", "DELETE")\n| summarize change_count=count() by USER_ID, bin(TIMESTAMP_DERIVED, 1d)\n| order by TIMESTAMP_DERIVED desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-004',
+      name: 'Suspicious Report Export Activity',
+      objective: 'Detects excessive report exports or access to sensitive report types that may indicate reconnaissance or data exfiltration through Salesforce reporting functionality.',
+      severity: 'Medium',
+      mitre: ['T1213 - Data from Information Repositories', 'T1005 - Data from Local System'],
+      tags: ['security', 'data-exfiltration', 'reporting-abuse', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'URI', 'METHOD', 'SOURCE_IP', 'CLIENT_NAME'],
+      detectionLogic: 'Identifies users accessing report export functionality at volumes exceeding normal patterns. Monitors for URI patterns containing /analytics/reports, report export endpoints, and dashboard data downloads. Alerts when a user exports more than 20 reports in a 4-hour window or accesses reports they have not previously viewed.',
+      falsePositives: ['Sales managers running quarterly reports', 'Scheduled report subscriptions delivering via email', 'Business analysts performing authorized data analysis'],
+      tuningGuidance: 'Set per-role export thresholds (executives may legitimately export more). Whitelist scheduled report USER_IDs. Flag exports of reports containing sensitive objects (Opportunity amounts, Contact PII).',
+      investigationWorkflow: '1. Identify the reports being exported and their data sensitivity\n2. Compare the user export volume against their historical baseline\n3. Check CLIENT_NAME to determine if exports are via UI or API\n4. Review if the user role justifies access to the exported report types\n5. Check for data being sent to external email addresses or storage',
+      criblSearchQueries: [
+        {
+          name: 'Report export volume by user',
+          description: 'Identifies users with high report export activity',
+          query: 'dataset="$DATASET" earliest=-4h\n| where URI contains "/analytics/reports" or URI contains "export"\n| where EVENT_TYPE contains "Report"\n| summarize export_count=count() by USER_ID, SOURCE_IP, CLIENT_NAME\n| where export_count > 20\n| order by export_count desc'
+        },
+        {
+          name: 'Report access patterns',
+          description: 'Shows which reports are being accessed and exported',
+          query: 'dataset="$DATASET" earliest=-24h\n| where URI contains "/analytics/reports"\n| summarize count() by USER_ID, URI, METHOD\n| order by count_ desc'
+        },
+        {
+          name: 'User report activity timeline',
+          description: 'Timeline of report-related activity for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where URI contains "/analytics/reports" or EVENT_TYPE contains "Report"\n| timestats count() by USER_ID span=1h\n| order by TIMESTAMP_DERIVED desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-005',
+      name: 'Multiple Failed Login Attempts Across Org',
+      objective: 'Detects credential stuffing or password spraying attacks targeting multiple Salesforce user accounts from the same source IP or within a coordinated timeframe.',
+      severity: 'High',
+      mitre: ['T1110.004 - Credential Stuffing', 'T1110.003 - Password Spraying'],
+      tags: ['security', 'credential-attack', 'brute-force', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'SOURCE_IP', 'STATUS_CODE', 'LOGIN_KEY', 'ORG_ID'],
+      detectionLogic: 'Identifies source IPs or user agents generating failed login attempts (STATUS_CODE 401 or 403) against multiple distinct USER_IDs within a 15-minute window. Threshold of 10+ distinct users targeted from a single IP, or 5+ failures for a single user within 10 minutes, indicates automated attack activity.',
+      falsePositives: ['Corporate proxy or NAT IP appearing as a single source for multiple legitimate users', 'SSO integration issues causing bulk authentication failures', 'Load testing against sandbox environments'],
+      tuningGuidance: 'Exclude corporate NAT/proxy IP ranges. Adjust thresholds based on org size. Consider user agent string patterns for bot detection. Differentiate between SSO and direct login failures.',
+      investigationWorkflow: '1. Identify the SOURCE_IP and determine its reputation and ownership\n2. Count the distinct USER_IDs targeted to assess attack scope\n3. Check if any attempts succeeded (STATUS_CODE 200 after failures)\n4. Correlate with Salesforce Login History for additional session details\n5. Determine if IP should be blocked at the network or Salesforce level',
+      criblSearchQueries: [
+        {
+          name: 'Failed logins by source IP',
+          description: 'Identifies IPs with high volumes of failed login attempts',
+          query: 'dataset="$DATASET" earliest=-1h\n| where EVENT_TYPE contains "Login"\n| where STATUS_CODE in (401, 403)\n| summarize failure_count=count(), targeted_users=dcount(USER_ID) by SOURCE_IP\n| where failure_count > 10 or targeted_users > 5\n| order by failure_count desc'
+        },
+        {
+          name: 'Attack success rate',
+          description: 'Checks if any failed IPs also had successful logins (credential compromise)',
+          query: 'dataset="$DATASET" earliest=-1h\n| where EVENT_TYPE contains "Login"\n| extend is_success = iff(STATUS_CODE == 200, 1, 0)\n| extend is_failure = iff(STATUS_CODE in (401, 403), 1, 0)\n| summarize successes=sum(is_success), failures=sum(is_failure) by SOURCE_IP\n| where failures > 5 and successes > 0\n| order by failures desc'
+        },
+        {
+          name: 'Targeted user analysis',
+          description: 'Shows which users were targeted by the attack',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EVENT_TYPE contains "Login" and STATUS_CODE in (401, 403)\n| summarize attempt_count=count(), distinct_ips=dcount(SOURCE_IP) by USER_ID\n| where attempt_count > 5\n| order by attempt_count desc'
+        },
+        {
+          name: 'Login failure timeline',
+          description: 'Shows the temporal pattern of login failures to identify attack waves',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EVENT_TYPE contains "Login" and STATUS_CODE in (401, 403)\n| timestats count() by SOURCE_IP span=5m\n| order by TIMESTAMP_DERIVED desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-006',
+      name: 'Connected App or OAuth Token Abuse',
+      objective: 'Detects unusual connected app usage or OAuth token activity that may indicate a malicious application siphoning data through authorized API access, or token theft enabling persistent unauthorized access.',
+      severity: 'Critical',
+      mitre: ['T1550.001 - Application Access Token', 'T1098.001 - Additional Cloud Credentials'],
+      tags: ['security', 'oauth-abuse', 'connected-app', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'CLIENT_NAME', 'API_TYPE', 'SOURCE_IP', 'URI'],
+      detectionLogic: 'Monitors for new or previously unseen CLIENT_NAME values making API calls, sudden spikes in API usage by a specific connected app, or API activity from connected apps originating from unexpected source IPs. Also detects connected apps accessing sensitive URIs they have not historically accessed.',
+      falsePositives: ['Newly deployed integrations during their initial sync', 'Connected app updates that change the CLIENT_NAME identifier', 'Developer sandbox testing of new applications'],
+      tuningGuidance: 'Maintain a whitelist of approved connected apps (CLIENT_NAME values). Establish volume baselines per connected app. Monitor for new CLIENT_NAME appearances weekly.',
+      investigationWorkflow: '1. Identify the CLIENT_NAME and determine if it is an approved connected app\n2. Review the URIs accessed to understand what data the app is targeting\n3. Check if the SOURCE_IP matches the expected hosting infrastructure for the app\n4. Review the USER_ID context to determine whose token is being used\n5. Check Salesforce Connected App settings for the identified application',
+      criblSearchQueries: [
+        {
+          name: 'Connected app activity summary',
+          description: 'Shows all connected app API activity and volumes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where CLIENT_NAME != "" and API_TYPE != ""\n| summarize call_count=count(), distinct_users=dcount(USER_ID), distinct_ips=dcount(SOURCE_IP) by CLIENT_NAME, API_TYPE\n| order by call_count desc'
+        },
+        {
+          name: 'New connected apps',
+          description: 'Identifies CLIENT_NAMEs not seen in the previous 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| where CLIENT_NAME != "" and API_TYPE != ""\n| summarize first_seen=min(TIMESTAMP_DERIVED), call_count=count() by CLIENT_NAME, SOURCE_IP\n| order by first_seen desc'
+        },
+        {
+          name: 'Connected app URI access patterns',
+          description: 'Shows what endpoints each connected app is accessing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where CLIENT_NAME != ""\n| summarize count() by CLIENT_NAME, URI, METHOD\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-sec-007',
+      name: 'Salesforce Record Deletion Spike',
+      objective: 'Detects unusual spikes in record deletion activity that may indicate data sabotage, disgruntled employee actions, or a compromised account being used to destroy business-critical CRM data.',
+      severity: 'Medium',
+      mitre: ['T1485 - Data Destruction', 'T1565.001 - Stored Data Manipulation'],
+      tags: ['security', 'data-destruction', 'insider-threat', 'salesforce'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'URI', 'METHOD', 'STATUS_CODE', 'SOURCE_IP'],
+      detectionLogic: 'Monitors for DELETE method calls across Salesforce object URIs, alerting when a single user performs more than 50 deletions in a 1-hour window or when the overall deletion rate exceeds 3x the org daily average. Focuses on business-critical objects such as Accounts, Opportunities, Contacts, and Cases.',
+      falsePositives: ['Authorized data cleanup projects with approved tickets', 'Deduplication tools performing authorized record merging', 'Sandbox data refresh operations'],
+      tuningGuidance: 'Set deletion thresholds per object type (higher for low-value objects like Tasks). Whitelist data cleanup service accounts. Consider time-of-day patterns for legitimate cleanup windows.',
+      investigationWorkflow: '1. Identify the USER_ID and verify their role permits bulk deletions\n2. Determine which object types are being deleted via URI analysis\n3. Check if a data cleanup project or ticket authorizes the activity\n4. Review the SOURCE_IP to confirm it matches the user expected location\n5. Assess whether deleted records can be recovered from the Recycle Bin',
+      criblSearchQueries: [
+        {
+          name: 'Delete operations by user',
+          description: 'Shows users with high volumes of DELETE operations',
+          query: 'dataset="$DATASET" earliest=-4h\n| where METHOD == "DELETE"\n| summarize delete_count=count() by USER_ID, SOURCE_IP\n| where delete_count > 50\n| order by delete_count desc'
+        },
+        {
+          name: 'Deleted object types',
+          description: 'Identifies which Salesforce objects are being deleted',
+          query: 'dataset="$DATASET" earliest=-24h\n| where METHOD == "DELETE"\n| summarize count() by USER_ID, URI\n| order by count_ desc'
+        },
+        {
+          name: 'Deletion rate over time',
+          description: 'Shows the rate of deletions to identify spikes above baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| where METHOD == "DELETE"\n| timestats count() by USER_ID span=1h\n| order by TIMESTAMP_DERIVED desc'
+        },
+        {
+          name: 'User activity context around deletions',
+          description: 'Shows all activity by the deleting user to understand full context',
+          query: 'dataset="$DATASET" earliest=-4h\n| where METHOD == "DELETE"\n| summarize count() by USER_ID, EVENT_TYPE, STATUS_CODE, bin(TIMESTAMP_DERIVED, 15m)\n| order by TIMESTAMP_DERIVED desc'
+        }
+      ]
+    }
+  ],
+  'workday-audit': [
+    {
+      id: 'wda-sec-001',
+      name: 'Mass Employee Record Modification',
+      objective: 'Detects bulk modifications to employee records that could indicate unauthorized payroll fraud, mass data manipulation by a compromised HR admin account, or preparation for data exfiltration.',
+      severity: 'Critical',
+      mitre: ['T1565.001 - Stored Data Manipulation', 'T1078 - Valid Accounts'],
+      tags: ['security', 'data-manipulation', 'hr-fraud', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'target', 'taskName', 'activityAction', 'ipAddress'],
+      detectionLogic: 'Identifies actors performing more than 20 modifications to distinct employee records (targets) within a 1-hour window. Focuses on sensitive task names related to compensation, banking, personal information changes. Correlates high-volume changes with the actor identity to detect compromised admin accounts.',
+      falsePositives: ['HR administrators performing approved annual compensation adjustments', 'Bulk employee onboarding during large hiring events', 'System-driven mass updates during organizational restructuring'],
+      tuningGuidance: 'Adjust threshold based on HR team size and normal processing volumes. Exclude known batch processing system accounts. Set higher thresholds during annual review periods or open enrollment.',
+      investigationWorkflow: '1. Identify the actor performing the mass modifications\n2. Review the taskName values to understand what type of data was changed\n3. Determine if the targets represent a logical group (department, location)\n4. Check if the actor ipAddress matches their normal work location\n5. Verify with HR leadership whether a bulk change initiative was authorized',
+      criblSearchQueries: [
+        {
+          name: 'High-volume employee record changes',
+          description: 'Identifies actors making excessive modifications to employee records',
+          query: 'dataset="$DATASET" earliest=-4h\n| where activityAction == "modify" or activityAction == "update"\n| summarize change_count=count(), distinct_targets=dcount(target) by actor, taskName, ipAddress\n| where distinct_targets > 20\n| order by distinct_targets desc'
+        },
+        {
+          name: 'Sensitive task modifications',
+          description: 'Finds changes to compensation, banking, or personal data',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Compensation" or taskName contains "Payment" or taskName contains "Bank" or taskName contains "Direct Deposit"\n| summarize count() by actor, taskName, target\n| order by count_ desc'
+        },
+        {
+          name: 'Actor modification timeline',
+          description: 'Shows the temporal pattern of modifications by a specific actor',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activityAction == "modify" or activityAction == "update"\n| timestats count() by actor span=15m\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-002',
+      name: 'Privileged Task Execution by Non-Admin Actor',
+      objective: 'Detects execution of administrative or security-sensitive Workday tasks by actors who are not designated system administrators, which could indicate privilege escalation or role misconfiguration exploitation.',
+      severity: 'High',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'privilege-escalation', 'unauthorized-access', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'activityAction', 'systemAccount', 'ipAddress'],
+      detectionLogic: 'Monitors for execution of privileged task names (security configuration, tenant setup, integration credentials, custom report creation, domain security policy changes) by actors who are not identified as system administrators or designated security partners. Cross-references systemAccount field to distinguish service accounts from interactive users.',
+      falsePositives: ['Delegated administrators with legitimate but infrequent admin tasks', 'New admin accounts not yet added to the exclusion list', 'Training environment exercises'],
+      tuningGuidance: 'Maintain a whitelist of authorized admin actors and system accounts. Define privileged task categories specific to your Workday configuration. Review and update the admin list during role changes.',
+      investigationWorkflow: '1. Verify the actor identity and their assigned security roles in Workday\n2. Determine if the taskName requires admin privileges\n3. Check if a systemAccount was used and whether it was appropriately delegated\n4. Review the ipAddress against the actor known work locations\n5. Check Workday security role history for recent changes to the actor permissions',
+      criblSearchQueries: [
+        {
+          name: 'Admin task execution by non-system accounts',
+          description: 'Finds privileged tasks executed by regular user accounts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Security" or taskName contains "Configuration" or taskName contains "Tenant" or taskName contains "Integration Credential"\n| where systemAccount == "" or systemAccount == "false"\n| summarize count() by actor, taskName, ipAddress\n| order by count_ desc'
+        },
+        {
+          name: 'All privileged task activity',
+          description: 'Shows all sensitive administrative task executions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where taskName contains "Security" or taskName contains "Domain" or taskName contains "Policy"\n| summarize count() by actor, taskName, bin(timestamp, 1d)\n| order by timestamp desc'
+        },
+        {
+          name: 'Actor full activity log',
+          description: 'Shows all activity by the flagged actor to establish context',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by actor, taskName, activityAction, ipAddress\n| order by count_ desc'
+        },
+        {
+          name: 'IP address activity correlation',
+          description: 'Shows all actors using the same IP to detect shared access',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize distinct_actors=dcount(actor), actors=make_set(actor) by ipAddress\n| where distinct_actors > 1\n| order by distinct_actors desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-003',
+      name: 'Security Policy or Domain Configuration Change',
+      objective: 'Detects modifications to Workday security policies, domain configurations, or authentication settings that could weaken security controls or enable unauthorized access to sensitive business processes.',
+      severity: 'Critical',
+      mitre: ['T1562.008 - Impair Defenses: Disable or Modify Cloud Logs', 'T1484 - Domain Policy Modification'],
+      tags: ['security', 'defense-evasion', 'configuration-change', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'activityAction', 'target', 'ipAddress', 'requestId'],
+      detectionLogic: 'Monitors for task executions related to security domain changes, authentication policy modifications, password policy updates, MFA configuration changes, and security group modifications. Any changes to these foundational security controls should be rare, tracked, and authorized through change management.',
+      falsePositives: ['Planned security hardening initiatives by the Workday security team', 'Annual security review and policy refresh cycles', 'Workday tenant configuration during implementation projects'],
+      tuningGuidance: 'All security policy changes should trigger alerts regardless of actor. Integrate with change management to auto-correlate approved changes. Set up separate notification for emergency security changes.',
+      investigationWorkflow: '1. Document the exact taskName and target of the security change\n2. Verify the actor is the designated Workday Security Administrator\n3. Check for a corresponding change management ticket or approval\n4. Assess the impact of the change on security posture\n5. If unauthorized, determine if the change can be immediately reverted',
+      criblSearchQueries: [
+        {
+          name: 'Security configuration changes',
+          description: 'Identifies all security-related configuration modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Security Policy" or taskName contains "Authentication" or taskName contains "Domain Security" or taskName contains "Password Policy"\n| summarize count() by actor, taskName, target, activityAction\n| order by timestamp desc'
+        },
+        {
+          name: 'Security change history',
+          description: 'Historical view of security changes for trend analysis',
+          query: 'dataset="$DATASET" earliest=-30d\n| where taskName contains "Security" or taskName contains "Authentication" or taskName contains "Domain"\n| where activityAction in ("modify", "create", "delete")\n| summarize count() by actor, taskName, bin(timestamp, 1d)\n| order by timestamp desc'
+        },
+        {
+          name: 'Actor security task context',
+          description: 'Shows all activity by the security change actor around the time of change',
+          query: 'dataset="$DATASET" earliest=-4h\n| where taskName contains "Security" or taskName contains "Policy" or taskName contains "Domain"\n| project timestamp, actor, taskName, activityAction, target, ipAddress, requestId\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-004',
+      name: 'Workday Access from Unusual IP Address',
+      objective: 'Detects Workday administrative actions originating from IP addresses not previously associated with the actor, which may indicate a compromised account being accessed from attacker infrastructure.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1133 - External Remote Services'],
+      tags: ['security', 'anomalous-access', 'credential-compromise', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'ipAddress', 'taskName', 'activityAction'],
+      detectionLogic: 'Establishes a baseline of IP addresses used by each actor over a 30-day lookback period. Alerts when sensitive actions (modifications, deletions, security tasks) are performed from an IP not in the actor baseline. Prioritizes alerts for highly privileged actions from new IPs over routine read operations.',
+      falsePositives: ['Users connecting from new office locations or during travel', 'Corporate VPN IP pool changes', 'First-time access from mobile devices on cellular networks'],
+      tuningGuidance: 'Build IP baselines per actor over 30+ days. Exclude known corporate IP ranges from anomaly detection. Consider geographic IP context for additional signal. Weight alerts higher for admin actions versus read-only access.',
+      investigationWorkflow: '1. Identify the new ipAddress and determine its geographic location and ownership\n2. Check if other actors have used this IP (shared office or proxy)\n3. Review the taskName and activityAction to assess sensitivity of operations performed\n4. Verify with the user whether they were at a new location\n5. Check if the actor MFA status was active during the session',
+      criblSearchQueries: [
+        {
+          name: 'Actor IP baseline comparison',
+          description: 'Compares recent actor IPs against historical baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize actions=count(), tasks=dcount(taskName) by actor, ipAddress\n| order by actions desc'
+        },
+        {
+          name: 'Historical IP usage per actor',
+          description: 'Shows the IP address history for each actor over 30 days',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize usage_count=count(), first_seen=min(timestamp), last_seen=max(timestamp) by actor, ipAddress\n| order by actor asc, usage_count desc'
+        },
+        {
+          name: 'Sensitive actions from new IPs',
+          description: 'Identifies modification actions from IPs not in the baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activityAction in ("modify", "delete", "create")\n| summarize count() by actor, ipAddress, taskName, activityAction\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-005',
+      name: 'Bulk Report Generation or Data Export',
+      objective: 'Detects excessive report generation or custom report execution that may indicate data exfiltration preparation, with an actor extracting large volumes of employee or financial data through Workday reporting tools.',
+      severity: 'Medium',
+      mitre: ['T1213 - Data from Information Repositories', 'T1005 - Data from Local System'],
+      tags: ['security', 'data-exfiltration', 'reporting-abuse', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'activityAction', 'target', 'ipAddress'],
+      detectionLogic: 'Identifies actors running more than 10 report tasks (taskName containing "Report", "Export", "Extract") within a 2-hour window. Also monitors for creation of new custom reports that pull sensitive data domains (compensation, SSN, banking) or reports targeting all employees rather than specific organizational units.',
+      falsePositives: ['HR Business Partners running authorized analytics during planning cycles', 'Finance team executing month-end reporting packages', 'Authorized compliance audits requiring broad data pulls'],
+      tuningGuidance: 'Set thresholds based on role. HR analysts may legitimately run more reports than managers. Whitelist scheduled report executions. Focus on custom report creation rather than standard report access.',
+      investigationWorkflow: '1. Identify the reports being executed and their data scope\n2. Determine if the actor role justifies the volume and sensitivity of reports\n3. Check if reports target specific populations or all employees\n4. Review if report output was exported or downloaded\n5. Correlate with DLP tools to check if data left the organization',
+      criblSearchQueries: [
+        {
+          name: 'High-volume report execution',
+          description: 'Identifies actors running excessive numbers of reports',
+          query: 'dataset="$DATASET" earliest=-4h\n| where taskName contains "Report" or taskName contains "Export" or taskName contains "Extract"\n| summarize report_count=count(), distinct_reports=dcount(taskName) by actor, ipAddress\n| where report_count > 10\n| order by report_count desc'
+        },
+        {
+          name: 'Custom report creation',
+          description: 'Monitors for new custom report definitions being created',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Custom Report" and activityAction == "create"\n| summarize count() by actor, taskName, target\n| order by count_ desc'
+        },
+        {
+          name: 'Report execution timeline',
+          description: 'Shows the temporal pattern of report executions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where taskName contains "Report"\n| timestats count() by actor span=1h\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-006',
+      name: 'Employee Termination or Separation Process Manipulation',
+      objective: 'Detects unauthorized modifications to termination workflows, separation dates, or rehire eligibility that could indicate a malicious actor keeping terminated accounts active or an insider manipulating HR processes for fraud.',
+      severity: 'High',
+      mitre: ['T1098 - Account Manipulation', 'T1136 - Create Account'],
+      tags: ['security', 'hr-process-manipulation', 'insider-threat', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'target', 'activityAction', 'ipAddress'],
+      detectionLogic: 'Monitors for modifications to termination-related business processes including changes to termination dates (moving to future), rehire eligibility flags, and cancellation of pending terminations. Also detects creation of new workers immediately following terminations which could indicate ghost employee schemes.',
+      falsePositives: ['HR correcting termination dates for administrative errors', 'Rescinded terminations due to retention offers', 'Rehire processing for boomerang employees'],
+      tuningGuidance: 'Alert on termination date modifications that move dates further into the future. Correlate with manager approvals. Flag cases where the actor is also the target or where the actor terminates themselves.',
+      investigationWorkflow: '1. Identify the actor and determine their relationship to the target employee\n2. Review the specific taskName to understand what termination attribute was modified\n3. Check if the modification moved a termination date forward or backward\n4. Verify manager and HR Business Partner approval for the change\n5. Review the target worker account status across all integrated systems',
+      criblSearchQueries: [
+        {
+          name: 'Termination process modifications',
+          description: 'Finds changes to termination-related tasks',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Termination" or taskName contains "Separation" or taskName contains "Rehire"\n| where activityAction in ("modify", "cancel", "rescind")\n| summarize count() by actor, taskName, target, activityAction\n| order by count_ desc'
+        },
+        {
+          name: 'Termination followed by creation',
+          description: 'Identifies new hire events shortly after terminations by same actor',
+          query: 'dataset="$DATASET" earliest=-7d\n| where taskName contains "Termination" or taskName contains "Hire"\n| summarize count() by actor, taskName, activityAction, bin(timestamp, 1d)\n| order by timestamp desc'
+        },
+        {
+          name: 'Termination date changes',
+          description: 'Shows all modifications to termination records',
+          query: 'dataset="$DATASET" earliest=-30d\n| where taskName contains "Termination" and activityAction == "modify"\n| summarize count() by actor, target, ipAddress\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-sec-007',
+      name: 'System Account Activity Outside Integration Window',
+      objective: 'Detects system or integration accounts performing actions outside their expected execution windows, which may indicate stolen service credentials being used by an attacker or unauthorized automation.',
+      severity: 'Medium',
+      mitre: ['T1078.001 - Default Accounts', 'T1053 - Scheduled Task/Job'],
+      tags: ['security', 'service-account-abuse', 'unauthorized-access', 'workday'],
+      requiredFields: ['timestamp', 'actor', 'systemAccount', 'taskName', 'activityAction', 'ipAddress', 'requestId'],
+      detectionLogic: 'Identifies activity from accounts flagged as systemAccount occurring outside their defined integration execution windows. System accounts should have predictable activity patterns tied to scheduled integration runs. Activity outside these windows, especially interactive-type tasks, indicates potential credential compromise.',
+      falsePositives: ['Emergency integration reruns triggered manually by administrators', 'Integration schedule changes not yet reflected in monitoring configuration', 'Time zone differences causing apparent window violations'],
+      tuningGuidance: 'Define execution windows per system account based on integration schedules. Allow a buffer window (15-30 minutes) around scheduled times. Exclude known emergency rerun accounts. Alert at lower threshold for system accounts performing non-standard tasks.',
+      investigationWorkflow: '1. Identify the system account and its expected integration schedule\n2. Determine if the activity matches the normal taskName pattern for this account\n3. Check the ipAddress against the expected integration server\n4. Verify with the integration team if a manual rerun was authorized\n5. Review the requestId to trace the full transaction chain',
+      criblSearchQueries: [
+        {
+          name: 'System account off-window activity',
+          description: 'Identifies system account activity outside expected hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where systemAccount == "true" or systemAccount == "1"\n| extend hour = datetime_part("hour", timestamp)\n| summarize count() by actor, taskName, hour, ipAddress\n| order by count_ desc'
+        },
+        {
+          name: 'System account baseline',
+          description: 'Shows normal execution patterns for system accounts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where systemAccount == "true" or systemAccount == "1"\n| summarize count() by actor, taskName, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Unusual tasks by system accounts',
+          description: 'Identifies system accounts performing tasks outside their normal set',
+          query: 'dataset="$DATASET" earliest=-24h\n| where systemAccount == "true" or systemAccount == "1"\n| summarize task_variety=dcount(taskName), tasks=make_set(taskName) by actor, ipAddress\n| order by task_variety desc'
+        }
+      ]
+    }
+  ],
+  'workday-integration-prism': [
+    {
+      id: 'wdp-sec-001',
+      name: 'Integration Failure Spike with Data Exfiltration Risk',
+      objective: 'Detects a sudden spike in integration failures that may indicate an attacker tampering with integration configurations to redirect data to unauthorized target systems or causing failures to mask data theft.',
+      severity: 'High',
+      mitre: ['T1565.003 - Runtime Data Manipulation', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'integration-tampering', 'data-exfiltration', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'recordsFailed', 'errorMessage', 'targetSystem'],
+      detectionLogic: 'Identifies integrations with failure rates exceeding 50% of total records processed or integrations that transition from consistent success to sudden failure. Correlates with targetSystem changes to detect configuration tampering where data may be redirected before the integration begins failing.',
+      falsePositives: ['Target system maintenance causing expected integration failures', 'Data quality issues from upstream systems causing validation failures', 'Network connectivity issues between Workday and target systems'],
+      tuningGuidance: 'Establish baseline failure rates per integration. Alert when failure rate exceeds 2x baseline. Differentiate between total failure (100% failed) and partial failure (degraded). Exclude known maintenance windows.',
+      investigationWorkflow: '1. Identify the integrationName and its configured targetSystem\n2. Review errorMessage content for clues about failure cause\n3. Determine if the targetSystem was recently changed or if a new target was added\n4. Check if records were successfully sent to any system before the failure\n5. Verify target system availability and check for configuration drift',
+      criblSearchQueries: [
+        {
+          name: 'Integration failure spikes',
+          description: 'Identifies integrations with high failure rates',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status == "Failed" or recordsFailed > 0\n| summarize total_failed=sum(recordsFailed), run_count=count() by integrationName, targetSystem\n| where total_failed > 100 or run_count > 5\n| order by total_failed desc'
+        },
+        {
+          name: 'Integration status transitions',
+          description: 'Shows integrations that changed from success to failure recently',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize count() by integrationName, status, bin(timestamp, 4h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Error message analysis',
+          description: 'Groups integration failures by error type for root cause analysis',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status == "Failed" or recordsFailed > 0\n| summarize count() by integrationName, errorMessage, targetSystem\n| order by count_ desc'
+        },
+        {
+          name: 'Target system changes',
+          description: 'Identifies any changes to target systems across integrations',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize distinct_targets=dcount(targetSystem), targets=make_set(targetSystem) by integrationName\n| where distinct_targets > 1\n| order by distinct_targets desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-002',
+      name: 'Unauthorized Integration to New Target System',
+      objective: 'Detects integrations sending data to previously unseen target systems, which may indicate configuration tampering to exfiltrate employee or financial data to attacker-controlled infrastructure.',
+      severity: 'Critical',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'data-exfiltration', 'configuration-tampering', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'targetSystem', 'recordsProcessed', 'dataSource'],
+      detectionLogic: 'Maintains a baseline of known targetSystem values per integrationName over a 60-day lookback. Alerts when an integration sends data to a targetSystem not previously associated with that integration. Especially critical when the integration processes sensitive data sources (HR, Payroll, Benefits).',
+      falsePositives: ['Authorized integration reconfiguration during system migrations', 'New target systems added as part of approved implementation projects', 'Disaster recovery testing to alternate target systems'],
+      tuningGuidance: 'Maintain a registry of approved integrations and their authorized target systems. All new target additions should trigger review regardless of integration type. Weight alerts higher for integrations handling sensitive data sources.',
+      investigationWorkflow: '1. Identify the integrationName and the new targetSystem\n2. Determine what dataSource the integration accesses (HR, Payroll, Benefits)\n3. Verify if a change request authorized the new target system\n4. Check the volume of records processed to the new target\n5. Review the target system ownership and determine if it is organizationally controlled',
+      criblSearchQueries: [
+        {
+          name: 'New target system detection',
+          description: 'Identifies integrations routing to previously unseen targets',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize records=sum(recordsProcessed), runs=count() by integrationName, targetSystem, dataSource\n| order by records desc'
+        },
+        {
+          name: 'Target system history',
+          description: 'Shows historical target system assignments per integration',
+          query: 'dataset="$DATASET" earliest=-60d\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), total_records=sum(recordsProcessed) by integrationName, targetSystem\n| order by integrationName asc, first_seen desc'
+        },
+        {
+          name: 'Data volume to new targets',
+          description: 'Shows how much data was sent to recently-added target systems',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize total_records=sum(recordsProcessed), run_count=count() by integrationName, targetSystem, bin(timestamp, 1d)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-003',
+      name: 'Integration Running Outside Scheduled Window',
+      objective: 'Detects integrations executing outside their normal scheduled windows, which may indicate manual triggering by an unauthorized actor or automation manipulation to extract data during low-monitoring periods.',
+      severity: 'High',
+      mitre: ['T1053 - Scheduled Task/Job', 'T1078 - Valid Accounts'],
+      tags: ['security', 'schedule-anomaly', 'unauthorized-execution', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'recordsProcessed', 'runDuration', 'dataSource'],
+      detectionLogic: 'Establishes execution time baselines per integrationName over a 30-day period. Alerts when an integration runs more than 2 hours outside its normal execution window. Focuses on integrations that typically run on strict schedules (daily, weekly) and suddenly execute at unexpected times.',
+      falsePositives: ['Authorized manual reruns after a scheduled run failure', 'Schedule changes communicated through change management', 'Time zone shifts during daylight saving transitions'],
+      tuningGuidance: 'Define expected execution windows per integration with appropriate buffers. Allow configurable tolerance windows. Exclude integrations with flexible or on-demand schedules. Alert at higher severity for integrations processing sensitive data.',
+      investigationWorkflow: '1. Identify the integrationName and its expected schedule\n2. Determine who triggered the out-of-window execution\n3. Compare recordsProcessed volume against normal runs\n4. Check if the runDuration matches typical execution patterns\n5. Verify with the integration owner if the run was authorized',
+      criblSearchQueries: [
+        {
+          name: 'Integration execution timing',
+          description: 'Shows when integrations ran to identify off-schedule executions',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend hour = datetime_part("hour", timestamp)\n| summarize count() by integrationName, hour, status\n| order by integrationName asc, hour asc'
+        },
+        {
+          name: 'Historical schedule baseline',
+          description: 'Establishes normal execution windows per integration',
+          query: 'dataset="$DATASET" earliest=-30d\n| extend hour = datetime_part("hour", timestamp)\n| summarize run_count=count(), avg_duration=avg(runDuration) by integrationName, hour\n| order by integrationName asc, run_count desc'
+        },
+        {
+          name: 'Off-schedule run details',
+          description: 'Shows details of out-of-window integration executions',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend hour = datetime_part("hour", timestamp)\n| summarize count() by integrationName, status, recordsProcessed, runDuration, bin(timestamp, 1h)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-004',
+      name: 'Anomalous Data Volume in Integration Run',
+      objective: 'Detects integrations processing significantly more records than their historical baseline, which may indicate data harvesting through expanded query scope or an attacker modifying integration filters to extract additional data.',
+      severity: 'High',
+      mitre: ['T1005 - Data from Local System', 'T1213 - Data from Information Repositories'],
+      tags: ['security', 'data-exfiltration', 'volume-anomaly', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'recordsProcessed', 'dataSource', 'targetSystem', 'runDuration'],
+      detectionLogic: 'Compares the recordsProcessed count for each integration run against the 30-day rolling average for that integration. Alerts when current run processes more than 3x the historical average or when absolute record count exceeds 10,000 for integrations that typically process fewer than 1,000 records.',
+      falsePositives: ['Initial full sync after integration reconfiguration', 'Catch-up processing after extended integration downtime', 'Annual processing events (open enrollment, compensation cycles)'],
+      tuningGuidance: 'Establish per-integration baselines with seasonal adjustments. Allow higher thresholds during known bulk processing periods. Weight alerts by data sensitivity of the dataSource. Adjust multiplier (3x default) based on normal variance.',
+      investigationWorkflow: '1. Compare current recordsProcessed against the integration historical average\n2. Determine if the dataSource or filter criteria were recently modified\n3. Check if a full resync was authorized versus normal incremental processing\n4. Review runDuration to see if it correlates with the volume increase\n5. Verify the targetSystem received the data and check for downstream anomalies',
+      criblSearchQueries: [
+        {
+          name: 'Record volume comparison',
+          description: 'Compares current run volumes against historical averages',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize current_records=sum(recordsProcessed), runs=count() by integrationName, dataSource, targetSystem\n| order by current_records desc'
+        },
+        {
+          name: 'Historical volume baseline',
+          description: 'Shows average record processing volume per integration',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize avg_records=avg(recordsProcessed), max_records=max(recordsProcessed), total_runs=count() by integrationName\n| order by avg_records desc'
+        },
+        {
+          name: 'Volume spike timeline',
+          description: 'Identifies when the volume spike started relative to normal patterns',
+          query: 'dataset="$DATASET" earliest=-14d\n| summarize daily_records=sum(recordsProcessed) by integrationName, bin(timestamp, 1d)\n| order by integrationName asc, timestamp desc'
+        },
+        {
+          name: 'Run duration correlation',
+          description: 'Checks if duration increased proportionally with volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize avg_duration=avg(runDuration), avg_records=avg(recordsProcessed) by integrationName, bin(timestamp, 1d)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-005',
+      name: 'Integration Error Message Indicating Credential Issues',
+      objective: 'Detects integration failures with error messages suggesting authentication or authorization problems, which may indicate credential rotation attacks, permission revocation, or unauthorized access attempts to integration endpoints.',
+      severity: 'Medium',
+      mitre: ['T1110 - Brute Force', 'T1556 - Modify Authentication Process'],
+      tags: ['security', 'authentication-failure', 'integration-security', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'errorMessage', 'targetSystem', 'recordsFailed'],
+      detectionLogic: 'Monitors errorMessage field for authentication-related keywords (401, 403, unauthorized, forbidden, authentication failed, invalid credentials, token expired, certificate error). Alerts when previously successful integrations begin experiencing authentication failures, particularly if multiple integrations to the same targetSystem fail simultaneously.',
+      falsePositives: ['Credential rotation not yet propagated to all integrations', 'Certificate expiration on target systems', 'Temporary permission issues during target system maintenance'],
+      tuningGuidance: 'Differentiate between single integration credential issues (likely operational) and multiple integrations failing to the same target (likely systemic). Set higher severity when the error pattern affects integrations handling sensitive data.',
+      investigationWorkflow: '1. Identify the specific errorMessage and affected integrationName\n2. Determine if multiple integrations to the same targetSystem are failing\n3. Check if credentials were recently rotated or certificates renewed\n4. Verify target system authentication logs for corresponding failed attempts\n5. Determine if an unauthorized party attempted to modify integration credentials',
+      criblSearchQueries: [
+        {
+          name: 'Authentication-related errors',
+          description: 'Finds integration failures related to credential or authentication issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status == "Failed"\n| where errorMessage contains "401" or errorMessage contains "403" or errorMessage contains "unauthorized" or errorMessage contains "authentication" or errorMessage contains "credential"\n| summarize count() by integrationName, errorMessage, targetSystem\n| order by count_ desc'
+        },
+        {
+          name: 'Multi-integration authentication failures',
+          description: 'Identifies target systems with multiple integration auth failures',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status == "Failed"\n| where errorMessage contains "auth" or errorMessage contains "401" or errorMessage contains "403"\n| summarize failed_integrations=dcount(integrationName), total_failures=count() by targetSystem\n| where failed_integrations > 1\n| order by failed_integrations desc'
+        },
+        {
+          name: 'Integration health transition',
+          description: 'Shows integrations that went from healthy to authentication failure',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize successes=countif(status == "Completed"), failures=countif(status == "Failed") by integrationName, bin(timestamp, 4h)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-006',
+      name: 'Sensitive Data Source Accessed by New Integration',
+      objective: 'Detects new or modified integrations accessing sensitive data sources (payroll, benefits, SSN, compensation) for the first time, which may indicate an attacker creating a data extraction channel through integration configuration.',
+      severity: 'Critical',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1213 - Data from Information Repositories'],
+      tags: ['security', 'sensitive-data-access', 'new-integration', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'dataSource', 'targetSystem', 'recordsProcessed', 'status'],
+      detectionLogic: 'Monitors for integrations accessing sensitive dataSource values (Payroll, Compensation, Benefits, Banking, SSN, Personal Information) that have not been observed in the 90-day baseline. Alerts on both new integrations accessing sensitive data and existing integrations that expand their data scope to include sensitive sources.',
+      falsePositives: ['New integration implementations during approved projects', 'Integration scope expansion with documented change approval', 'Testing integrations in production with limited data'],
+      tuningGuidance: 'Define sensitive dataSource categories for your organization. Require all new sensitive data integrations to pass through change approval. Maintain a 90-day baseline of integration-to-dataSource mappings. Auto-close alerts with matching change tickets.',
+      investigationWorkflow: '1. Identify the integrationName and the sensitive dataSource being accessed\n2. Determine when this integration was first created or last modified\n3. Check for change management approval for the sensitive data access\n4. Verify the targetSystem is organizationally controlled and authorized\n5. Review recordsProcessed to assess the volume of sensitive data extracted',
+      criblSearchQueries: [
+        {
+          name: 'Sensitive data source access',
+          description: 'Identifies integrations accessing sensitive data sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dataSource contains "Payroll" or dataSource contains "Compensation" or dataSource contains "Benefit" or dataSource contains "Banking" or dataSource contains "SSN"\n| summarize records=sum(recordsProcessed), runs=count() by integrationName, dataSource, targetSystem\n| order by records desc'
+        },
+        {
+          name: 'New data source access patterns',
+          description: 'Shows first-time access to sensitive data sources by integration',
+          query: 'dataset="$DATASET" earliest=-90d\n| where dataSource contains "Payroll" or dataSource contains "Compensation" or dataSource contains "Benefit"\n| summarize first_access=min(timestamp), last_access=max(timestamp), total_records=sum(recordsProcessed) by integrationName, dataSource\n| order by first_access desc'
+        },
+        {
+          name: 'Integration data source scope changes',
+          description: 'Identifies integrations that expanded their data source access recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize data_sources=dcount(dataSource), sources=make_set(dataSource) by integrationName\n| where data_sources > 2\n| order by data_sources desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-sec-007',
+      name: 'Integration Runtime Duration Anomaly',
+      objective: 'Detects integrations with significantly longer or shorter runtimes than baseline, which may indicate data manipulation (longer = more data extracted) or configuration tampering (shorter = integration modified to skip processing steps).',
+      severity: 'Medium',
+      mitre: ['T1565 - Data Manipulation', 'T1020 - Automated Exfiltration'],
+      tags: ['security', 'runtime-anomaly', 'integration-monitoring', 'workday'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'runDuration', 'recordsProcessed', 'recordsFailed', 'targetSystem'],
+      detectionLogic: 'Compares integration runDuration against a 30-day rolling average per integrationName. Alerts when duration exceeds 3x average (potential data extraction) or drops below 25% of average (potential bypass/skip). Correlates with recordsProcessed to determine if volume changes explain the duration difference.',
+      falsePositives: ['Target system performance issues causing longer runtimes', 'Infrastructure scaling events affecting integration speed', 'Partial runs that terminate early due to errors'],
+      tuningGuidance: 'Establish per-integration duration baselines with standard deviation calculations. Exclude failed runs from baseline calculations. Allow wider variance for integrations with known variable workloads. Correlate duration anomalies with volume anomalies for higher confidence.',
+      investigationWorkflow: '1. Compare the anomalous runDuration against the integration historical average\n2. Check if recordsProcessed increased proportionally (explains longer duration)\n3. Determine if the integration was modified or if target system latency changed\n4. For abnormally short runs, verify all processing steps completed successfully\n5. Check recordsFailed to determine if the run was truncated by errors',
+      criblSearchQueries: [
+        {
+          name: 'Runtime anomaly detection',
+          description: 'Identifies integrations with runtimes significantly different from baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize avg_duration=avg(runDuration), max_duration=max(runDuration), min_duration=min(runDuration) by integrationName, status\n| order by max_duration desc'
+        },
+        {
+          name: 'Duration vs volume correlation',
+          description: 'Correlates runtime with record volume to identify unexplained anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize avg_duration=avg(runDuration), avg_records=avg(recordsProcessed) by integrationName, bin(timestamp, 1d)\n| order by integrationName asc, timestamp desc'
+        },
+        {
+          name: 'Historical duration baseline',
+          description: 'Establishes runtime baselines per integration for comparison',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize avg_duration=avg(runDuration), stdev_duration=stdev(runDuration), runs=count() by integrationName\n| order by avg_duration desc'
+        },
+        {
+          name: 'Short run investigation',
+          description: 'Identifies runs that completed abnormally quickly with potential data skip',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status == "Completed" and recordsProcessed == 0\n| summarize count() by integrationName, targetSystem, runDuration\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'sap-sm20-audit': [
+    {
+      id: 'sm2-sec-001',
+      name: 'Critical Transaction Code Execution by Non-Privileged User',
+      objective: 'Detects execution of high-risk SAP transaction codes (SE16, SM30, SU01, SA38, SE38) by users who are not designated basis administrators, indicating potential privilege abuse or compromised accounts.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'privilege-abuse', 'critical-transaction', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'terminal', 'event', 'audit_class', 'source_address'],
+      detectionLogic: 'Monitors for execution of critical transaction codes (SE16 for table browsing, SM30 for table maintenance, SU01 for user management, SA38/SE38 for program execution, SM49 for OS commands, SE80 for development) by users not in the approved basis administrator list. These transactions provide deep system access and should be tightly restricted.',
+      falsePositives: ['Authorized developers with temporary debug access in non-production', 'Basis team members not yet added to the approved list', 'Emergency break-glass access with proper documentation'],
+      tuningGuidance: 'Maintain a current list of authorized basis administrators. Define critical transaction code tiers (Tier 1 = immediate alert, Tier 2 = review within 4 hours). Exclude non-production clients from critical alerts.',
+      investigationWorkflow: '1. Identify the user and their assigned SAP authorization roles\n2. Determine which transaction_code was executed and its risk level\n3. Check if the user has legitimate business need for the transaction\n4. Review the terminal and source_address for the session origin\n5. Check SU01 for recent authorization changes to the user account',
+      criblSearchQueries: [
+        {
+          name: 'Critical transaction execution',
+          description: 'Identifies critical transaction code usage across all users',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("SE16", "SE16N", "SM30", "SU01", "SA38", "SE38", "SM49", "SE80", "STMS")\n| summarize count() by user, transaction_code, terminal, source_address\n| order by count_ desc'
+        },
+        {
+          name: 'User transaction history',
+          description: 'Shows full transaction history for a suspicious user',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize transaction_count=count(), distinct_tcodes=dcount(transaction_code) by user, bin(timestamp, 1d)\n| order by distinct_tcodes desc'
+        },
+        {
+          name: 'Transaction code by audit class',
+          description: 'Correlates critical transactions with their audit classifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("SE16", "SM30", "SU01", "SA38", "SE38", "SM49")\n| summarize count() by user, transaction_code, audit_class, event\n| order by count_ desc'
+        },
+        {
+          name: 'Source address analysis for critical transactions',
+          description: 'Identifies unusual source addresses executing critical transactions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("SE16", "SM30", "SU01", "SA38", "SE38", "SM49")\n| summarize distinct_users=dcount(user), users=make_set(user) by source_address, terminal\n| order by distinct_users desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-002',
+      name: 'User Master Record Modification',
+      objective: 'Detects unauthorized changes to SAP user master records (creation, modification, deletion, role assignment) that could enable privilege escalation or creation of backdoor accounts.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1136 - Create Account'],
+      tags: ['security', 'account-manipulation', 'user-management', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'event', 'audit_class', 'source_address', 'client'],
+      detectionLogic: 'Monitors for user management transaction codes (SU01, SU10, SU02, PFCG) and related audit events indicating user creation, modification, role assignment, or profile changes. Alerts when these actions are performed by non-security administrators or outside of approved user lifecycle management windows.',
+      falsePositives: ['Authorized user provisioning by HR-triggered workflows', 'Security team performing routine role assignments', 'Automated user lifecycle management processes'],
+      tuningGuidance: 'Whitelist authorized security administrators for user management. Define approved provisioning windows. Focus alerts on SU01 changes to privileged users (SAP*, DDIC, basis accounts). Alert on any user creation in production client.',
+      investigationWorkflow: '1. Identify the actor (user) performing the user management action\n2. Determine what was changed and on which target user account\n3. Check if the event corresponds to an approved access request ticket\n4. Review audit_class to understand the type of modification\n5. Check if new roles or profiles grant excessive privileges',
+      criblSearchQueries: [
+        {
+          name: 'User management activity',
+          description: 'Shows all user master record changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("SU01", "SU10", "SU02", "PFCG", "SU03")\n| summarize count() by user, transaction_code, event, client, source_address\n| order by count_ desc'
+        },
+        {
+          name: 'User creation events',
+          description: 'Identifies new user account creation events',
+          query: 'dataset="$DATASET" earliest=-7d\n| where transaction_code in ("SU01", "SU10") and event contains "create"\n| summarize count() by user, event, client, terminal\n| order by count_ desc'
+        },
+        {
+          name: 'Role and profile changes',
+          description: 'Tracks authorization role modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("PFCG", "SU02", "SU03")\n| summarize count() by user, transaction_code, event, audit_class\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-003',
+      name: 'SAP Table Direct Access for Data Extraction',
+      objective: 'Detects direct table access via SE16/SE16N/SM30 targeting sensitive tables (USR02, PA0008, BKPF, LFA1) that may indicate attempts to extract sensitive business data or credentials directly from the database layer.',
+      severity: 'High',
+      mitre: ['T1005 - Data from Local System', 'T1552.001 - Credentials In Files'],
+      tags: ['security', 'data-extraction', 'table-access', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'report_name', 'event', 'terminal', 'source_address'],
+      detectionLogic: 'Monitors for table browsing transactions (SE16, SE16N, SM30, SM31) with report_name fields indicating access to sensitive tables including USR02 (password hashes), PA0008 (compensation), BKPF (accounting documents), LFA1 (vendor masters), KNA1 (customer masters), and T000 (client settings).',
+      falsePositives: ['Authorized data analysts performing approved data lookups', 'Basis team troubleshooting data issues with tickets', 'Auditors performing authorized compliance reviews'],
+      tuningGuidance: 'Define sensitive table categories and assign risk levels. Block SE16 access in production through authorization objects where possible. Focus alerts on password/credential tables at Critical severity. Allow read-only access alerts at lower severity.',
+      investigationWorkflow: '1. Identify the user and the specific table accessed via report_name\n2. Determine if the table contains credentials, PII, or financial data\n3. Check if the user has a business justification for direct table access\n4. Review the terminal and source_address for session origin\n5. Check if data was exported (look for follow-up export events)',
+      criblSearchQueries: [
+        {
+          name: 'Sensitive table access',
+          description: 'Identifies direct access to sensitive SAP tables',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code in ("SE16", "SE16N", "SM30", "SM31")\n| where report_name contains "USR" or report_name contains "PA00" or report_name contains "BKPF" or report_name contains "LFA1" or report_name contains "KNA1"\n| summarize count() by user, transaction_code, report_name, source_address\n| order by count_ desc'
+        },
+        {
+          name: 'Table access frequency by user',
+          description: 'Shows users with high volumes of table browsing activity',
+          query: 'dataset="$DATASET" earliest=-7d\n| where transaction_code in ("SE16", "SE16N", "SM30")\n| summarize access_count=count(), distinct_tables=dcount(report_name) by user\n| where access_count > 20 or distinct_tables > 10\n| order by access_count desc'
+        },
+        {
+          name: 'Table access timeline',
+          description: 'Shows the temporal pattern of table access for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where transaction_code in ("SE16", "SE16N", "SM30")\n| timestats count() by user span=4h\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-004',
+      name: 'RFC and Remote Function Call Abuse',
+      objective: 'Detects suspicious Remote Function Call (RFC) activity that may indicate lateral movement between SAP systems, unauthorized system-to-system communication, or exploitation of trusted RFC connections.',
+      severity: 'High',
+      mitre: ['T1021 - Remote Services', 'T1210 - Exploitation of Remote Services'],
+      tags: ['security', 'lateral-movement', 'rfc-abuse', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'event', 'audit_class', 'source_address', 'terminal'],
+      detectionLogic: 'Monitors for RFC-related audit events including SM59 (RFC destination management), RFC call events in the audit log, and unusual patterns of remote function calls. Alerts on creation of new RFC destinations, RFC calls from unexpected source addresses, or high-volume RFC activity from interactive dialog users.',
+      falsePositives: ['Authorized integration development creating RFC destinations', 'Basis team testing connectivity between SAP landscapes', 'Scheduled RFC-based integrations running on schedule'],
+      tuningGuidance: 'Baseline expected RFC patterns per user type (dialog vs. system). Alert on RFC destination creation/modification in production. Monitor for RFC calls to external (non-SAP) systems. Exclude known integration service accounts.',
+      investigationWorkflow: '1. Identify the user and the type of RFC activity detected\n2. If SM59 was used, determine what RFC destination was created or modified\n3. Check the source_address to identify where the RFC call originated\n4. Determine if the RFC connects to a known or unknown system\n5. Review if the RFC activity aligns with known integration patterns',
+      criblSearchQueries: [
+        {
+          name: 'RFC destination management',
+          description: 'Detects creation or modification of RFC destinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where transaction_code == "SM59" or event contains "RFC"\n| summarize count() by user, transaction_code, event, source_address, terminal\n| order by count_ desc'
+        },
+        {
+          name: 'RFC activity by user type',
+          description: 'Shows RFC-related activity patterns across user accounts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event contains "RFC" or audit_class contains "RFC"\n| summarize rfc_count=count() by user, source_address, bin(timestamp, 1d)\n| order by rfc_count desc'
+        },
+        {
+          name: 'RFC source address analysis',
+          description: 'Identifies unusual source addresses making RFC calls',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event contains "RFC"\n| summarize distinct_users=dcount(user), call_count=count() by source_address, terminal\n| order by call_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-005',
+      name: 'Failed Logon Attempts and Account Lockouts',
+      objective: 'Detects brute-force attacks against SAP user accounts by identifying repeated failed authentication attempts that may precede account compromise, and monitors for account lockouts indicating targeted attacks.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing'],
+      tags: ['security', 'brute-force', 'authentication', 'sap'],
+      requiredFields: ['timestamp', 'user', 'event', 'terminal', 'source_address', 'client', 'audit_class'],
+      detectionLogic: 'Identifies failed logon events (event containing "logon failed" or audit_class indicating authentication failure) where a single source_address generates more than 5 failures within 15 minutes, or where multiple distinct user accounts are targeted from the same source. Also detects account lockout events indicating the password attempt threshold was reached.',
+      falsePositives: ['Users forgetting passwords after vacation or password changes', 'Service accounts with expired credentials on application servers', 'SSO integration issues causing batch authentication failures'],
+      tuningGuidance: 'Adjust failure threshold based on lockout policy configuration. Exclude known application server IPs with connection pooling. Differentiate between interactive and RFC logon failures. Set higher severity when privileged accounts (SAP*, DDIC) are targeted.',
+      investigationWorkflow: '1. Identify the source_address and terminal generating failed logons\n2. Determine if multiple user accounts were targeted (password spraying)\n3. Check if any targeted accounts subsequently had successful logons\n4. Review if the source belongs to a known application server or is external\n5. Check if targeted accounts include privileged system accounts',
+      criblSearchQueries: [
+        {
+          name: 'Failed logon attempts',
+          description: 'Shows failed authentication events by source and target user',
+          query: 'dataset="$DATASET" earliest=-1h\n| where event contains "logon" and event contains "fail"\n| summarize failure_count=count(), targeted_users=dcount(user) by source_address, terminal, client\n| where failure_count >= 5\n| order by failure_count desc'
+        },
+        {
+          name: 'Account lockout events',
+          description: 'Identifies users whose accounts were locked due to failed attempts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event contains "lock" or audit_class contains "lock"\n| summarize count() by user, source_address, terminal, client\n| order by count_ desc'
+        },
+        {
+          name: 'Authentication failure timeline',
+          description: 'Shows temporal patterns of authentication failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where event contains "logon" and event contains "fail"\n| timestats count() by source_address span=5m\n| order by timestamp desc'
+        },
+        {
+          name: 'Success after failure pattern',
+          description: 'Identifies successful logins from sources that previously had failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where event contains "logon"\n| extend is_failure = iff(event contains "fail", 1, 0)\n| extend is_success = iff(event contains "success" or (event contains "logon" and not(event contains "fail")), 1, 0)\n| summarize failures=sum(is_failure), successes=sum(is_success) by source_address, user\n| where failures >= 3 and successes >= 1\n| order by failures desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-006',
+      name: 'Debug and Replace Activity in Production',
+      objective: 'Detects debugging and code replacement activities (ABAP debugger with change mode, program replacement) in production systems that could be used to bypass authorization checks, manipulate data, or inject malicious logic.',
+      severity: 'Medium',
+      mitre: ['T1055 - Process Injection', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'code-manipulation', 'debug-abuse', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'report_name', 'event', 'audit_class', 'client'],
+      detectionLogic: 'Monitors for debug-related events and transaction codes (/H debugger activation, SE80 with debug mode, ABAP replace events) in production client numbers. Debug with replace capability allows runtime variable manipulation that can bypass authorization checks. Any debugging in production is suspicious and should be investigated.',
+      falsePositives: ['Authorized emergency debugging with break-glass access and tickets', 'Performance analysis activities that trigger debug-related audit events', 'SAP support sessions with authorized remote access'],
+      tuningGuidance: 'Define production client numbers for alert filtering. All debug activity in production should alert. In non-production, only alert on debug-replace mode. Correlate with emergency access management (EAM) tools for authorized sessions.',
+      investigationWorkflow: '1. Confirm the client number is a production client\n2. Identify the user performing debug activity and their authorization level\n3. Check if an emergency access request was filed before the debug session\n4. Review the report_name to determine what program was being debugged\n5. Check for data changes made during the debug session via change document logs',
+      criblSearchQueries: [
+        {
+          name: 'Debug activity in production',
+          description: 'Identifies debugging events in production clients',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event contains "debug" or event contains "replace" or transaction_code == "/H"\n| summarize count() by user, transaction_code, report_name, event, client\n| order by count_ desc'
+        },
+        {
+          name: 'Debug user history',
+          description: 'Shows historical debugging activity per user',
+          query: 'dataset="$DATASET" earliest=-30d\n| where event contains "debug" or event contains "replace"\n| summarize debug_count=count() by user, client, bin(timestamp, 1d)\n| order by timestamp desc'
+        },
+        {
+          name: 'Programs targeted by debug',
+          description: 'Identifies which programs are being debugged',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event contains "debug"\n| summarize count() by user, report_name, transaction_code\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-sec-007',
+      name: 'Cross-Client Access or Client Configuration Change',
+      objective: 'Detects access to client 000 or cross-client table modifications that could indicate attempts to propagate changes across all SAP clients, modify system-wide settings, or access the golden client for privilege escalation.',
+      severity: 'Medium',
+      mitre: ['T1484 - Domain Policy Modification', 'T1078 - Valid Accounts'],
+      tags: ['security', 'cross-client', 'system-abuse', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'client', 'event', 'audit_class', 'source_address', 'terminal'],
+      detectionLogic: 'Monitors for audit events in client 000 (which propagates to all clients) or transaction codes that modify client-independent tables (SCC4 for client administration, SM30 on T000). Also detects users switching between clients within a short timeframe which may indicate privilege hunting across client boundaries.',
+      falsePositives: ['Basis administrators performing authorized client copies', 'Transport imports that log activity in client 000', 'System configuration changes during maintenance windows'],
+      tuningGuidance: 'Alert on all interactive access to client 000 in production. Whitelist transport system accounts for client 000 activity. Monitor SCC4 transaction at highest severity. Track client-switching behavior as an indicator.',
+      investigationWorkflow: '1. Confirm the client value and whether it is a protected client (000, production)\n2. Identify the user and verify they have client administration authorization\n3. Determine the transaction_code and event type to understand the activity\n4. Check if the activity was part of an authorized transport or system change\n5. Review if cross-client tables were modified that affect all clients',
+      criblSearchQueries: [
+        {
+          name: 'Client 000 access',
+          description: 'Identifies all activity in the reference client',
+          query: 'dataset="$DATASET" earliest=-24h\n| where client == "000"\n| summarize count() by user, transaction_code, event, source_address\n| order by count_ desc'
+        },
+        {
+          name: 'Client administration transactions',
+          description: 'Monitors client configuration and copy activities',
+          query: 'dataset="$DATASET" earliest=-7d\n| where transaction_code in ("SCC4", "SCC5", "SCC8", "SCC9", "SCCL")\n| summarize count() by user, transaction_code, client, event\n| order by count_ desc'
+        },
+        {
+          name: 'Cross-client activity patterns',
+          description: 'Identifies users active across multiple clients which may indicate privilege abuse',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize distinct_clients=dcount(client), clients=make_set(client), action_count=count() by user\n| where distinct_clients > 1\n| order by distinct_clients desc'
+        },
+        {
+          name: 'Client 000 activity timeline',
+          description: 'Shows temporal distribution of reference client access',
+          query: 'dataset="$DATASET" earliest=-30d\n| where client == "000"\n| timestats count() by user span=1d\n| order by timestamp desc'
+        }
+      ]
+    }
+  ],
+  'squid-proxy': [
+    {
+      id: 'sqd-sec-001',
+      name: 'Command and Control Beaconing via Proxy',
+      objective: 'Detects regular, periodic connections to the same external host that may indicate C2 beaconing activity through the proxy.',
+      severity: 'Critical',
+      mitre: ['T1071 - Application Layer Protocol', 'T1573 - Encrypted Channel'],
+      tags: ['security', 'c2', 'beaconing', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'url', 'bytes'],
+      detectionLogic: 'Identifies clients making repeated connections to the same destination at regular intervals (jitter < 20%). Looks for consistent byte sizes in responses which is characteristic of C2 keep-alive traffic. Aggregates connections per client-destination pair over a sliding window and calculates standard deviation of inter-request timing.',
+      falsePositives: ['Health check endpoints', 'Software update polling', 'RSS feed readers', 'Monitoring agents checking external services'],
+      tuningGuidance: 'Adjust the interval regularity threshold (default: stddev < 20% of mean interval). Whitelist known polling services by URL pattern. Increase minimum connection count threshold for noisy environments.',
+      investigationWorkflow: '1. Identify the client_ip and destination URL pattern\n2. Examine the regularity of connection intervals and response byte sizes\n3. Check if the destination domain is newly registered or has low reputation\n4. Correlate with endpoint telemetry for the source host\n5. Review content_type of responses for anomalies\n6. Check if other internal hosts are connecting to the same destination',
+      criblSearchQueries: [
+        {
+          name: 'Periodic Connection Detection',
+          description: 'Finds client-destination pairs with highly regular connection intervals suggesting beaconing',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend destination=url\n| summarize request_count=count(), avg_bytes=avg(bytes), stdev_elapsed=stdev(elapsed) by client_ip, destination\n| where request_count > 50\n| order by request_count desc'
+        },
+        {
+          name: 'Consistent Byte Size Responses',
+          description: 'Identifies connections with very consistent response sizes typical of C2 heartbeats',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count(), avg_bytes=avg(bytes), stdev_bytes=stdev(bytes) by client_ip, url\n| where count_ > 20 and stdev_bytes < 10\n| order by count_ desc'
+        },
+        {
+          name: 'Beaconing Timeline Analysis',
+          description: 'Visualizes connection frequency over time for a specific client-destination pair',
+          query: 'dataset="$DATASET" earliest=-24h\n| where client_ip == "$SUSPECT_IP"\n| timestats span=5m count() by url\n| order by timestamp asc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-002',
+      name: 'Data Exfiltration via Large Outbound Transfers',
+      objective: 'Detects unusually large data transfers through the proxy that may indicate data exfiltration attempts.',
+      severity: 'High',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'exfiltration', 'data-loss', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'bytes', 'url', 'request_method', 'user'],
+      detectionLogic: 'Monitors for outbound data transfers exceeding baseline thresholds per user or client IP. Tracks cumulative bytes transferred to external destinations over rolling windows and alerts when transfers exceed 3 standard deviations above the user baseline or an absolute threshold.',
+      falsePositives: ['Large legitimate file uploads to cloud storage', 'Video conferencing traffic', 'Software deployments to external services', 'Backup operations to cloud providers'],
+      tuningGuidance: 'Set absolute byte threshold based on organizational norms (default: 500MB per hour). Whitelist approved cloud storage and collaboration domains. Adjust standard deviation multiplier for sensitivity.',
+      investigationWorkflow: '1. Identify the user and client_ip initiating large transfers\n2. Examine destination URLs for cloud storage, paste sites, or unusual domains\n3. Compare transfer volume against the users historical baseline\n4. Check request_method for POST/PUT operations\n5. Correlate with DLP alerts if available\n6. Review content_type for sensitive data indicators',
+      criblSearchQueries: [
+        {
+          name: 'Top Data Uploaders',
+          description: 'Identifies users and IPs with the highest outbound data volume',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method in ("POST", "PUT")\n| summarize total_bytes=sum(bytes) by client_ip, user\n| where total_bytes > 524288000\n| order by total_bytes desc'
+        },
+        {
+          name: 'Large Transfers to Uncommon Destinations',
+          description: 'Finds large uploads to destinations not commonly accessed by the organization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method in ("POST", "PUT") and bytes > 10485760\n| summarize total_bytes=sum(bytes), request_count=count() by url, user\n| order by total_bytes desc'
+        },
+        {
+          name: 'Hourly Transfer Volume by User',
+          description: 'Tracks data transfer patterns over time per user to identify spikes',
+          query: 'dataset="$DATASET" earliest=-48h\n| where request_method in ("POST", "PUT")\n| timestats span=1h sum(bytes) as hourly_bytes by user\n| where hourly_bytes > 104857600\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-003',
+      name: 'Proxy Access to Known Malicious or Suspicious Domains',
+      objective: 'Detects proxy connections to domains associated with malware, phishing, or other malicious activity based on URL patterns.',
+      severity: 'High',
+      mitre: ['T1566 - Phishing', 'T1204 - User Execution'],
+      tags: ['security', 'malware', 'phishing', 'threat-intel', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'url', 'result_code', 'user'],
+      detectionLogic: 'Monitors proxy logs for connections to URLs matching patterns associated with malicious infrastructure including newly registered domains, known phishing patterns, DGA-like domain names, and suspicious TLDs. Also detects URL patterns common in exploit kits and credential harvesting pages.',
+      falsePositives: ['Legitimate new domains', 'URL shorteners resolving to safe content', 'Security research activities', 'Automated threat intelligence feed testing'],
+      tuningGuidance: 'Maintain and regularly update domain blocklists. Whitelist legitimate short-lived domains used by the organization. Adjust DGA detection sensitivity based on false positive rate.',
+      investigationWorkflow: '1. Extract the suspicious domain from the URL\n2. Check domain age, registration details, and reputation scores\n3. Identify all internal users/hosts that accessed the same domain\n4. Examine the result_code to determine if content was successfully retrieved\n5. Check if the access was preceded by an email delivery containing the URL\n6. Quarantine affected endpoints if malware delivery is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Suspicious TLD Access',
+          description: 'Detects access to commonly abused top-level domains',
+          query: 'dataset="$DATASET" earliest=-24h\n| where url matches "\\.(xyz|top|buzz|club|work|tk|ml|ga|cf|gq)(/|$)"\n| summarize count() by client_ip, user, url\n| order by count_ desc'
+        },
+        {
+          name: 'DGA-Pattern Domain Detection',
+          description: 'Identifies connections to domains with patterns resembling domain generation algorithms',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend domain=url\n| where domain matches "[a-z0-9]{15,}\\.(com|net|org)"\n| summarize count() by client_ip, user, domain\n| order by count_ desc'
+        },
+        {
+          name: 'Blocked Requests by Client',
+          description: 'Shows clients with the most denied/blocked proxy requests indicating potential compromise',
+          query: 'dataset="$DATASET" earliest=-24h\n| where result_code matches "DENIED" or result_code matches "403"\n| summarize denied_count=count() by client_ip, user\n| where denied_count > 20\n| order by denied_count desc'
+        },
+        {
+          name: 'First-Seen Domain Access',
+          description: 'Detects access to domains never previously seen in proxy logs',
+          query: 'dataset="$DATASET" earliest=-1h\n| extend domain=url\n| summarize first_seen=min(timestamp), access_count=count() by domain, client_ip\n| where access_count == 1\n| order by first_seen desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-004',
+      name: 'CONNECT Tunnel Abuse for Proxy Evasion',
+      objective: 'Detects abuse of HTTP CONNECT method to tunnel non-standard traffic through the proxy, potentially bypassing security controls.',
+      severity: 'High',
+      mitre: ['T1090 - Proxy', 'T1572 - Protocol Tunneling'],
+      tags: ['security', 'evasion', 'tunneling', 'proxy-abuse'],
+      requiredFields: ['timestamp', 'client_ip', 'request_method', 'url', 'bytes', 'elapsed', 'user'],
+      detectionLogic: 'Identifies CONNECT method requests to non-standard ports or with unusually long connection durations that may indicate tunneling of SSH, VPN, or other protocols through the HTTP proxy. Flags connections with high byte counts on non-443 ports and long-lived sessions that deviate from normal HTTPS browsing patterns.',
+      falsePositives: ['Legitimate WebSocket connections', 'Long-lived API connections', 'Video streaming over HTTPS', 'Development environments using non-standard ports'],
+      tuningGuidance: 'Define approved CONNECT ports (typically 443, 8443). Set duration thresholds based on normal session lengths. Whitelist known development and streaming services.',
+      investigationWorkflow: '1. Examine the destination port in the CONNECT request URL\n2. Check connection duration and bytes transferred\n3. Compare against normal CONNECT usage patterns for the user\n4. Determine if the destination IP hosts any known services\n5. Check if endpoint security shows tunnel-related processes\n6. Review if the user has legitimate need for non-standard port access',
+      criblSearchQueries: [
+        {
+          name: 'CONNECT to Non-Standard Ports',
+          description: 'Identifies CONNECT method usage to ports other than 443',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method == "CONNECT"\n| where not (url matches ":443$")\n| summarize count(), total_bytes=sum(bytes) by client_ip, user, url\n| order by total_bytes desc'
+        },
+        {
+          name: 'Long-Duration CONNECT Sessions',
+          description: 'Detects unusually long-lived CONNECT tunnel sessions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method == "CONNECT" and elapsed > 300000\n| summarize max_duration=max(elapsed), total_bytes=sum(bytes) by client_ip, user, url\n| order by max_duration desc'
+        },
+        {
+          name: 'High-Volume CONNECT Transfers',
+          description: 'Finds CONNECT sessions with large data transfer volumes suggesting tunnel abuse',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method == "CONNECT"\n| summarize total_bytes=sum(bytes), session_count=count() by client_ip, user\n| where total_bytes > 1073741824\n| order by total_bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-005',
+      name: 'Credential Stuffing via Proxy',
+      objective: 'Detects rapid authentication attempts to multiple external services from a single client, indicating potential credential stuffing or password spraying through the proxy.',
+      severity: 'Medium',
+      mitre: ['T1110 - Brute Force', 'T1110.004 - Credential Stuffing'],
+      tags: ['security', 'credential-abuse', 'brute-force', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'url', 'result_code', 'user', 'request_method'],
+      detectionLogic: 'Monitors for a single client IP generating a high volume of POST requests to login endpoints across multiple distinct domains within a short time window. Correlates HTTP 401/403 response codes with rapid sequential access to authentication endpoints suggesting automated credential testing.',
+      falsePositives: ['SSO authentication flows touching multiple domains', 'Password managers syncing across services', 'Automated testing of login pages', 'Security scanners performing auth checks'],
+      tuningGuidance: 'Adjust the distinct domain threshold (default: >10 unique login domains in 1 hour). Whitelist SSO-related domains. Tune the POST request rate threshold based on normal user behavior.',
+      investigationWorkflow: '1. Identify the client_ip and user generating the authentication requests\n2. List all target domains and determine if they share common login patterns\n3. Check result_codes for failure ratios (high 401/403 rate indicates stuffing)\n4. Determine if credentials were sourced from a known breach\n5. Check if any successful authentications occurred after failures\n6. Block the source and force password resets if compromise is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Rapid Auth Attempts Across Domains',
+          description: 'Detects clients hitting login endpoints on many different domains quickly',
+          query: 'dataset="$DATASET" earliest=-1h\n| where request_method == "POST" and url matches "(login|signin|auth|oauth)"\n| summarize unique_domains=dcount(url), total_attempts=count() by client_ip, user\n| where unique_domains > 10\n| order by unique_domains desc'
+        },
+        {
+          name: 'Authentication Failure Rate',
+          description: 'Identifies clients with high ratios of authentication failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where url matches "(login|signin|auth)" and request_method == "POST"\n| extend is_failure=iif(result_code matches "(401|403|407)", 1, 0)\n| summarize total=count(), failures=sum(is_failure) by client_ip, user\n| extend failure_rate=(failures * 100 / total)\n| where failure_rate > 80 and total > 20\n| order by failures desc'
+        },
+        {
+          name: 'Timeline of Authentication Bursts',
+          description: 'Visualizes authentication attempt patterns over time',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_method == "POST" and url matches "(login|signin|auth)"\n| timestats span=10m count() by client_ip\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-006',
+      name: 'Cryptomining Pool Connection via Proxy',
+      objective: 'Detects connections to known cryptocurrency mining pools through the proxy, indicating potential cryptojacking of internal resources.',
+      severity: 'Medium',
+      mitre: ['T1496 - Resource Hijacking'],
+      tags: ['security', 'cryptomining', 'resource-abuse', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'url', 'user', 'bytes', 'content_type'],
+      detectionLogic: 'Monitors proxy logs for connections to known mining pool domains, stratum protocol endpoints, and URLs matching cryptocurrency mining patterns. Also detects connections with JSON-RPC patterns characteristic of mining protocols tunneled over HTTP.',
+      falsePositives: ['Legitimate cryptocurrency research', 'Blockchain development activities', 'Cryptocurrency exchange access for corporate treasury'],
+      tuningGuidance: 'Maintain mining pool domain list. Whitelist approved cryptocurrency-related domains for finance teams. Add new mining pool patterns as they emerge.',
+      investigationWorkflow: '1. Identify the client_ip and user connecting to mining infrastructure\n2. Verify the destination matches known mining pool patterns\n3. Check endpoint CPU/GPU utilization for the source host\n4. Determine if mining software is installed or if this is browser-based mining\n5. Investigate how the mining software was installed (malware vs. insider)\n6. Remove mining software and remediate the infection vector',
+      criblSearchQueries: [
+        {
+          name: 'Mining Pool Domain Access',
+          description: 'Detects connections to known cryptocurrency mining pool domains',
+          query: 'dataset="$DATASET" earliest=-24h\n| where url matches "(miningpool|nanopool|ethermine|f2pool|slushpool|nicehash|minergate|stratum|xmr|monero.*pool)"\n| summarize count(), total_bytes=sum(bytes) by client_ip, user, url\n| order by count_ desc'
+        },
+        {
+          name: 'Stratum Protocol Detection',
+          description: 'Identifies stratum mining protocol connections tunneled through the proxy',
+          query: 'dataset="$DATASET" earliest=-24h\n| where url matches "stratum\\+tcp|stratum\\+ssl|:3333|:4444|:8888|:14444"\n| summarize count() by client_ip, user, url\n| order by count_ desc'
+        },
+        {
+          name: 'Persistent Mining Connections',
+          description: 'Finds long-lived connections characteristic of active mining sessions',
+          query: 'dataset="$DATASET" earliest=-48h\n| where url matches "(pool|mining|miner|stratum)"\n| timestats span=1h count(), sum(bytes) as hourly_bytes by client_ip\n| where count_ > 10\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-sec-007',
+      name: 'Unauthorized User or Service Account Proxy Usage',
+      objective: 'Detects proxy usage by unauthorized users or service accounts that should not be routing traffic through the web proxy.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1078.001 - Default Accounts'],
+      tags: ['security', 'unauthorized-access', 'service-account', 'proxy'],
+      requiredFields: ['timestamp', 'client_ip', 'user', 'url', 'request_method', 'result_code'],
+      detectionLogic: 'Identifies proxy authentication by service accounts, system accounts, or user identities that are not authorized for proxy access. Detects accounts using the proxy outside their approved time windows or from unexpected source IP ranges. Flags any authentication with default, shared, or generic credentials.',
+      falsePositives: ['Service accounts legitimately requiring proxy access for integrations', 'Emergency access using break-glass accounts', 'New employees not yet added to proxy authorization lists'],
+      tuningGuidance: 'Maintain authorized user and service account lists. Define approved time windows per account type. Update IP allowlists for service accounts as infrastructure changes.',
+      investigationWorkflow: '1. Identify the unauthorized user or service account\n2. Determine the source client_ip and check if it maps to expected infrastructure\n3. Review what URLs were accessed by the unauthorized identity\n4. Check if the credentials were compromised or improperly shared\n5. Verify if the account should be provisioned for proxy access\n6. Disable the account if unauthorized and investigate lateral movement',
+      criblSearchQueries: [
+        {
+          name: 'Service Account Proxy Usage',
+          description: 'Identifies service accounts or system accounts using the proxy',
+          query: 'dataset="$DATASET" earliest=-24h\n| where user matches "(svc_|service_|admin|system|root|sa-)"\n| summarize count(), unique_urls=dcount(url) by user, client_ip\n| order by count_ desc'
+        },
+        {
+          name: 'Off-Hours Proxy Authentication',
+          description: 'Detects proxy usage outside normal business hours by user accounts',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour=hourofday(timestamp)\n| where hour < 6 or hour > 22\n| summarize count(), unique_urls=dcount(url) by user, client_ip\n| where count_ > 10\n| order by count_ desc'
+        },
+        {
+          name: 'New User First Proxy Access',
+          description: 'Identifies users appearing in proxy logs for the first time',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(timestamp), request_count=count() by user, client_ip\n| order by first_seen desc'
+        },
+        {
+          name: 'Multi-Source IP per User',
+          description: 'Detects users authenticating from multiple source IPs which may indicate credential sharing',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_ips=dcount(client_ip), total_requests=count() by user\n| where unique_ips > 5\n| order by unique_ips desc'
+        }
+      ]
+    }
+  ],
+  'aws-waf-logs': [
+    {
+      id: 'aww-sec-001',
+      name: 'SQL Injection Attack Attempts',
+      objective: 'Detects SQL injection attack patterns in WAF logs that indicate active exploitation attempts against web applications.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'sqli', 'web-attack', 'waf'],
+      requiredFields: ['timestamp', 'action', 'httpRequest_clientIp', 'httpRequest_uri', 'terminatingRuleId', 'httpRequest_httpMethod'],
+      detectionLogic: 'Identifies WAF rule matches for SQL injection patterns including both blocked and allowed requests. Tracks sources generating multiple SQLi attempts as they may be probing for unprotected endpoints. Correlates with the terminatingRuleId to identify which WAF rules are triggering and whether any bypass attempts are succeeding.',
+      falsePositives: ['Legitimate application queries containing SQL keywords in parameters', 'Security scanning tools during authorized penetration testing', 'API calls with structured query parameters'],
+      tuningGuidance: 'Review allowed SQLi-flagged requests for false positives. Add custom rules for application-specific parameter patterns. Whitelist authorized scanner source IPs during testing windows.',
+      investigationWorkflow: '1. Examine the httpRequest_uri for SQL injection payloads\n2. Determine if requests were blocked or allowed through\n3. Identify the source IP and check its reputation\n4. Review all URIs targeted by the same source IP\n5. Check if any requests bypassed WAF rules (action=ALLOW with SQLi patterns)\n6. Verify backend application logs for successful exploitation indicators',
+      criblSearchQueries: [
+        {
+          name: 'SQLi Attempts by Source',
+          description: 'Identifies source IPs generating the most SQL injection rule triggers',
+          query: 'dataset="$DATASET" earliest=-24h\n| where terminatingRuleId matches "(sql|sqli|injection)"\n| summarize count(), unique_uris=dcount(httpRequest_uri) by httpRequest_clientIp, action\n| order by count_ desc'
+        },
+        {
+          name: 'Allowed SQLi-Flagged Requests',
+          description: 'Finds potential SQL injection requests that were not blocked by WAF',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "ALLOW" and httpRequest_uri matches "(union|select|drop|insert|update|delete|exec|xp_|0x|char\\(|concat\\()"\n| summarize count() by httpRequest_clientIp, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'SQLi Attack Timeline',
+          description: 'Shows SQL injection attempt patterns over time to identify campaigns',
+          query: 'dataset="$DATASET" earliest=-48h\n| where terminatingRuleId matches "(sql|sqli)"\n| timestats span=1h count() by action\n| order by timestamp asc'
+        },
+        {
+          name: 'Targeted URI Patterns',
+          description: 'Identifies which application endpoints are being targeted most frequently',
+          query: 'dataset="$DATASET" earliest=-24h\n| where terminatingRuleId matches "(sql|sqli|injection)"\n| summarize count() by httpRequest_uri, httpRequest_httpMethod\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-002',
+      name: 'Distributed Brute Force Attack Against Web Application',
+      objective: 'Detects coordinated brute force attacks from multiple source IPs targeting authentication endpoints protected by WAF.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.003 - Password Spraying'],
+      tags: ['security', 'brute-force', 'authentication', 'distributed-attack', 'waf'],
+      requiredFields: ['timestamp', 'httpRequest_clientIp', 'httpRequest_uri', 'httpRequest_httpMethod', 'action', 'httpRequest_country'],
+      detectionLogic: 'Monitors for high volumes of POST requests to authentication-related URIs from multiple distinct source IPs within a short time window. Detects both single-source brute force (high volume from one IP) and distributed attacks (moderate volume from many IPs targeting the same endpoint). Correlates with rate-limiting rule triggers.',
+      falsePositives: ['Legitimate high-traffic login pages during business hours', 'Single sign-on redirects generating multiple auth requests', 'Load testing against authentication endpoints'],
+      tuningGuidance: 'Set rate thresholds based on normal authentication traffic patterns. Whitelist SSO provider IP ranges. Define time windows appropriate for application login patterns.',
+      investigationWorkflow: '1. Identify the target authentication URI and request volume\n2. Enumerate unique source IPs and their geographic distribution\n3. Check if rate-limiting rules triggered and blocked the traffic\n4. Determine if any source IPs are from unexpected countries\n5. Verify if any successful authentications followed the brute force attempts\n6. Implement IP blocking and notify application team',
+      criblSearchQueries: [
+        {
+          name: 'High-Volume Auth Endpoint Requests',
+          description: 'Detects high request volumes to authentication endpoints',
+          query: 'dataset="$DATASET" earliest=-1h\n| where httpRequest_httpMethod == "POST" and httpRequest_uri matches "(login|auth|signin|token|session)"\n| summarize count(), unique_ips=dcount(httpRequest_clientIp) by httpRequest_uri\n| where count_ > 100\n| order by count_ desc'
+        },
+        {
+          name: 'Geographic Distribution of Attack Sources',
+          description: 'Shows country distribution of authentication attack sources',
+          query: 'dataset="$DATASET" earliest=-4h\n| where httpRequest_httpMethod == "POST" and httpRequest_uri matches "(login|auth|signin)"\n| summarize count() by httpRequest_country, httpRequest_clientIp\n| order by count_ desc'
+        },
+        {
+          name: 'Rate-Limited Source IPs',
+          description: 'Identifies IPs being actively rate-limited by WAF rules',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "BLOCK" and terminatingRuleId matches "(rate|limit|throttle)"\n| summarize blocked_count=count() by httpRequest_clientIp, httpRequest_country\n| where blocked_count > 50\n| order by blocked_count desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-003',
+      name: 'WAF Rule Bypass Attempts',
+      objective: 'Detects attempts to bypass WAF rules through encoding tricks, header manipulation, or payload obfuscation that result in ALLOW actions despite malicious intent.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1027 - Obfuscated Files or Information'],
+      tags: ['security', 'waf-bypass', 'evasion', 'web-attack'],
+      requiredFields: ['timestamp', 'action', 'httpRequest_clientIp', 'httpRequest_uri', 'ruleGroupList', 'terminatingRuleId', 'webaclId'],
+      detectionLogic: 'Identifies patterns where a source IP first triggers BLOCK rules and then successfully gets ALLOW decisions on similar URIs, suggesting iterative bypass testing. Also detects encoded payloads (double encoding, unicode, null bytes) in allowed requests and unusual rule group evaluation patterns indicating partial rule matches without termination.',
+      falsePositives: ['Security researchers testing WAF efficacy', 'Applications using URL encoding legitimately', 'API clients sending encoded parameters normally'],
+      tuningGuidance: 'Correlate BLOCK-then-ALLOW sequences per source IP. Tune encoding detection patterns to exclude legitimate application encoding schemes. Adjust the time window for bypass correlation.',
+      investigationWorkflow: '1. Identify IPs with both BLOCK and ALLOW actions on similar URI patterns\n2. Examine the allowed requests for encoded or obfuscated payloads\n3. Review ruleGroupList to understand which rules partially matched\n4. Compare blocked vs allowed request differences to identify bypass technique\n5. Create custom WAF rules to address the bypass\n6. Check application logs for evidence of successful exploitation',
+      criblSearchQueries: [
+        {
+          name: 'Block-Then-Allow Pattern',
+          description: 'Finds IPs that successfully bypassed WAF after initial blocks',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize blocked=countif(action == "BLOCK"), allowed=countif(action == "ALLOW") by httpRequest_clientIp\n| where blocked > 5 and allowed > 0\n| order by blocked desc'
+        },
+        {
+          name: 'Encoded Payload Detection in Allowed Requests',
+          description: 'Detects potentially encoded attack payloads in allowed requests',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "ALLOW" and httpRequest_uri matches "(%25|%00|%0a|%0d|\\\\u00|\\\\x)"\n| summarize count() by httpRequest_clientIp, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'Rule Group Evaluation Analysis',
+          description: 'Analyzes rule group evaluations to find partial matches that did not terminate',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "ALLOW"\n| summarize count() by ruleGroupList, httpRequest_clientIp\n| order by count_ desc'
+        },
+        {
+          name: 'Iterative Bypass Testing Timeline',
+          description: 'Shows sequential requests from an attacker IP testing bypass variations',
+          query: 'dataset="$DATASET" earliest=-12h\n| where httpRequest_clientIp == "$SUSPECT_IP"\n| summarize count() by httpRequest_uri, action, terminatingRuleId\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-004',
+      name: 'Web Application Scanning and Enumeration',
+      objective: 'Detects automated web application scanning activities including directory enumeration, vulnerability scanning, and technology fingerprinting.',
+      severity: 'Medium',
+      mitre: ['T1595 - Active Scanning', 'T1592 - Gather Victim Host Information'],
+      tags: ['security', 'scanning', 'enumeration', 'reconnaissance', 'waf'],
+      requiredFields: ['timestamp', 'httpRequest_clientIp', 'httpRequest_uri', 'httpRequest_httpMethod', 'action', 'httpRequest_country'],
+      detectionLogic: 'Identifies source IPs accessing a large number of distinct URIs in a short time period, especially non-existent paths that return 404 errors. Detects common scanner patterns including sequential directory enumeration, technology-specific path probing, and user-agent patterns associated with automated tools.',
+      falsePositives: ['Legitimate web crawlers and search engine bots', 'Internal link checkers and monitoring tools', 'CDN health checks probing multiple paths'],
+      tuningGuidance: 'Whitelist known crawler user-agents and IP ranges. Set URI diversity threshold based on application complexity. Adjust time windows for detection sensitivity.',
+      investigationWorkflow: '1. Identify the scanning source IP and check its reputation\n2. Analyze the URI patterns being probed for scanner signatures\n3. Determine the scanning tool being used from request patterns\n4. Check if any sensitive paths or admin panels were discovered\n5. Review if scanning preceded any exploitation attempts\n6. Block the scanner IP and review exposed attack surface',
+      criblSearchQueries: [
+        {
+          name: 'High URI Diversity by Source',
+          description: 'Identifies IPs accessing an unusually high number of unique URIs',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize unique_uris=dcount(httpRequest_uri), total_requests=count() by httpRequest_clientIp\n| where unique_uris > 100\n| order by unique_uris desc'
+        },
+        {
+          name: 'Common Scanner Path Probing',
+          description: 'Detects requests for paths commonly targeted by vulnerability scanners',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpRequest_uri matches "(wp-admin|.env|phpinfo|/admin|/console|.git|/api/swagger|/actuator)"\n| summarize count() by httpRequest_clientIp, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'Scanning Activity Timeline',
+          description: 'Visualizes scanning intensity over time from identified scanner IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpRequest_clientIp == "$SCANNER_IP"\n| timestats span=5m count(), dcount(httpRequest_uri) as unique_paths\n| order by timestamp asc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-005',
+      name: 'Cross-Site Scripting (XSS) Attack Patterns',
+      objective: 'Detects cross-site scripting attack attempts in WAF-protected application requests, including both reflected and stored XSS vectors.',
+      severity: 'High',
+      mitre: ['T1189 - Drive-by Compromise', 'T1059.007 - JavaScript'],
+      tags: ['security', 'xss', 'web-attack', 'injection', 'waf'],
+      requiredFields: ['timestamp', 'action', 'httpRequest_clientIp', 'httpRequest_uri', 'httpRequest_httpMethod', 'terminatingRuleId'],
+      detectionLogic: 'Monitors for WAF XSS rule triggers and URI patterns containing script tags, event handlers, javascript URIs, and other XSS vectors. Tracks both blocked and allowed XSS attempts to identify successful bypasses. Correlates multiple XSS attempts from the same source to identify persistent attackers.',
+      falsePositives: ['WYSIWYG editors submitting HTML content', 'Developer tools sending debug data with script content', 'Legitimate API calls containing encoded HTML'],
+      tuningGuidance: 'Whitelist trusted content management endpoints that handle HTML. Tune XSS pattern matching to reduce false positives on legitimate HTML submissions. Add custom rules for application-specific input patterns.',
+      investigationWorkflow: '1. Examine the XSS payload in the httpRequest_uri\n2. Determine if the payload was blocked or allowed\n3. Check if the target endpoint reflects user input in responses\n4. Identify all XSS attempts from the same source IP\n5. Assess if stored XSS was successfully planted\n6. Review application for output encoding deficiencies',
+      criblSearchQueries: [
+        {
+          name: 'XSS Rule Triggers',
+          description: 'Identifies all WAF XSS rule activations and their dispositions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where terminatingRuleId matches "(xss|cross-site|script)"\n| summarize count() by httpRequest_clientIp, action, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'XSS Payloads in Allowed Requests',
+          description: 'Detects potential XSS vectors in requests that passed through WAF',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "ALLOW" and httpRequest_uri matches "(<script|javascript:|onerror=|onload=|onclick=|alert\\(|prompt\\(|document\\.)"\n| summarize count() by httpRequest_clientIp, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'Persistent XSS Attackers',
+          description: 'Shows source IPs with sustained XSS attack activity over time',
+          query: 'dataset="$DATASET" earliest=-48h\n| where terminatingRuleId matches "(xss|script)"\n| timestats span=1h count() by httpRequest_clientIp\n| where count_ > 10\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-006',
+      name: 'Anomalous Geographic Source Traffic',
+      objective: 'Detects web application traffic from countries not typical for the business, which may indicate attack infrastructure or compromised proxies.',
+      severity: 'Medium',
+      mitre: ['T1090.003 - Multi-hop Proxy', 'T1583 - Acquire Infrastructure'],
+      tags: ['security', 'geo-anomaly', 'threat-intelligence', 'waf'],
+      requiredFields: ['timestamp', 'httpRequest_clientIp', 'httpRequest_country', 'httpRequest_uri', 'action', 'httpRequest_httpMethod'],
+      detectionLogic: 'Monitors for significant spikes in traffic from countries that are not in the organizations normal traffic profile. Detects first-time access from specific countries, especially when combined with targeting of sensitive endpoints. Correlates geographic anomalies with attack indicators like high block rates.',
+      falsePositives: ['VPN users appearing from unexpected countries', 'Business expansion into new geographic regions', 'Cloud services with globally distributed infrastructure', 'CDN traffic appearing from diverse locations'],
+      tuningGuidance: 'Define expected country list based on business operations. Set threshold for anomalous country traffic volume. Whitelist CDN and cloud provider IP ranges. Review quarterly as business geography changes.',
+      investigationWorkflow: '1. Identify the anomalous source country and traffic volume\n2. Determine if the traffic represents new attack infrastructure\n3. Check if the IPs are associated with known VPN/proxy services\n4. Review which URIs are being targeted from the anomalous locations\n5. Compare block rates for anomalous countries vs baseline\n6. Implement geo-blocking if traffic is confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'Traffic by Country Distribution',
+          description: 'Shows request distribution by country to identify anomalous sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count(), blocked=countif(action == "BLOCK") by httpRequest_country\n| extend block_rate=(blocked * 100 / count_)\n| order by count_ desc'
+        },
+        {
+          name: 'Uncommon Country Targeting Analysis',
+          description: 'Examines what endpoints are being targeted from unusual geographic sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpRequest_country in ("$ANOMALOUS_COUNTRY_1", "$ANOMALOUS_COUNTRY_2")\n| summarize count() by httpRequest_uri, httpRequest_httpMethod, action\n| order by count_ desc'
+        },
+        {
+          name: 'Country Traffic Trend',
+          description: 'Tracks traffic volume by country over time to identify sudden spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d count() by httpRequest_country\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-sec-007',
+      name: 'API Abuse and Rate Limit Violations',
+      objective: 'Detects API abuse patterns including excessive request rates, systematic endpoint enumeration, and resource exhaustion attempts against WAF-protected APIs.',
+      severity: 'High',
+      mitre: ['T1499 - Endpoint Denial of Service', 'T1106 - Native API'],
+      tags: ['security', 'api-abuse', 'rate-limiting', 'dos', 'waf'],
+      requiredFields: ['timestamp', 'httpRequest_clientIp', 'httpRequest_uri', 'httpRequest_httpMethod', 'action', 'terminatingRuleId', 'httpSourceId'],
+      detectionLogic: 'Identifies clients exceeding API rate limits defined in WAF rules. Detects systematic API endpoint enumeration, abusive scraping patterns, and resource-intensive API calls designed to cause service degradation. Correlates rate-limit blocks with continued attempts indicating persistent abuse.',
+      falsePositives: ['Legitimate API integrations with misconfigured rate limiting', 'Batch processing jobs hitting APIs rapidly', 'Mobile app release causing surge in API traffic', 'Microservice communication spikes during deployments'],
+      tuningGuidance: 'Define per-endpoint rate limits based on expected usage. Whitelist known partner and internal API consumers. Set graduated response (warn, throttle, block) thresholds.',
+      investigationWorkflow: '1. Identify the API consumer IP and determine if it is a known integration\n2. Analyze the request pattern (rate, endpoints targeted, methods used)\n3. Determine if the abuse is causing service degradation\n4. Check if the source is attempting to enumerate API resources\n5. Implement API key-based blocking if IP blocking is insufficient\n6. Coordinate with application team on rate limit tuning',
+      criblSearchQueries: [
+        {
+          name: 'Top API Consumers by Request Volume',
+          description: 'Identifies API consumers with the highest request rates',
+          query: 'dataset="$DATASET" earliest=-1h\n| where httpRequest_uri matches "/api/"\n| summarize count(), unique_endpoints=dcount(httpRequest_uri) by httpRequest_clientIp\n| where count_ > 1000\n| order by count_ desc'
+        },
+        {
+          name: 'Rate Limit Rule Triggers',
+          description: 'Shows which IPs are triggering rate-limiting WAF rules',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "BLOCK" and terminatingRuleId matches "(rate|limit|throttle)"\n| summarize blocked_requests=count() by httpRequest_clientIp, httpRequest_uri\n| where blocked_requests > 100\n| order by blocked_requests desc'
+        },
+        {
+          name: 'API Abuse Pattern Analysis',
+          description: 'Analyzes request method distribution from high-volume API consumers',
+          query: 'dataset="$DATASET" earliest=-4h\n| where httpRequest_uri matches "/api/"\n| summarize count() by httpRequest_clientIp, httpRequest_httpMethod, httpRequest_uri\n| order by count_ desc'
+        },
+        {
+          name: 'API Traffic Rate Over Time',
+          description: 'Tracks API request rates per source to identify abuse spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpRequest_uri matches "/api/"\n| timestats span=5m count() by httpRequest_clientIp\n| where count_ > 200\n| order by timestamp desc'
+        }
+      ]
+    }
+  ],
+  'netskope': [
+    {
+      id: 'net-sec-001',
+      name: 'Data Exfiltration to Personal Cloud Storage',
+      objective: 'Detects users uploading sensitive data to personal or unauthorized cloud storage applications, indicating potential insider threat or data exfiltration.',
+      severity: 'Critical',
+      mitre: ['T1567.002 - Exfiltration to Cloud Storage', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'data-exfiltration', 'insider-threat', 'dlp', 'cloud'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'object', 'dlp_profile', 'category'],
+      detectionLogic: 'Monitors for upload activities to personal cloud storage instances (personal Gmail Drive, personal OneDrive, Dropbox, etc.) especially when DLP profiles trigger on the transferred content. Correlates upload volume with DLP match severity and tracks users uploading to non-corporate instances of sanctioned apps.',
+      falsePositives: ['BYOD users accessing personal storage during breaks', 'Contractors using personal storage as part of approved workflow', 'Marketing teams sharing content with external agencies'],
+      tuningGuidance: 'Define corporate vs personal app instances. Adjust DLP sensitivity based on data classification policy. Whitelist approved external collaboration workflows.',
+      investigationWorkflow: '1. Identify the user and the destination cloud storage application\n2. Examine the DLP profile that triggered to understand data sensitivity\n3. Review the objects (files) being uploaded and their classification\n4. Determine if the upload is to a personal or corporate instance\n5. Check if the user has a history of similar activities\n6. Escalate to HR/Legal if intentional data theft is suspected',
+      criblSearchQueries: [
+        {
+          name: 'Uploads to Personal Cloud Storage',
+          description: 'Identifies upload activities to personal cloud storage apps',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity == "Upload" and category matches "(Cloud Storage|Personal)"\n| summarize count(), unique_files=dcount(object) by user, app\n| order by count_ desc'
+        },
+        {
+          name: 'DLP-Triggered Uploads',
+          description: 'Shows file uploads that triggered DLP policy violations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity == "Upload" and dlp_profile != ""\n| summarize count() by user, app, dlp_profile, object\n| order by count_ desc'
+        },
+        {
+          name: 'User Upload Volume Trend',
+          description: 'Tracks upload volume over time for a specific user',
+          query: 'dataset="$DATASET" earliest=-7d\n| where activity == "Upload"\n| timestats span=1d count() by user, app\n| order by timestamp desc'
+        },
+        {
+          name: 'Non-Corporate Instance Detection',
+          description: 'Identifies users accessing personal instances of cloud apps',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category == "Cloud Storage" and activity == "Upload"\n| summarize count(), unique_objects=dcount(object) by user, app, site\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-002',
+      name: 'Compromised Account - Impossible Travel',
+      objective: 'Detects user activity from geographically distant locations within a timeframe that makes physical travel impossible, indicating potential account compromise.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'account-compromise', 'impossible-travel', 'identity'],
+      requiredFields: ['timestamp', 'user', 'srcip', 'app', 'activity'],
+      detectionLogic: 'Tracks user activity source IPs and calculates geographic distances between consecutive access events. Alerts when a user appears to access cloud applications from locations separated by distances that would require travel speeds exceeding 900 km/h. Accounts for VPN egress points and known corporate office locations.',
+      falsePositives: ['VPN usage causing geographic jumps', 'Corporate proxies in different regions', 'Users connecting from mobile networks with dynamic geo-location', 'Shared accounts used by multiple people'],
+      tuningGuidance: 'Whitelist known VPN egress IPs and corporate office locations. Adjust travel speed threshold based on organizational geography. Exclude known shared service accounts.',
+      investigationWorkflow: '1. Identify the user and the two geographic locations involved\n2. Calculate the time difference and distance between access events\n3. Check if either IP is a known VPN or corporate proxy\n4. Review the activities performed from each location\n5. Contact the user to verify if they are using a VPN\n6. If compromise confirmed, initiate incident response and reset credentials',
+      criblSearchQueries: [
+        {
+          name: 'User Multi-Location Access',
+          description: 'Identifies users accessing from multiple source IPs within a short window',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_ips=dcount(srcip), locations=makeset(srcip) by user\n| where unique_ips > 3\n| order by unique_ips desc'
+        },
+        {
+          name: 'Sequential Location Analysis',
+          description: 'Shows chronological access patterns for a specific user to identify geographic jumps',
+          query: 'dataset="$DATASET" earliest=-48h\n| where user == "$SUSPECT_USER"\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), count() by srcip, app\n| order by first_seen asc'
+        },
+        {
+          name: 'Rapid IP Switching',
+          description: 'Detects users rapidly switching between different source IPs',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize unique_ips=dcount(srcip), activities=count() by user\n| where unique_ips > 5 and activities > 20\n| order by unique_ips desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-003',
+      name: 'Unauthorized SaaS Application Usage (Shadow IT)',
+      objective: 'Detects usage of unsanctioned cloud applications that may pose security risks due to lack of corporate security controls and data governance.',
+      severity: 'Medium',
+      mitre: ['T1204 - User Execution', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'shadow-it', 'saas', 'compliance', 'cloud-governance'],
+      requiredFields: ['timestamp', 'user', 'app', 'category', 'activity', 'srcip'],
+      detectionLogic: 'Monitors for user access to cloud applications that are not on the organizations approved application list. Tracks newly discovered applications and high-risk applications based on Netskope Cloud Confidence Index. Alerts on activities beyond simple browsing such as upload, download, share, and login to unapproved apps.',
+      falsePositives: ['Users researching tools for evaluation', 'Free-tier apps used for non-sensitive tasks', 'Marketing tools accessed during vendor evaluation', 'Personal use during breaks on BYOD devices'],
+      tuningGuidance: 'Maintain an approved application whitelist. Set risk thresholds based on Cloud Confidence Index. Focus alerts on data-movement activities (upload/download) rather than simple browsing.',
+      investigationWorkflow: '1. Identify the unsanctioned application and its risk category\n2. Determine which users are accessing it and what activities they perform\n3. Assess if any corporate data has been uploaded to the app\n4. Check if the application meets security requirements for potential sanctioning\n5. Block the application or initiate a vendor security review\n6. Notify users about acceptable use policy',
+      criblSearchQueries: [
+        {
+          name: 'Unsanctioned App Usage',
+          description: 'Identifies high-activity usage of non-corporate applications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category matches "(Unsanctioned|Unmanaged)"\n| summarize count(), unique_users=dcount(user) by app, category\n| where count_ > 10\n| order by unique_users desc'
+        },
+        {
+          name: 'Data Movement to Shadow IT Apps',
+          description: 'Detects upload and download activities to unsanctioned applications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity in ("Upload", "Download", "Share") and category matches "(Unsanctioned|Unmanaged)"\n| summarize count() by user, app, activity\n| order by count_ desc'
+        },
+        {
+          name: 'Newly Discovered Applications',
+          description: 'Shows applications that appeared in logs for the first time recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize first_seen=min(timestamp), user_count=dcount(user), total_activity=count() by app\n| order by first_seen desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-004',
+      name: 'DLP Policy Violation - Sensitive Data Sharing',
+      objective: 'Detects data loss prevention policy violations where sensitive data is being shared or downloaded from cloud applications in violation of corporate policy.',
+      severity: 'Critical',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1530 - Data from Cloud Storage'],
+      tags: ['security', 'dlp', 'data-loss', 'compliance', 'sensitive-data'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'object', 'dlp_profile', 'policy', 'alert_type'],
+      detectionLogic: 'Monitors DLP policy violations detected by Netskope inline inspection. Tracks violations by severity, data pattern matched (PII, PHI, PCI, credentials), and the activity type. Correlates repeated violations by the same user or targeting the same application to identify systematic data exfiltration.',
+      falsePositives: ['Test data containing patterns matching PII formats', 'Redacted documents still containing format patterns', 'Marketing materials with sample data', 'Development environments with test credit card numbers'],
+      tuningGuidance: 'Tune DLP profiles to reduce false positives on test data. Set thresholds for violation counts before alerting. Prioritize violations involving actual sensitive data vs. format matches.',
+      investigationWorkflow: '1. Review the DLP profile that triggered and what data pattern was matched\n2. Identify the user, application, and specific object involved\n3. Determine if the activity was blocked or only alerted\n4. Assess the sensitivity of the actual data (not just the pattern match)\n5. Check if this is a repeated violation or first occurrence\n6. Engage data governance team for high-severity violations',
+      criblSearchQueries: [
+        {
+          name: 'DLP Violations by Severity',
+          description: 'Summarizes DLP policy violations grouped by profile and user',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dlp_profile != "" and alert_type matches "(dlp|DLP)"\n| summarize count() by user, dlp_profile, app, activity\n| order by count_ desc'
+        },
+        {
+          name: 'Repeated DLP Offenders',
+          description: 'Identifies users with multiple DLP violations indicating systematic behavior',
+          query: 'dataset="$DATASET" earliest=-7d\n| where dlp_profile != ""\n| summarize violation_count=count(), unique_apps=dcount(app), unique_objects=dcount(object) by user\n| where violation_count > 5\n| order by violation_count desc'
+        },
+        {
+          name: 'DLP Violation Timeline',
+          description: 'Shows DLP violation trends over time to identify spikes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where dlp_profile != ""\n| timestats span=1d count() by dlp_profile\n| order by timestamp desc'
+        },
+        {
+          name: 'Sensitive Objects Involved in Violations',
+          description: 'Lists specific files and objects triggering DLP policies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dlp_profile != ""\n| summarize count() by object, user, app, dlp_profile\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-005',
+      name: 'Malware Download via Cloud Application',
+      objective: 'Detects malware or malicious files downloaded through cloud applications, indicating either compromised cloud accounts or drive-by-download attacks.',
+      severity: 'High',
+      mitre: ['T1189 - Drive-by Compromise', 'T1105 - Ingress Tool Transfer'],
+      tags: ['security', 'malware', 'cloud-threat', 'download'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'object', 'alert_type', 'srcip', 'dstip'],
+      detectionLogic: 'Monitors Netskope threat detection alerts for malware identified in cloud application downloads. Tracks malicious file detections across cloud storage, email, and collaboration platforms. Correlates download events with alert types indicating malware, ransomware, or exploit kit activity.',
+      falsePositives: ['Security tools downloading malware samples', 'Malware research activities', 'False positive detections on compressed or encrypted files', 'Legitimate security testing files'],
+      tuningGuidance: 'Whitelist security team accounts downloading samples. Tune detection sensitivity for specific file types. Add exceptions for known security tools and sandboxing activities.',
+      investigationWorkflow: '1. Identify the user who downloaded the malicious file\n2. Determine the cloud application and specific object involved\n3. Check if the file was delivered via shared link or direct download\n4. Assess if the malware was blocked or reached the endpoint\n5. Quarantine the endpoint and check for execution indicators\n6. Identify if other users received the same malicious file',
+      criblSearchQueries: [
+        {
+          name: 'Malware Detection Events',
+          description: 'Lists all malware detection events from cloud application downloads',
+          query: 'dataset="$DATASET" earliest=-24h\n| where alert_type matches "(malware|Malware|threat|Threat)"\n| summarize count() by user, app, object, alert_type\n| order by count_ desc'
+        },
+        {
+          name: 'Affected Users and Endpoints',
+          description: 'Identifies users and source IPs affected by malware downloads',
+          query: 'dataset="$DATASET" earliest=-48h\n| where alert_type matches "(malware|Malware)"\n| summarize detection_count=count(), unique_files=dcount(object) by user, srcip\n| order by detection_count desc'
+        },
+        {
+          name: 'Malicious File Spread Analysis',
+          description: 'Tracks how many users accessed the same malicious object',
+          query: 'dataset="$DATASET" earliest=-7d\n| where alert_type matches "(malware|Malware)"\n| summarize affected_users=dcount(user), downloads=count() by object, app\n| where affected_users > 1\n| order by affected_users desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-006',
+      name: 'Anomalous Cloud Application Access Pattern',
+      objective: 'Detects unusual patterns in cloud application usage that deviate significantly from a users baseline behavior, potentially indicating account compromise.',
+      severity: 'High',
+      mitre: ['T1078.004 - Cloud Accounts', 'T1098 - Account Manipulation'],
+      tags: ['security', 'anomaly', 'behavioral', 'account-compromise', 'cloud'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'srcip', 'category'],
+      detectionLogic: 'Establishes behavioral baselines for users including typical applications accessed, activity types performed, and access times. Alerts when users deviate significantly from their baseline by accessing new high-risk applications, performing unusual administrative activities, or accessing applications at unusual times from unusual locations.',
+      falsePositives: ['Role changes causing new application access patterns', 'Project transitions requiring different toolsets', 'Training sessions introducing new applications', 'Seasonal workflow variations'],
+      tuningGuidance: 'Set baseline learning period (recommended: 30 days). Define deviation thresholds for different activity types. Exclude planned role changes and onboarding periods from anomaly detection.',
+      investigationWorkflow: '1. Compare current activity to the users established baseline\n2. Identify which specific behaviors are anomalous (new app, unusual activity, odd timing)\n3. Check if the users role recently changed to explain new patterns\n4. Verify with the user if the activity was intentional\n5. Look for other indicators of compromise (impossible travel, password changes)\n6. Escalate if activity cannot be explained by legitimate business need',
+      criblSearchQueries: [
+        {
+          name: 'User Activity Deviation',
+          description: 'Identifies users accessing applications outside their normal pattern',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_apps=dcount(app), unique_activities=dcount(activity), total_events=count() by user\n| where unique_apps > 15 or total_events > 500\n| order by unique_apps desc'
+        },
+        {
+          name: 'New Application Access',
+          description: 'Detects users accessing applications they have not used before',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_access=min(timestamp), activity_count=count() by user, app\n| order by first_access desc'
+        },
+        {
+          name: 'Off-Hours Application Access',
+          description: 'Identifies cloud application usage during unusual hours',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour=hourofday(timestamp)\n| where hour < 5 or hour > 23\n| summarize count() by user, app, activity\n| where count_ > 5\n| order by count_ desc'
+        },
+        {
+          name: 'Administrative Activity Anomaly',
+          description: 'Detects unusual administrative operations by non-admin users',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity matches "(admin|Admin|config|Config|delete|Delete|permission|Permission)"\n| summarize count() by user, app, activity\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'net-sec-007',
+      name: 'Cloud Phishing and Credential Harvesting',
+      objective: 'Detects access to cloud-hosted phishing pages and credential harvesting sites that abuse legitimate cloud platforms to evade traditional URL filtering.',
+      severity: 'Medium',
+      mitre: ['T1566.002 - Phishing: Spearphishing Link', 'T1598 - Phishing for Information'],
+      tags: ['security', 'phishing', 'credential-theft', 'cloud-abuse'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'category', 'alert_type', 'site', 'srcip'],
+      detectionLogic: 'Monitors for access to cloud-hosted pages categorized as phishing or credential harvesting by Netskope threat intelligence. Detects form submissions to suspicious cloud-hosted pages, access to newly created cloud application instances mimicking corporate services, and login activities on pages flagged by URL reputation.',
+      falsePositives: ['Security awareness training phishing simulations', 'Legitimate new cloud applications with low reputation', 'Shared documents on public cloud storage with generic names'],
+      tuningGuidance: 'Whitelist phishing simulation platform domains. Adjust confidence thresholds for threat categorization. Add corporate SSO domains to prevent false positives on login pages.',
+      investigationWorkflow: '1. Identify the user and the suspicious site accessed\n2. Determine if the phishing page mimics a corporate service\n3. Check if the user submitted any form data or credentials\n4. Trace back how the user received the phishing link (email, message, search)\n5. Force password reset if credential submission is suspected\n6. Block the phishing site and check if other users accessed it',
+      criblSearchQueries: [
+        {
+          name: 'Phishing Category Detections',
+          description: 'Shows all access events to sites categorized as phishing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category matches "(phishing|Phishing|credential)" or alert_type matches "(phishing|Phishing)"\n| summarize count() by user, site, app, activity\n| order by count_ desc'
+        },
+        {
+          name: 'Users Submitting Data to Suspicious Sites',
+          description: 'Identifies potential credential submissions to phishing pages',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity in ("Login Attempt", "Form Submission", "Upload") and alert_type matches "(phishing|suspicious)"\n| summarize count() by user, site, activity\n| order by count_ desc'
+        },
+        {
+          name: 'Phishing Campaign Scope',
+          description: 'Determines how many users were targeted by the same phishing site',
+          query: 'dataset="$DATASET" earliest=-48h\n| where category matches "(phishing|Phishing)"\n| summarize affected_users=dcount(user), access_count=count() by site\n| where affected_users > 1\n| order by affected_users desc'
+        }
+      ]
+    }
+  ],
+  'cloudflare': [
+    {
+      id: 'cfl-sec-001',
+      name: 'Distributed Denial of Service Attack Detection',
+      objective: 'Detects DDoS attack patterns targeting protected domains through abnormal traffic volume spikes and geographic distribution anomalies.',
+      severity: 'Critical',
+      mitre: ['T1498 - Network Denial of Service', 'T1499 - Endpoint Denial of Service'],
+      tags: ['security', 'ddos', 'availability', 'volumetric-attack'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'EdgeResponseStatus', 'EdgeColoCode', 'ClientRequestMethod'],
+      detectionLogic: 'Monitors for massive traffic spikes distributed across many source IPs targeting specific hostnames. Correlates high request volumes with elevated error rates (503, 429) and unusual geographic distribution of traffic through Cloudflare edge colocations. Detects both volumetric L7 attacks and slow-rate DDoS patterns.',
+      falsePositives: ['Legitimate traffic spikes from marketing campaigns or product launches', 'Flash crowd events from social media virality', 'CDN cache purges causing origin traffic spikes', 'Bot crawlers during indexing operations'],
+      tuningGuidance: 'Set baseline traffic volume per domain. Define acceptable geographic distribution ranges. Adjust spike detection multiplier (default: 5x average). Configure separate thresholds per hostname.',
+      investigationWorkflow: '1. Identify the target hostname and the traffic volume spike magnitude\n2. Analyze the geographic distribution of traffic through EdgeColoCode\n3. Check if Cloudflare DDoS mitigation is actively engaged\n4. Examine EdgeResponseStatus for elevated error rates\n5. Determine if the attack is affecting origin server availability\n6. Activate rate limiting or Under Attack mode if needed',
+      criblSearchQueries: [
+        {
+          name: 'Traffic Volume Spike Detection',
+          description: 'Identifies abnormal request volume spikes per hostname',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by ClientRequestHost\n| where count_ > 10000\n| order by EdgeStartTimestamp desc'
+        },
+        {
+          name: 'Geographic Traffic Distribution',
+          description: 'Shows traffic distribution across Cloudflare edge locations for attack analysis',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count(), unique_ips=dcount(ClientIP) by EdgeColoCode, ClientRequestHost\n| order by count_ desc'
+        },
+        {
+          name: 'Error Rate During Attack',
+          description: 'Tracks error response rates that indicate service degradation',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EdgeResponseStatus >= 500 or EdgeResponseStatus == 429\n| timestats span=5m count() by EdgeResponseStatus, ClientRequestHost\n| order by EdgeStartTimestamp desc'
+        },
+        {
+          name: 'Top Attack Source IPs',
+          description: 'Identifies the most active source IPs during a potential DDoS event',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize request_count=count() by ClientIP, ClientRequestHost\n| where request_count > 1000\n| order by request_count desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-002',
+      name: 'WAF Action Block Surge Indicating Active Attack',
+      objective: 'Detects significant increases in WAF block actions that indicate active exploitation attempts against web applications behind Cloudflare.',
+      severity: 'High',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1595.002 - Vulnerability Scanning'],
+      tags: ['security', 'waf', 'web-attack', 'exploitation'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'WAFAction', 'SecurityLevel'],
+      detectionLogic: 'Monitors WAFAction field for spikes in block/challenge actions compared to baseline. Correlates WAF blocks with source IPs, URIs targeted, and request methods to identify coordinated attack campaigns. Tracks block rate as a percentage of total traffic to differentiate attacks from legitimate traffic growth.',
+      falsePositives: ['Security scanning from authorized penetration testers', 'Application updates triggering WAF false positives', 'New WAF rules causing blocks on legitimate traffic', 'Bot protection challenges during high traffic'],
+      tuningGuidance: 'Establish WAF block rate baseline per hostname. Set alert threshold as percentage above baseline (default: 200% increase). Whitelist authorized scanner IPs. Review new WAF rules for false positive impact.',
+      investigationWorkflow: '1. Quantify the WAF block surge and identify when it started\n2. Determine which WAF rules are triggering most frequently\n3. Identify the target URIs and request methods being blocked\n4. Enumerate source IPs involved in the blocked traffic\n5. Check if any attack traffic is bypassing WAF rules (ALLOW with suspicious patterns)\n6. Escalate to WAF tuning if false positive rate is high',
+      criblSearchQueries: [
+        {
+          name: 'WAF Block Volume Trend',
+          description: 'Tracks WAF block actions over time to identify surges',
+          query: 'dataset="$DATASET" earliest=-24h\n| where WAFAction == "block"\n| timestats span=15m count() by ClientRequestHost\n| order by EdgeStartTimestamp desc'
+        },
+        {
+          name: 'Top Blocked Source IPs',
+          description: 'Identifies which source IPs are generating the most WAF blocks',
+          query: 'dataset="$DATASET" earliest=-4h\n| where WAFAction == "block"\n| summarize blocked_count=count(), unique_uris=dcount(ClientRequestURI) by ClientIP\n| where blocked_count > 50\n| order by blocked_count desc'
+        },
+        {
+          name: 'Targeted URIs in WAF Blocks',
+          description: 'Shows which application endpoints are most targeted by blocked attacks',
+          query: 'dataset="$DATASET" earliest=-24h\n| where WAFAction == "block"\n| summarize count() by ClientRequestURI, ClientRequestMethod\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-003',
+      name: 'Origin Server Error Spike (5xx Response Anomaly)',
+      objective: 'Detects spikes in origin server errors that may indicate successful exploitation, resource exhaustion, or backend infrastructure compromise.',
+      severity: 'High',
+      mitre: ['T1499.004 - Application or System Exploitation', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'origin-error', 'availability', 'exploitation'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'OriginResponseStatus', 'EdgeResponseStatus'],
+      detectionLogic: 'Monitors OriginResponseStatus for spikes in 5xx errors that may indicate origin server compromise or exploitation-induced crashes. Distinguishes between origin errors and edge errors to identify backend-specific issues. Correlates error spikes with specific request patterns to identify the attack vector causing failures.',
+      falsePositives: ['Deployments causing temporary 503 errors', 'Database maintenance windows', 'Auto-scaling events during traffic spikes', 'Upstream dependency failures'],
+      tuningGuidance: 'Set baseline origin error rate per hostname. Exclude known maintenance windows. Define error rate threshold as percentage of total requests. Correlate with deployment schedules.',
+      investigationWorkflow: '1. Identify the error type (500, 502, 503, 504) and affected hostname\n2. Determine if the error spike correlates with specific request URIs\n3. Check if the errors are caused by a specific attack pattern\n4. Verify origin server health and resource utilization\n5. Review if any recent deployments could explain the errors\n6. Engage infrastructure team if origin compromise is suspected',
+      criblSearchQueries: [
+        {
+          name: 'Origin Error Rate Trend',
+          description: 'Tracks origin server error rates over time to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where OriginResponseStatus >= 500\n| timestats span=10m count() by OriginResponseStatus, ClientRequestHost\n| order by EdgeStartTimestamp desc'
+        },
+        {
+          name: 'Error-Inducing Request Patterns',
+          description: 'Identifies specific URIs triggering origin errors',
+          query: 'dataset="$DATASET" earliest=-4h\n| where OriginResponseStatus >= 500\n| summarize error_count=count() by ClientRequestURI, ClientRequestMethod, OriginResponseStatus\n| where error_count > 10\n| order by error_count desc'
+        },
+        {
+          name: 'Source IPs Causing Origin Errors',
+          description: 'Correlates origin errors with source IPs to identify attackers',
+          query: 'dataset="$DATASET" earliest=-4h\n| where OriginResponseStatus >= 500\n| summarize errors=count() by ClientIP, ClientRequestHost\n| where errors > 20\n| order by errors desc'
+        },
+        {
+          name: 'Edge vs Origin Error Comparison',
+          description: 'Compares edge and origin response codes to differentiate Cloudflare vs backend issues',
+          query: 'dataset="$DATASET" earliest=-12h\n| where EdgeResponseStatus >= 500 or OriginResponseStatus >= 500\n| summarize edge_errors=countif(EdgeResponseStatus >= 500), origin_errors=countif(OriginResponseStatus >= 500) by ClientRequestHost\n| order by origin_errors desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-004',
+      name: 'Cache Poisoning Attempt Detection',
+      objective: 'Detects cache poisoning attempts where attackers manipulate requests to store malicious content in Cloudflare cache and serve it to other users.',
+      severity: 'Medium',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'cache-poisoning', 'web-attack', 'supply-chain'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'CacheCacheStatus', 'ClientRequestMethod', 'EdgeResponseStatus'],
+      detectionLogic: 'Monitors for unusual request patterns that may indicate cache poisoning attempts, including requests with unusual headers, query parameters designed to cache different content for the same URL, and successful cache writes (HIT after unusual requests). Tracks requests that manipulate cache keys through host header injection or unkeyed parameters.',
+      falsePositives: ['CDN cache warm-up operations', 'A/B testing systems using query parameters', 'Legitimate cache purge and refresh operations', 'Content personalization via URL parameters'],
+      tuningGuidance: 'Define expected cache key parameters per endpoint. Monitor for new cache entries from suspicious IPs. Set baseline for cache write patterns and alert on deviations.',
+      investigationWorkflow: '1. Identify the request URI and parameters that triggered the alert\n2. Check if the cache status shows successful poisoning (HIT on manipulated content)\n3. Examine request headers for host header injection attempts\n4. Verify if cached content was modified or contains malicious payloads\n5. Purge affected cache entries immediately\n6. Review cache configuration for unkeyed header vulnerabilities',
+      criblSearchQueries: [
+        {
+          name: 'Unusual Cache Write Patterns',
+          description: 'Detects unexpected cache entries being created',
+          query: 'dataset="$DATASET" earliest=-24h\n| where CacheCacheStatus == "miss" or CacheCacheStatus == "expired"\n| summarize count() by ClientIP, ClientRequestURI, ClientRequestHost\n| where count_ > 50\n| order by count_ desc'
+        },
+        {
+          name: 'Repeated Requests with Varying Parameters',
+          description: 'Identifies source IPs sending many variations of the same URI to probe cache behavior',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize unique_uris=dcount(ClientRequestURI), total_requests=count() by ClientIP, ClientRequestHost\n| where unique_uris > 100 and total_requests > 200\n| order by unique_uris desc'
+        },
+        {
+          name: 'Cache Status Analysis by Source',
+          description: 'Analyzes cache hit/miss ratios for suspicious source IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ClientIP == "$SUSPECT_IP"\n| summarize count() by CacheCacheStatus, ClientRequestURI\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-005',
+      name: 'Credential Stuffing Against Login Endpoints',
+      objective: 'Detects credential stuffing attacks targeting login pages protected by Cloudflare, characterized by high volumes of POST requests from distributed sources.',
+      severity: 'Critical',
+      mitre: ['T1110.004 - Credential Stuffing', 'T1110 - Brute Force'],
+      tags: ['security', 'credential-stuffing', 'authentication', 'bot-attack'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'ClientRequestMethod', 'EdgeResponseStatus', 'SecurityLevel'],
+      detectionLogic: 'Monitors for high volumes of POST requests to authentication endpoints from multiple distributed IPs. Detects patterns where many unique IPs each make a small number of attempts to evade per-IP rate limits. Correlates with Cloudflare security challenge outcomes and 401/403 response patterns indicating failed authentications.',
+      falsePositives: ['High-traffic login pages during business hours', 'Password reset campaigns generating legitimate login attempts', 'Mobile app login retries after connectivity issues', 'SSO redirect loops causing rapid auth requests'],
+      tuningGuidance: 'Define authentication endpoint URI patterns. Set per-IP and aggregate rate thresholds. Tune based on normal authentication volume. Enable Cloudflare Bot Management for additional signal.',
+      investigationWorkflow: '1. Identify the target login endpoint and request volume\n2. Enumerate unique source IPs and calculate requests-per-IP distribution\n3. Check EdgeResponseStatus for authentication failure indicators (401/403)\n4. Determine if Cloudflare challenges are being solved or failing\n5. Check for successful logins (200/302) that may indicate credential compromise\n6. Enable Under Attack mode or additional bot challenges',
+      criblSearchQueries: [
+        {
+          name: 'Login Endpoint Request Surge',
+          description: 'Detects high request volumes to authentication endpoints',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ClientRequestMethod == "POST" and ClientRequestURI matches "(login|auth|signin|oauth/token)"\n| summarize total_requests=count(), unique_ips=dcount(ClientIP) by ClientRequestHost, ClientRequestURI\n| where total_requests > 500\n| order by total_requests desc'
+        },
+        {
+          name: 'Distributed Source Analysis',
+          description: 'Identifies distributed attack patterns with many IPs each making few requests',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ClientRequestMethod == "POST" and ClientRequestURI matches "(login|auth|signin)"\n| summarize request_count=count() by ClientIP\n| where request_count between (2, 10)\n| summarize distributed_sources=count()\n| where distributed_sources > 100'
+        },
+        {
+          name: 'Authentication Failure Rate',
+          description: 'Tracks authentication failure responses to identify stuffing success rate',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ClientRequestURI matches "(login|auth|signin)" and ClientRequestMethod == "POST"\n| summarize total=count(), failures=countif(EdgeResponseStatus in (401, 403)), successes=countif(EdgeResponseStatus in (200, 302)) by ClientRequestHost\n| extend failure_rate=(failures * 100 / total)\n| order by total desc'
+        },
+        {
+          name: 'Credential Stuffing Timeline',
+          description: 'Visualizes authentication request patterns over time',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ClientRequestMethod == "POST" and ClientRequestURI matches "(login|auth|signin)"\n| timestats span=10m count(), dcount(ClientIP) as unique_sources by ClientRequestHost\n| order by EdgeStartTimestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-006',
+      name: 'Suspicious Bot Activity Bypassing Security Controls',
+      objective: 'Detects sophisticated bot traffic that appears to bypass Cloudflare security controls, potentially scraping content, testing credentials, or performing automated attacks.',
+      severity: 'Medium',
+      mitre: ['T1595 - Active Scanning', 'T1592 - Gather Victim Host Information'],
+      tags: ['security', 'bot', 'scraping', 'automation', 'evasion'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'SecurityLevel', 'EdgeResponseStatus', 'CacheCacheStatus'],
+      detectionLogic: 'Identifies bot-like behavior patterns including rapid sequential requests, systematic path enumeration, lack of referrer chains, unusual cache bypass patterns, and requests that successfully pass security challenges at unusual rates. Tracks IPs with bot-like characteristics that maintain persistent access.',
+      falsePositives: ['Legitimate API clients and integrations', 'Search engine crawlers', 'Monitoring services checking availability', 'RSS feed readers and aggregators'],
+      tuningGuidance: 'Whitelist known good bot IP ranges (Google, Bing, etc.). Define acceptable request rates per client. Tune path diversity thresholds based on site structure. Enable Cloudflare Bot Management for enhanced detection.',
+      investigationWorkflow: '1. Identify the suspected bot source IPs and their request patterns\n2. Analyze request URI patterns for systematic enumeration\n3. Check security challenge pass/fail rates for the source\n4. Determine if the bot is scraping content or probing for vulnerabilities\n5. Assess business impact (content theft, competitive intelligence, etc.)\n6. Implement targeted rate limiting or bot management rules',
+      criblSearchQueries: [
+        {
+          name: 'High-Frequency Request Sources',
+          description: 'Identifies IPs making suspiciously high request volumes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize request_count=count(), unique_uris=dcount(ClientRequestURI), unique_hosts=dcount(ClientRequestHost) by ClientIP\n| where request_count > 500 and unique_uris > 50\n| order by request_count desc'
+        },
+        {
+          name: 'Systematic Path Enumeration',
+          description: 'Detects sequential or patterned URI access suggesting automated crawling',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ClientIP == "$SUSPECT_IP"\n| summarize count() by ClientRequestURI\n| order by ClientRequestURI asc'
+        },
+        {
+          name: 'Cache Bypass Pattern Detection',
+          description: 'Identifies IPs consistently bypassing cache which may indicate anti-caching bot techniques',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize total=count(), cache_miss=countif(CacheCacheStatus == "miss" or CacheCacheStatus == "bypass") by ClientIP\n| extend bypass_rate=(cache_miss * 100 / total)\n| where bypass_rate > 80 and total > 100\n| order by total desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-sec-007',
+      name: 'Host Header Injection and Domain Fronting',
+      objective: 'Detects attempts to abuse host headers for domain fronting, host header injection attacks, or routing manipulation through Cloudflare infrastructure.',
+      severity: 'High',
+      mitre: ['T1090.004 - Domain Fronting', 'T1071.001 - Web Protocols'],
+      tags: ['security', 'domain-fronting', 'host-injection', 'evasion'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestURI', 'EdgeResponseStatus', 'OriginResponseStatus', 'ClientRequestMethod'],
+      detectionLogic: 'Detects discrepancies between the requested host header and expected domains behind Cloudflare. Identifies domain fronting attempts where the SNI and Host header point to different destinations. Monitors for host header injection patterns that could lead to cache poisoning, password reset hijacking, or routing abuse.',
+      falsePositives: ['Multi-tenant applications using host-based routing', 'Load balancer health checks with generic host headers', 'Development environments with non-standard host headers', 'CDN configuration changes during migrations'],
+      tuningGuidance: 'Maintain inventory of valid host headers per Cloudflare zone. Alert on any unrecognized host headers. Monitor for host headers containing IP addresses or internal hostnames.',
+      investigationWorkflow: '1. Identify the unexpected host header value and the source IP\n2. Compare the host header against the registered domains in the Cloudflare zone\n3. Check if the request was routed to an unexpected origin\n4. Determine if this is a domain fronting attempt for C2 communication\n5. Examine if the response indicates successful routing manipulation\n6. Block the source and review Cloudflare routing configuration',
+      criblSearchQueries: [
+        {
+          name: 'Unrecognized Host Headers',
+          description: 'Identifies requests with unexpected or invalid host headers',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by ClientRequestHost\n| order by count_ asc'
+        },
+        {
+          name: 'Host Header Anomalies with Errors',
+          description: 'Correlates unusual host headers with error responses indicating routing issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EdgeResponseStatus in (421, 530, 520, 522)\n| summarize error_count=count() by ClientRequestHost, ClientIP, EdgeResponseStatus\n| order by error_count desc'
+        },
+        {
+          name: 'Domain Fronting Pattern Detection',
+          description: 'Looks for IPs sending requests to multiple different host headers suggesting domain fronting',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_hosts=dcount(ClientRequestHost), total_requests=count() by ClientIP\n| where unique_hosts > 10\n| order by unique_hosts desc'
+        },
+        {
+          name: 'Host Header with IP Address or Internal Name',
+          description: 'Detects host headers containing IP addresses or internal naming patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ClientRequestHost matches "(\\d+\\.\\d+\\.\\d+\\.\\d+|localhost|internal|corp\\.|intra\\.)"\n| summarize count() by ClientRequestHost, ClientIP\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'wiz-cloud-security': [
+    {
+      id: 'wiz-sec-001',
+      name: 'Critical Severity Cloud Misconfiguration',
+      objective: 'Detects critical severity findings in cloud infrastructure that represent immediate security risks requiring urgent remediation.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'misconfiguration', 'cloud-posture', 'critical'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'status', 'remediation'],
+      detectionLogic: 'Monitors Wiz findings for critical severity issues including publicly exposed storage buckets, unrestricted administrative access, unencrypted sensitive data stores, and exploitable misconfigurations. Tracks new critical findings and correlates with resource types and cloud providers to prioritize remediation efforts.',
+      falsePositives: ['Intentionally public resources (marketing sites, public APIs)', 'Development environments with relaxed security controls', 'Resources in process of being decommissioned', 'False positive from Wiz rule on compliant configuration'],
+      tuningGuidance: 'Whitelist intentionally public resources. Define SLA targets per severity. Exclude development subscriptions from critical alerting if risk is accepted. Tune Wiz rules for environment-specific configurations.',
+      investigationWorkflow: '1. Review the critical finding title and affected resource\n2. Identify the cloud provider, subscription, and resource type\n3. Assess the actual exploitability of the misconfiguration\n4. Determine if the resource contains sensitive data or has network exposure\n5. Apply the recommended remediation steps\n6. Verify fix and ensure the finding resolves in subsequent scans',
+      criblSearchQueries: [
+        {
+          name: 'Critical Findings Overview',
+          description: 'Lists all critical severity findings with their current status',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity == "Critical"\n| summarize count() by title, resource_type, cloud_provider, status\n| order by count_ desc'
+        },
+        {
+          name: 'New Critical Findings',
+          description: 'Identifies critical findings that appeared in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity == "Critical" and status == "Open"\n| summarize count() by title, resource_id, cloud_provider, subscription\n| order by count_ desc'
+        },
+        {
+          name: 'Critical Findings by Cloud Provider',
+          description: 'Breaks down critical findings across cloud providers for prioritization',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity == "Critical"\n| summarize total=count(), open=countif(status == "Open"), resolved=countif(status == "Resolved") by cloud_provider\n| order by open desc'
+        },
+        {
+          name: 'Critical Finding Remediation Tracking',
+          description: 'Tracks resolution progress for critical findings over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where severity == "Critical"\n| timestats span=1d count() by status\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-002',
+      name: 'Publicly Exposed Cloud Storage',
+      objective: 'Detects cloud storage resources (S3 buckets, Azure Blobs, GCS buckets) that are publicly accessible, risking data exposure.',
+      severity: 'Critical',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1537 - Transfer Data to Cloud Account'],
+      tags: ['security', 'data-exposure', 'storage', 'public-access', 'cloud'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'subscription', 'status', 'remediation'],
+      detectionLogic: 'Identifies Wiz findings related to publicly accessible storage resources including S3 buckets with public ACLs, Azure Blob containers with anonymous access, and GCS buckets with allUsers permissions. Prioritizes findings where the storage contains sensitive data based on Wiz data classification.',
+      falsePositives: ['Intentionally public static asset buckets', 'Public website hosting buckets', 'Open data sharing repositories', 'CDN origin buckets designed for public access'],
+      tuningGuidance: 'Maintain a list of approved public storage resources. Tag intentionally public resources in cloud provider. Exclude static asset buckets serving public websites. Focus on storage containing classified data.',
+      investigationWorkflow: '1. Identify the specific storage resource and its cloud provider\n2. Determine what data is stored in the publicly accessible resource\n3. Check access logs for any unauthorized data retrieval\n4. Assess if sensitive data (PII, credentials, IP) is exposed\n5. Remove public access immediately unless intentionally public\n6. Investigate how public access was configured (misconfiguration vs. intentional)',
+      criblSearchQueries: [
+        {
+          name: 'Public Storage Findings',
+          description: 'Lists all findings related to publicly exposed storage resources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where title matches "(public|Public|exposed|Exposed)" and resource_type matches "(bucket|Bucket|blob|Blob|storage|Storage)"\n| summarize count() by resource_id, cloud_provider, subscription, status\n| order by count_ desc'
+        },
+        {
+          name: 'Public Storage by Provider',
+          description: 'Breaks down public storage findings by cloud provider',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title matches "(public|Public)" and resource_type matches "(bucket|Bucket|blob|Blob|storage|Storage)"\n| summarize count() by cloud_provider, subscription\n| order by count_ desc'
+        },
+        {
+          name: 'New Public Storage Exposures',
+          description: 'Detects newly identified public storage resources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where title matches "(public|Public)" and resource_type matches "(storage|bucket|blob)" and status == "Open"\n| summarize first_detected=min(timestamp) by resource_id, cloud_provider\n| order by first_detected desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-003',
+      name: 'Excessive IAM Permissions Detected',
+      objective: 'Detects cloud IAM roles and policies with excessive permissions that violate least privilege principles and expand the attack surface.',
+      severity: 'High',
+      mitre: ['T1078 - Valid Accounts', 'T1098 - Account Manipulation'],
+      tags: ['security', 'iam', 'least-privilege', 'permissions', 'cloud-posture'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'rule_name', 'status', 'remediation'],
+      detectionLogic: 'Monitors Wiz findings for overly permissive IAM configurations including wildcard permissions, admin-level access without justification, cross-account trust relationships, and service accounts with excessive privileges. Tracks new permission escalation risks and correlates with the resource types being granted access.',
+      falsePositives: ['Break-glass emergency access accounts', 'Platform admin roles intentionally broadly scoped', 'Terraform/CloudFormation deployment roles requiring broad permissions', 'Newly created roles pending permission scoping'],
+      tuningGuidance: 'Define acceptable permission boundaries per role type. Whitelist approved admin accounts. Set review timelines for broad permissions. Integrate with IAM access analyzer for usage-based scoping.',
+      investigationWorkflow: '1. Identify the IAM resource with excessive permissions\n2. Determine what level of access is granted and to what resources\n3. Check if the permissions are actively being used via access logs\n4. Identify the owner/creator of the IAM resource\n5. Scope permissions down to actually used operations\n6. Apply the recommended remediation from Wiz guidance',
+      criblSearchQueries: [
+        {
+          name: 'Overprivileged IAM Findings',
+          description: 'Lists IAM-related findings indicating excessive permissions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where resource_type matches "(IAM|iam|role|Role|policy|Policy)" and status == "Open"\n| summarize count() by title, resource_id, cloud_provider\n| order by count_ desc'
+        },
+        {
+          name: 'High Severity IAM Issues by Subscription',
+          description: 'Shows IAM permission issues grouped by cloud subscription',
+          query: 'dataset="$DATASET" earliest=-7d\n| where resource_type matches "(IAM|iam|role|Role)" and severity in ("Critical", "High")\n| summarize count() by subscription, cloud_provider, title\n| order by count_ desc'
+        },
+        {
+          name: 'IAM Finding Trends',
+          description: 'Tracks IAM-related security findings over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where resource_type matches "(IAM|iam|role|Role|policy|Policy)"\n| timestats span=1d count() by severity\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-004',
+      name: 'Unencrypted Data Store in Production',
+      objective: 'Detects production cloud resources storing data without encryption at rest, creating compliance violations and data exposure risks.',
+      severity: 'High',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1552 - Unsecured Credentials'],
+      tags: ['security', 'encryption', 'compliance', 'data-protection', 'cloud'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'subscription', 'status', 'remediation'],
+      detectionLogic: 'Identifies Wiz findings for cloud resources lacking encryption at rest including databases, storage volumes, snapshots, and backup resources. Prioritizes findings in production subscriptions and for resource types likely containing sensitive data. Tracks encryption compliance across the cloud estate.',
+      falsePositives: ['Development/sandbox environments with accepted risk', 'Resources pending encryption migration', 'Resources using application-layer encryption not detected by Wiz', 'Ephemeral resources that do not persist sensitive data'],
+      tuningGuidance: 'Define which subscriptions are production vs development. Set different severity thresholds per environment. Exclude resource types that do not store sensitive data. Integrate with data classification to prioritize.',
+      investigationWorkflow: '1. Identify the unencrypted resource and its cloud provider\n2. Determine the resource type (database, disk, snapshot, etc.)\n3. Assess whether the resource contains sensitive or regulated data\n4. Check if encryption can be enabled without downtime\n5. Plan and execute encryption remediation\n6. Verify encryption is active in subsequent Wiz scans',
+      criblSearchQueries: [
+        {
+          name: 'Unencrypted Resource Findings',
+          description: 'Lists all findings related to missing encryption at rest',
+          query: 'dataset="$DATASET" earliest=-24h\n| where title matches "(encrypt|Encrypt|unencrypt|Unencrypt)" and status == "Open"\n| summarize count() by resource_type, cloud_provider, subscription\n| order by count_ desc'
+        },
+        {
+          name: 'Encryption Compliance by Resource Type',
+          description: 'Shows encryption compliance status grouped by resource type',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title matches "(encrypt|Encrypt)"\n| summarize total=count(), open=countif(status == "Open"), resolved=countif(status == "Resolved") by resource_type\n| order by open desc'
+        },
+        {
+          name: 'Encryption Finding Resolution Trend',
+          description: 'Tracks encryption finding resolution progress over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where title matches "(encrypt|Encrypt)"\n| timestats span=1d countif(status == "Open") as open_findings, countif(status == "Resolved") as resolved_findings\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-005',
+      name: 'Network Exposure - Unrestricted Ingress Rules',
+      objective: 'Detects cloud network security groups or firewall rules allowing unrestricted inbound access (0.0.0.0/0) to sensitive ports, creating attack surface.',
+      severity: 'High',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1133 - External Remote Services'],
+      tags: ['security', 'network-exposure', 'firewall', 'ingress', 'cloud-posture'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'subscription', 'rule_name', 'status'],
+      detectionLogic: 'Monitors Wiz findings for network security configurations allowing unrestricted inbound access from the internet to sensitive ports (SSH/22, RDP/3389, database ports, admin interfaces). Tracks security group and firewall rule findings that expose internal services to public access.',
+      falsePositives: ['Public-facing load balancers intentionally open on 80/443', 'Bastion hosts with controlled public access', 'Public API gateways', 'CDN origin pull configurations'],
+      tuningGuidance: 'Whitelist known public-facing resources (load balancers, bastions). Define sensitive port list per organization. Exclude web-tier security groups with port 80/443 only. Focus on management and database ports.',
+      investigationWorkflow: '1. Identify the exposed resource and the specific port/protocol\n2. Determine if the resource is intentionally public-facing\n3. Check if any active exploitation has occurred via access logs\n4. Assess the blast radius if the exposed service is compromised\n5. Restrict the security group/firewall rule to necessary CIDR ranges\n6. Verify the restriction does not break legitimate access',
+      criblSearchQueries: [
+        {
+          name: 'Unrestricted Ingress Findings',
+          description: 'Lists all findings for unrestricted inbound network access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where title matches "(unrestricted|public|0\\.0\\.0\\.0|internet)" and resource_type matches "(security group|firewall|network)"\n| summarize count() by title, resource_id, cloud_provider, subscription\n| order by count_ desc'
+        },
+        {
+          name: 'Network Exposure by Cloud Provider',
+          description: 'Compares network exposure findings across cloud providers',
+          query: 'dataset="$DATASET" earliest=-7d\n| where rule_name matches "(network|ingress|firewall|security.group)" and status == "Open"\n| summarize count() by cloud_provider, subscription, severity\n| order by count_ desc'
+        },
+        {
+          name: 'Critical Port Exposure',
+          description: 'Identifies findings specifically for high-risk ports (SSH, RDP, databases)',
+          query: 'dataset="$DATASET" earliest=-24h\n| where title matches "(SSH|RDP|3389|22|3306|5432|1433|27017)" and status == "Open"\n| summarize count() by title, resource_id, cloud_provider\n| order by count_ desc'
+        },
+        {
+          name: 'Network Finding Trend',
+          description: 'Tracks network exposure findings over time to measure improvement',
+          query: 'dataset="$DATASET" earliest=-30d\n| where resource_type matches "(security group|firewall|network)"\n| timestats span=1d countif(status == "Open") as open_findings\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-006',
+      name: 'Vulnerable Software Detected on Cloud Workload',
+      objective: 'Detects cloud workloads running software with known critical vulnerabilities that are actively exploited in the wild.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1203 - Exploitation for Client Execution'],
+      tags: ['security', 'vulnerability', 'patching', 'workload-protection', 'cloud'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'subscription', 'status', 'remediation'],
+      detectionLogic: 'Monitors Wiz vulnerability findings for cloud workloads (VMs, containers, serverless) running software with known CVEs rated Critical or High severity. Prioritizes findings where vulnerabilities have known exploits in the wild and the workload has network exposure. Tracks patch compliance across the cloud estate.',
+      falsePositives: ['Vulnerabilities in packages not actually loaded/used', 'Container base image vulnerabilities in unused layers', 'Compensating controls mitigating the vulnerability', 'Resources scheduled for imminent decommission'],
+      tuningGuidance: 'Prioritize findings with known exploits (CISA KEV). Focus on internet-facing workloads first. Define patch SLAs by severity (Critical: 7 days, High: 30 days). Exclude development workloads from urgent alerting.',
+      investigationWorkflow: '1. Identify the vulnerable workload and specific CVE(s)\n2. Check if the vulnerability has known public exploits\n3. Determine if the workload is internet-facing or contains sensitive data\n4. Review remediation guidance (patch, upgrade, or mitigate)\n5. Coordinate patching with workload owner\n6. Verify vulnerability is resolved in next Wiz scan',
+      criblSearchQueries: [
+        {
+          name: 'Critical Vulnerability Findings',
+          description: 'Lists critical and high severity vulnerability findings on workloads',
+          query: 'dataset="$DATASET" earliest=-24h\n| where severity in ("Critical", "High") and title matches "(CVE|vulnerability|Vulnerability)"\n| summarize count() by title, resource_type, cloud_provider, status\n| order by count_ desc'
+        },
+        {
+          name: 'Vulnerable Workloads by Subscription',
+          description: 'Shows vulnerability distribution across subscriptions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title matches "(CVE|vulnerability)" and status == "Open"\n| summarize vuln_count=count() by subscription, cloud_provider\n| order by vuln_count desc'
+        },
+        {
+          name: 'Vulnerability Remediation Progress',
+          description: 'Tracks vulnerability finding resolution over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where title matches "(CVE|vulnerability)"\n| timestats span=1d countif(status == "Open") as open_vulns, countif(status == "Resolved") as resolved_vulns\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-sec-007',
+      name: 'Cloud Resource Compliance Drift',
+      objective: 'Detects cloud resources drifting out of compliance with security baselines and regulatory frameworks, indicating configuration management failures.',
+      severity: 'Medium',
+      mitre: ['T1562 - Impair Defenses', 'T1078 - Valid Accounts'],
+      tags: ['security', 'compliance', 'drift', 'governance', 'cloud-posture'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'resource_id', 'cloud_provider', 'subscription', 'rule_name', 'status'],
+      detectionLogic: 'Tracks Wiz compliance findings that transition from Resolved back to Open status, indicating configuration drift. Monitors for clusters of new findings appearing simultaneously in a subscription that suggest bulk configuration changes breaking compliance. Detects sustained non-compliance for resources that remain in Open status beyond SLA windows.',
+      falsePositives: ['Planned infrastructure changes temporarily breaking compliance', 'Cloud provider service updates changing compliance baselines', 'New Wiz rules creating backlog of existing non-compliance', 'Resource migrations between subscriptions triggering re-evaluation'],
+      tuningGuidance: 'Define compliance SLA windows per severity and framework. Exclude resources in active migration or decommission. Set drift detection window (default: findings reopened within 7 days of resolution). Tune per compliance framework priority.',
+      investigationWorkflow: '1. Identify the compliance framework and specific rule being violated\n2. Determine which resources drifted and when the drift occurred\n3. Check change logs for who modified the resource configuration\n4. Assess if the drift was intentional (change request) or accidental\n5. Restore compliant configuration or document risk acceptance\n6. Implement preventive controls (SCPs, Azure Policy, etc.) to prevent recurrence',
+      criblSearchQueries: [
+        {
+          name: 'Compliance Drift Detection',
+          description: 'Identifies resources that returned to non-compliant state after being resolved',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status == "Open"\n| summarize count() by rule_name, resource_id, cloud_provider, subscription\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Non-Compliance Events',
+          description: 'Detects clusters of new findings appearing simultaneously suggesting bulk changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status == "Open"\n| timestats span=1h count() by subscription\n| where count_ > 20\n| order by timestamp desc'
+        },
+        {
+          name: 'SLA Breach Tracking',
+          description: 'Identifies findings that have been open beyond their remediation SLA',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status == "Open"\n| summarize first_seen=min(timestamp), days_open=datetime_diff("day", now(), min(timestamp)) by resource_id, title, severity\n| where (severity == "Critical" and days_open > 7) or (severity == "High" and days_open > 30)\n| order by days_open desc'
+        },
+        {
+          name: 'Compliance Posture by Framework',
+          description: 'Shows overall compliance posture grouped by rule categories',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize total=count(), open=countif(status == "Open"), resolved=countif(status == "Resolved") by rule_name\n| extend compliance_rate=((resolved * 100) / total)\n| order by open desc'
+        }
+      ]
+    }
+  ],
+  'azure-activity': [
+    {
+      id: 'aza-sec-001',
+      name: 'Privileged Role Assignment Outside Change Window',
+      objective: 'Detects role assignments to sensitive Azure RBAC roles (Owner, Contributor, User Access Administrator) that may indicate privilege escalation or unauthorized access grants.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Valid Accounts: Cloud Accounts'],
+      tags: ['security', 'privilege-escalation', 'azure', 'rbac', 'identity'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceId', 'subscriptionId'],
+      detectionLogic: 'Monitors for successful Microsoft.Authorization/roleAssignments/write operations. Filters for high-privilege role definitions (Owner, Contributor, User Access Administrator) in the resourceId or properties. Alerts when assignments occur outside defined change windows or from unexpected callers.',
+      falsePositives: ['Scheduled IaC deployments (Terraform, Bicep) that assign roles', 'Onboarding automation for new team members', 'Break-glass account usage during incidents'],
+      tuningGuidance: 'Baseline normal role assignment callers and exclude service principals tied to CI/CD pipelines. Define change windows and suppress during those periods. Whitelist known automation accounts.',
+      investigationWorkflow: '1. Identify the caller and determine if they are authorized to assign privileged roles\n2. Check the target resourceId to understand scope of the assignment (subscription vs resource group vs resource)\n3. Correlate with change management tickets or deployment pipelines\n4. Review caller IP address and session context for anomalies\n5. Determine if the role assignment grants broader access than the caller themselves hold',
+      criblSearchQueries: [
+        {
+          name: 'Privileged Role Assignments - Last 24h',
+          description: 'Lists all role assignment write operations with caller and resource details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName == "Microsoft.Authorization/roleAssignments/write"\n| where status == "Succeeded"\n| summarize count() by caller, resourceId, subscriptionId\n| order by count_ desc'
+        },
+        {
+          name: 'Role Assignment Callers Over Time',
+          description: 'Shows role assignment activity patterns by caller over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName == "Microsoft.Authorization/roleAssignments/write"\n| where status == "Succeeded"\n| timestats span=1h count() by caller'
+        },
+        {
+          name: 'Cross-Subscription Role Assignments by Single Caller',
+          description: 'Identifies callers assigning roles across multiple subscriptions which may indicate lateral movement',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName == "Microsoft.Authorization/roleAssignments/write"\n| where status == "Succeeded"\n| summarize dcount(subscriptionId) as sub_count, values(subscriptionId) by caller\n| where sub_count > 1\n| order by sub_count desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-002',
+      name: 'Network Security Group Rule Modification',
+      objective: 'Detects creation or modification of NSG rules that open broad inbound access, potentially exposing resources to the internet.',
+      severity: 'High',
+      mitre: ['T1562.007 - Impair Defenses: Disable or Modify Cloud Firewall', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'network', 'azure', 'nsg', 'firewall'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceId', 'resourceGroupName', 'properties'],
+      detectionLogic: 'Monitors for Microsoft.Network/networkSecurityGroups/securityRules/write operations that succeed. Inspects properties for rules allowing inbound traffic from 0.0.0.0/0 or * on sensitive ports (22, 3389, 445, 1433, 3306). Correlates with resource group context to identify production exposure.',
+      falsePositives: ['Infrastructure-as-code deployments creating temporary access rules', 'Load balancer health probe rules', 'Development environment provisioning'],
+      tuningGuidance: 'Exclude known IaC service principals. Focus on rules where source is any (0.0.0.0/0 or *). Reduce noise by filtering out non-production resource groups. Consider severity escalation for port 3389/22 open to internet.',
+      investigationWorkflow: '1. Review the NSG rule properties to determine ports, protocols, and source ranges\n2. Identify the caller and whether they have authorization for network changes\n3. Check if the resource group hosts production workloads\n4. Verify against change management records\n5. If unauthorized, revert the rule and investigate caller activity further',
+      criblSearchQueries: [
+        {
+          name: 'NSG Rule Modifications - Last 24h',
+          description: 'Lists all NSG security rule write operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName == "Microsoft.Network/networkSecurityGroups/securityRules/write"\n| where status == "Succeeded"\n| summarize count() by caller, resourceGroupName, resourceId\n| order by count_ desc'
+        },
+        {
+          name: 'NSG Changes by Resource Group',
+          description: 'Aggregates network security changes by resource group to identify hotspots',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName has "networkSecurityGroups"\n| where status == "Succeeded"\n| summarize count() by resourceGroupName, operationName\n| order by count_ desc'
+        },
+        {
+          name: 'Caller Activity Around NSG Change',
+          description: 'Shows all operations by a specific caller around the time of an NSG modification',
+          query: 'dataset="$DATASET" earliest=-24h\n| where caller == "$SUSPECT_CALLER"\n| summarize count() by operationName, status, resourceGroupName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-003',
+      name: 'Resource Group Deletion',
+      objective: 'Detects deletion of Azure resource groups which could indicate destructive actions, ransomware preparation, or sabotage by a malicious insider.',
+      severity: 'Critical',
+      mitre: ['T1485 - Data Destruction', 'T1561 - Disk Wipe'],
+      tags: ['security', 'destruction', 'azure', 'resource-group', 'impact'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceGroupName', 'subscriptionId', 'callerIpAddress'],
+      detectionLogic: 'Monitors for Microsoft.Resources/subscriptions/resourceGroups/delete operations. Any successful resource group deletion is a high-impact event. Correlates with the caller identity and IP address to determine if the action is expected. Multiple deletions in a short timeframe escalate to critical severity.',
+      falsePositives: ['Scheduled decommissioning of development environments', 'Terraform destroy operations during infrastructure rotation', 'Cleanup of temporary resource groups by automation'],
+      tuningGuidance: 'Whitelist automation service principals responsible for environment lifecycle management. Set threshold for multiple deletions (e.g., 3+ in 1 hour) for critical alerting. Exclude resource groups matching dev/test naming patterns if acceptable.',
+      investigationWorkflow: '1. Identify the caller and verify authorization for resource group deletion\n2. Check if the resource group contained production workloads or data\n3. Review callerIpAddress for geographic anomalies\n4. Look for preceding reconnaissance (list operations) by the same caller\n5. Check if soft-delete or backup recovery is available for affected resources',
+      criblSearchQueries: [
+        {
+          name: 'Resource Group Deletions - Last 7 Days',
+          description: 'Lists all resource group deletion attempts and their status',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName == "Microsoft.Resources/subscriptions/resourceGroups/delete"\n| summarize count() by caller, resourceGroupName, status, subscriptionId\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Deletion Detection',
+          description: 'Identifies callers performing multiple resource group deletions in a short timeframe',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName == "Microsoft.Resources/subscriptions/resourceGroups/delete"\n| where status == "Succeeded"\n| summarize deletion_count=count() by caller, bin(eventTimestamp, 1h)\n| where deletion_count > 2\n| order by deletion_count desc'
+        },
+        {
+          name: 'Pre-Deletion Reconnaissance',
+          description: 'Shows list/read operations by the same caller before a deletion event',
+          query: 'dataset="$DATASET" earliest=-24h\n| where caller == "$SUSPECT_CALLER"\n| where operationName has "list" or operationName has "read"\n| summarize count() by operationName, resourceGroupName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-004',
+      name: 'Key Vault Secret Access Anomaly',
+      objective: 'Detects unusual access patterns to Azure Key Vault secrets that may indicate credential harvesting or exfiltration attempts.',
+      severity: 'High',
+      mitre: ['T1552.001 - Unsecured Credentials: Credentials In Files', 'T1003 - OS Credential Dumping'],
+      tags: ['security', 'credential-access', 'azure', 'keyvault', 'secrets'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceId', 'callerIpAddress', 'properties'],
+      detectionLogic: 'Monitors for Microsoft.KeyVault/vaults/secrets/read and related get operations. Baselines normal access patterns per caller and alerts on: new callers accessing secrets, bulk secret reads (more than 5 distinct secrets in 10 minutes), or access from unfamiliar IP addresses. Correlates callerIpAddress with known corporate ranges.',
+      falsePositives: ['Application deployments pulling configuration secrets', 'Automated secret rotation processes', 'New service deployments accessing secrets for first time'],
+      tuningGuidance: 'Baseline normal secret access patterns per caller over 30 days. Exclude CI/CD service principals during deployment windows. Set bulk read threshold based on largest legitimate secret pull observed. Whitelist known corporate IP ranges.',
+      investigationWorkflow: '1. Identify the caller and determine if they normally access Key Vault\n2. Review the specific secrets accessed and their sensitivity level\n3. Check callerIpAddress against known corporate or VPN ranges\n4. Correlate with authentication logs for the same identity\n5. Determine if secrets were potentially exfiltrated by reviewing subsequent network activity',
+      criblSearchQueries: [
+        {
+          name: 'Key Vault Secret Access - Last 24h',
+          description: 'Lists all secret read operations with caller and vault details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName has "Microsoft.KeyVault/vaults/secrets"\n| where status == "Succeeded"\n| summarize count() by caller, resourceId, callerIpAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Bulk Secret Access Detection',
+          description: 'Identifies callers accessing many distinct secrets in a short window',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName has "Microsoft.KeyVault/vaults/secrets"\n| where status == "Succeeded"\n| summarize secret_count=dcount(resourceId) by caller, bin(eventTimestamp, 10m)\n| where secret_count > 5\n| order by secret_count desc'
+        },
+        {
+          name: 'New Callers Accessing Key Vault',
+          description: 'Finds callers accessing Key Vault secrets for the first time in the last 24h vs previous 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName has "Microsoft.KeyVault/vaults/secrets"\n| where status == "Succeeded"\n| summarize earliest_access=min(eventTimestamp) by caller\n| where earliest_access > ago(24h)\n| order by earliest_access desc'
+        },
+        {
+          name: 'Secret Access by IP Address',
+          description: 'Groups secret access by source IP to identify unfamiliar locations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName has "Microsoft.KeyVault/vaults/secrets"\n| where status == "Succeeded"\n| summarize count(), dcount(caller) by callerIpAddress\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-005',
+      name: 'Diagnostic Settings Deletion or Modification',
+      objective: 'Detects tampering with Azure diagnostic settings which could indicate an attacker attempting to disable logging and cover their tracks.',
+      severity: 'High',
+      mitre: ['T1562.008 - Impair Defenses: Disable Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'defense-evasion', 'azure', 'logging', 'monitoring'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceId', 'subscriptionId', 'callerIpAddress'],
+      detectionLogic: 'Monitors for Microsoft.Insights/diagnosticSettings/delete and Microsoft.Insights/diagnosticSettings/write operations. Deletion of diagnostic settings is almost always suspicious as it disables audit trails. Modifications that reduce log categories or change destination away from central SIEM are also flagged.',
+      falsePositives: ['Infrastructure migration moving log destinations', 'Cost optimization reducing verbose diagnostic categories in dev', 'Terraform state reconciliation'],
+      tuningGuidance: 'Always alert on deletions in production subscriptions. For write operations, compare before/after states to determine if logging coverage was reduced. Whitelist IaC service principals only for non-production subscriptions.',
+      investigationWorkflow: '1. Determine which diagnostic settings were modified or deleted\n2. Identify the resource that lost logging coverage\n3. Review caller identity and callerIpAddress for legitimacy\n4. Check if other defense evasion techniques occurred around the same time\n5. Restore diagnostic settings immediately if unauthorized\n6. Review activity on the affected resource during the logging gap',
+      criblSearchQueries: [
+        {
+          name: 'Diagnostic Settings Changes - Last 7 Days',
+          description: 'Lists all diagnostic settings modifications and deletions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName has "Microsoft.Insights/diagnosticSettings"\n| summarize count() by operationName, caller, status, subscriptionId\n| order by count_ desc'
+        },
+        {
+          name: 'Diagnostic Settings Deletions',
+          description: 'Focused view on diagnostic settings deletions which are high-confidence indicators of defense evasion',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName == "Microsoft.Insights/diagnosticSettings/delete"\n| where status == "Succeeded"\n| summarize count() by caller, resourceId, callerIpAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Caller Activity After Logging Disabled',
+          description: 'Examines what a caller did after disabling diagnostic settings',
+          query: 'dataset="$DATASET" earliest=-24h\n| where caller == "$SUSPECT_CALLER"\n| order by eventTimestamp asc\n| extend is_diag_delete = operationName has "diagnosticSettings/delete"\n| summarize operations=count() by operationName, status\n| order by operations desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-006',
+      name: 'Virtual Machine Created in Unusual Region',
+      objective: 'Detects VM creation in Azure regions not typically used by the organization, which may indicate cryptomining or infrastructure abuse.',
+      severity: 'Medium',
+      mitre: ['T1578.002 - Modify Cloud Compute Infrastructure: Create Cloud Instance', 'T1496 - Resource Hijacking'],
+      tags: ['security', 'resource-abuse', 'azure', 'compute', 'cryptomining'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceId', 'resourceGroupName', 'subscriptionId', 'properties'],
+      detectionLogic: 'Monitors for Microsoft.Compute/virtualMachines/write operations that succeed. Extracts region from the resourceId and compares against a whitelist of approved organizational regions. VM creation in non-approved regions triggers an alert. Also flags GPU-enabled SKUs which are commonly used in cryptomining.',
+      falsePositives: ['Disaster recovery testing in secondary regions', 'Global application deployments expanding to new regions', 'Proof-of-concept workloads in isolated subscriptions'],
+      tuningGuidance: 'Define approved regions list based on organizational policy. Maintain a whitelist of approved VM SKUs. Consider separate thresholds for GPU instances vs general compute. Exclude sandbox subscriptions if risk-accepted.',
+      investigationWorkflow: '1. Identify the VM SKU, region, and resource group\n2. Determine if the caller is authorized to create compute resources\n3. Check if the region is in the organizational approved list\n4. Look for GPU-enabled SKUs that suggest cryptomining\n5. Review network activity from the new VM if already running\n6. Deallocate or delete the VM if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'VM Creations by Region - Last 7 Days',
+          description: 'Groups VM creation events by region extracted from resourceId',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName == "Microsoft.Compute/virtualMachines/write"\n| where status == "Succeeded"\n| extend region = extract("/locations/([^/]+)/", 1, resourceId)\n| summarize count() by region, caller\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual Region VM Deployments',
+          description: 'Identifies VM creations in regions outside the normal set',
+          query: 'dataset="$DATASET" earliest=-7d\n| where operationName == "Microsoft.Compute/virtualMachines/write"\n| where status == "Succeeded"\n| extend region = extract("/locations/([^/]+)/", 1, resourceId)\n| where region !in ("eastus", "eastus2", "westus2", "centralus", "westeurope")\n| summarize count() by region, caller, subscriptionId\n| order by count_ desc'
+        },
+        {
+          name: 'VM Creation Burst Detection',
+          description: 'Detects callers creating multiple VMs in a short timeframe which may indicate automation abuse',
+          query: 'dataset="$DATASET" earliest=-24h\n| where operationName == "Microsoft.Compute/virtualMachines/write"\n| where status == "Succeeded"\n| summarize vm_count=count() by caller, bin(eventTimestamp, 1h)\n| where vm_count > 3\n| order by vm_count desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-sec-007',
+      name: 'Failed Operations Spike Indicating Reconnaissance',
+      objective: 'Detects a high volume of failed operations from a single caller, which may indicate reconnaissance, permission enumeration, or brute-force attempts against Azure resources.',
+      severity: 'Medium',
+      mitre: ['T1580 - Cloud Infrastructure Discovery', 'T1069.003 - Permission Groups Discovery: Cloud Groups'],
+      tags: ['security', 'discovery', 'azure', 'reconnaissance', 'enumeration'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'resourceGroupName', 'callerIpAddress', 'level'],
+      detectionLogic: 'Monitors for callers generating more than 50 failed operations within a 15-minute window. High failure rates across diverse operation types suggest permission enumeration. Correlates with the level field (Error/Warning) and examines the breadth of resources targeted. Single operation type failures may indicate brute-force on a specific resource.',
+      falsePositives: ['Misconfigured service principals with insufficient permissions', 'Developers testing RBAC policies in development', 'Terraform plans against resources without read access'],
+      tuningGuidance: 'Set baseline failure rate per caller type (interactive vs service principal). Exclude known noisy service principals after confirming they are not compromised. Increase sensitivity for callers with no previous successful operations.',
+      investigationWorkflow: '1. Review the caller and determine if they are a user, service principal, or managed identity\n2. Analyze the diversity of failed operation types — broad diversity suggests enumeration\n3. Check callerIpAddress for known threat IPs or unusual geolocations\n4. Look for any successful operations mixed in that might indicate partial access\n5. Review if the caller recently had permissions revoked\n6. Consider blocking or disabling the identity if clearly malicious',
+      criblSearchQueries: [
+        {
+          name: 'High Failure Rate Callers - Last 24h',
+          description: 'Identifies callers with abnormally high failure counts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status != "Succeeded"\n| summarize failure_count=count(), operation_diversity=dcount(operationName) by caller, callerIpAddress\n| where failure_count > 50\n| order by failure_count desc'
+        },
+        {
+          name: 'Failed Operation Types by Caller',
+          description: 'Shows which operations are failing for a suspect caller to understand their intent',
+          query: 'dataset="$DATASET" earliest=-24h\n| where caller == "$SUSPECT_CALLER"\n| where status != "Succeeded"\n| summarize count() by operationName, resourceGroupName\n| order by count_ desc'
+        },
+        {
+          name: 'Failure Spike Timeline',
+          description: 'Visualizes failure rate over time for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status != "Succeeded"\n| timestats span=15m count() by caller\n| order by count_ desc'
+        },
+        {
+          name: 'Success vs Failure Ratio',
+          description: 'Compares successful vs failed operations to identify suspicious callers with very low success rates',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize total=count(), failures=countif(status != "Succeeded") by caller\n| extend failure_rate = round(todouble(failures) / todouble(total) * 100, 2)\n| where failure_rate > 80 and total > 20\n| order by failure_rate desc'
+        }
+      ]
+    }
+  ],
+  'gcp-audit-logs': [
+    {
+      id: 'gcp-sec-001',
+      name: 'IAM Policy Binding to Primitive Roles',
+      objective: 'Detects assignment of primitive roles (Owner, Editor) at the project or organization level, which grants overly broad permissions and may indicate privilege escalation.',
+      severity: 'Critical',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Valid Accounts: Cloud Accounts'],
+      tags: ['security', 'privilege-escalation', 'gcp', 'iam', 'identity'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'resource_labels_project_id', 'protoPayload_authorizationInfo'],
+      detectionLogic: 'Monitors for SetIamPolicy method calls on cloudresourcemanager.googleapis.com that add bindings to roles/owner or roles/editor. These primitive roles grant extensive access and their assignment outside of IaC pipelines is a strong indicator of privilege escalation. Cross-references with known admin identities.',
+      falsePositives: ['Terraform/Pulumi applying IAM changes', 'Project bootstrap operations', 'Organization admin adding new project owners during setup'],
+      tuningGuidance: 'Whitelist known IaC service accounts. Focus on human identities (non-gserviceaccount.com) performing these actions. Consider separating alerts for org-level vs project-level assignments.',
+      investigationWorkflow: '1. Identify the principal making the IAM change and their authorization level\n2. Determine which role was bound and to which identity\n3. Check if the change was made through console, CLI, or API\n4. Correlate with deployment pipelines or change management tickets\n5. Review protoPayload_authorizationInfo for the permissions used\n6. If unauthorized, remove the binding and investigate the principal further',
+      criblSearchQueries: [
+        {
+          name: 'Primitive Role Assignments - Last 24h',
+          description: 'Lists all IAM policy changes involving owner or editor roles',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName == "SetIamPolicy"\n| where protoPayload_serviceName == "cloudresourcemanager.googleapis.com"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, resource_labels_project_id\n| order by count_ desc'
+        },
+        {
+          name: 'IAM Changes by Principal Over Time',
+          description: 'Tracks IAM modification patterns for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName == "SetIamPolicy"\n| timestats span=1d count() by protoPayload_authenticationInfo_principalEmail'
+        },
+        {
+          name: 'Cross-Project IAM Changes',
+          description: 'Identifies principals making IAM changes across multiple projects',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName == "SetIamPolicy"\n| summarize project_count=dcount(resource_labels_project_id) by protoPayload_authenticationInfo_principalEmail\n| where project_count > 1\n| order by project_count desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-002',
+      name: 'Firewall Rule Created Allowing Ingress from Any Source',
+      objective: 'Detects creation of VPC firewall rules that allow ingress from 0.0.0.0/0, potentially exposing internal services to the internet.',
+      severity: 'High',
+      mitre: ['T1562.007 - Impair Defenses: Disable or Modify Cloud Firewall', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'network', 'gcp', 'firewall', 'exposure'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'protoPayload_requestMetadata_callerIp', 'resource_labels_project_id'],
+      detectionLogic: 'Monitors for compute.firewalls.insert and compute.firewalls.patch methods on compute.googleapis.com. Examines the request payload for sourceRanges containing 0.0.0.0/0 with allowed protocols/ports on sensitive services. Flags rules that open SSH (22), RDP (3389), databases (3306, 5432, 1433), or all ports.',
+      falsePositives: ['Load balancer health check rules requiring broad source ranges', 'CDN or WAF configurations', 'Intentional public-facing service deployments'],
+      tuningGuidance: 'Maintain list of expected public-facing ports per project. Exclude rules targeting specific tags/service accounts associated with public services. Escalate priority for rules allowing all ports or all protocols.',
+      investigationWorkflow: '1. Review the firewall rule details — source ranges, allowed ports, target tags\n2. Identify the principal and their authorization for network changes\n3. Check the callerIp for expected corporate or cloud shell origins\n4. Determine which instances would be affected by the target tags\n5. Verify against change management and deployment records\n6. If unauthorized, delete the rule and audit the principal',
+      criblSearchQueries: [
+        {
+          name: 'Firewall Rule Creations - Last 24h',
+          description: 'Lists all new firewall rules created across projects',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName == "v1.compute.firewalls.insert"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, resource_labels_project_id, protoPayload_resourceName\n| order by count_ desc'
+        },
+        {
+          name: 'Firewall Modifications by Caller IP',
+          description: 'Groups firewall changes by source IP to identify unusual access points',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName has "compute.firewalls"\n| summarize count() by protoPayload_requestMetadata_callerIp, protoPayload_authenticationInfo_principalEmail\n| order by count_ desc'
+        },
+        {
+          name: 'Network Changes Timeline',
+          description: 'Shows all network-related changes over time for pattern analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_serviceName == "compute.googleapis.com"\n| where protoPayload_methodName has "firewall" or protoPayload_methodName has "network" or protoPayload_methodName has "route"\n| timestats span=1d count() by protoPayload_methodName'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-003',
+      name: 'Service Account Key Creation',
+      objective: 'Detects creation of service account keys which provide long-lived credentials that can be exfiltrated and used for persistent access.',
+      severity: 'High',
+      mitre: ['T1098.001 - Account Manipulation: Additional Cloud Credentials', 'T1552.001 - Unsecured Credentials: Credentials In Files'],
+      tags: ['security', 'persistence', 'gcp', 'service-account', 'credential-access'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'resource_labels_project_id', 'severity'],
+      detectionLogic: 'Monitors for google.iam.admin.v1.CreateServiceAccountKey method calls. Service account keys are a known persistence mechanism — attackers create keys to maintain access even after initial compromise is remediated. Alerts on any key creation, with higher priority for service accounts with elevated permissions.',
+      falsePositives: ['Automated key rotation processes', 'CI/CD pipeline setup requiring service account authentication', 'Developer creating keys for local testing'],
+      tuningGuidance: 'Whitelist automated rotation service accounts. Flag key creation for service accounts with Owner/Editor roles. Monitor for service accounts that already have multiple active keys. Consider organization policy to disable key creation entirely.',
+      investigationWorkflow: '1. Identify the principal creating the key and the target service account\n2. Review permissions of the target service account to assess blast radius\n3. Check if key creation is expected (key rotation, new deployment)\n4. Review how many active keys the service account now has\n5. If unauthorized, disable the new key immediately\n6. Audit all recent activity by the target service account',
+      criblSearchQueries: [
+        {
+          name: 'Service Account Key Creations - Last 7 Days',
+          description: 'Lists all service account key creation events',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName == "google.iam.admin.v1.CreateServiceAccountKey"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_resourceName, resource_labels_project_id\n| order by count_ desc'
+        },
+        {
+          name: 'Key Creation by Non-Service Accounts',
+          description: 'Focuses on human users creating service account keys which is higher risk',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName == "google.iam.admin.v1.CreateServiceAccountKey"\n| where protoPayload_authenticationInfo_principalEmail !has "gserviceaccount.com"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_resourceName\n| order by count_ desc'
+        },
+        {
+          name: 'Service Account Key Activity Trend',
+          description: 'Shows key creation trends to identify spikes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where protoPayload_methodName has "ServiceAccountKey"\n| timestats span=1d count() by protoPayload_methodName'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-004',
+      name: 'Audit Log Sink Deletion or Modification',
+      objective: 'Detects deletion or modification of Cloud Audit log sinks which may indicate an attacker attempting to disable logging to evade detection.',
+      severity: 'Critical',
+      mitre: ['T1562.008 - Impair Defenses: Disable Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'defense-evasion', 'gcp', 'logging', 'audit'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'protoPayload_requestMetadata_callerIp', 'resource_labels_project_id'],
+      detectionLogic: 'Monitors for google.logging.v2.ConfigServiceV2.DeleteSink and UpdateSink methods. Log sink deletions are almost always suspicious as they break the audit trail. Modifications that change the destination or add exclusion filters are also flagged. Correlates with callerIp to identify non-corporate access.',
+      falsePositives: ['Log infrastructure migration changing sink destinations', 'Cost optimization consolidating redundant sinks', 'Terraform reapplying sink configuration'],
+      tuningGuidance: 'Always alert on DeleteSink in production projects. For UpdateSink, compare before/after to determine if logging coverage decreased. Whitelist known infrastructure automation accounts.',
+      investigationWorkflow: '1. Identify the sink that was deleted or modified\n2. Determine what logs were being captured by that sink\n3. Review the principal and their callerIp\n4. Check for other defense evasion activities around the same time\n5. Restore the sink configuration immediately\n6. Audit all activity on the affected project during any logging gaps',
+      criblSearchQueries: [
+        {
+          name: 'Log Sink Modifications - Last 7 Days',
+          description: 'Lists all log sink deletion and update operations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName has "ConfigServiceV2" and (protoPayload_methodName has "DeleteSink" or protoPayload_methodName has "UpdateSink")\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_methodName, resource_labels_project_id\n| order by count_ desc'
+        },
+        {
+          name: 'Log Sink Deletions with Caller IP',
+          description: 'Shows sink deletions with source IP for geolocation analysis',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName has "DeleteSink"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_requestMetadata_callerIp, protoPayload_resourceName\n| order by count_ desc'
+        },
+        {
+          name: 'Subsequent Activity After Sink Deletion',
+          description: 'Reviews what the caller did after removing a log sink',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_authenticationInfo_principalEmail == "$SUSPECT_PRINCIPAL"\n| order by timestamp asc\n| summarize count() by protoPayload_methodName, protoPayload_serviceName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-005',
+      name: 'Compute Instance Created with External IP in Non-Standard Project',
+      objective: 'Detects creation of compute instances with external IP addresses in projects that normally do not host internet-facing resources, potentially indicating cryptomining or C2 infrastructure.',
+      severity: 'Medium',
+      mitre: ['T1578.002 - Modify Cloud Compute Infrastructure: Create Cloud Instance', 'T1496 - Resource Hijacking'],
+      tags: ['security', 'resource-abuse', 'gcp', 'compute', 'cryptomining'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'resource_labels_project_id', 'protoPayload_requestMetadata_callerIp'],
+      detectionLogic: 'Monitors for compute.instances.insert method calls on compute.googleapis.com. Cross-references the project against a list of projects approved for external-facing instances. Flags instances with GPU accelerators or high-CPU machine types that may indicate mining. Also detects burst creation of multiple instances.',
+      falsePositives: ['Legitimate new deployments in approved projects', 'Auto-scaling events creating instances with external IPs', 'Development testing requiring external access'],
+      tuningGuidance: 'Maintain whitelist of projects approved for external IPs. Set thresholds for instance count (e.g., more than 5 in 1 hour from non-automation). Flag GPU machine types (n1-highmem with GPU, a2-highgpu) regardless of project.',
+      investigationWorkflow: '1. Identify the instance type, zone, and whether it has GPU accelerators\n2. Check the project against approved external-facing project list\n3. Review the principal and their normal activity patterns\n4. Examine the instance metadata for startup scripts indicating mining software\n5. Check network egress from the instance if running\n6. Stop or delete the instance if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Instance Creations by Project - Last 24h',
+          description: 'Groups instance creation events by project to identify unusual activity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName == "v1.compute.instances.insert"\n| summarize instance_count=count() by resource_labels_project_id, protoPayload_authenticationInfo_principalEmail\n| order by instance_count desc'
+        },
+        {
+          name: 'Burst Instance Creation Detection',
+          description: 'Identifies principals creating many instances in a short window',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName == "v1.compute.instances.insert"\n| summarize instance_count=count() by protoPayload_authenticationInfo_principalEmail, bin(timestamp, 1h)\n| where instance_count > 3\n| order by instance_count desc'
+        },
+        {
+          name: 'Instance Creation from Unusual IPs',
+          description: 'Shows source IPs used to create instances for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_methodName == "v1.compute.instances.insert"\n| summarize count() by protoPayload_requestMetadata_callerIp, protoPayload_authenticationInfo_principalEmail\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-006',
+      name: 'Cloud Storage Bucket Made Publicly Accessible',
+      objective: 'Detects modifications to Cloud Storage bucket IAM policies that grant public access (allUsers or allAuthenticatedUsers), risking data exposure.',
+      severity: 'High',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1537 - Transfer Data to Cloud Account'],
+      tags: ['security', 'data-exposure', 'gcp', 'storage', 'public-access'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'resource_labels_project_id', 'protoPayload_status_code'],
+      detectionLogic: 'Monitors for storage.setIamPermissions and storage.objects.update methods on storage.googleapis.com where the request includes allUsers or allAuthenticatedUsers members. Any bucket made public should trigger an immediate alert as it may expose sensitive data to the internet.',
+      falsePositives: ['Public website hosting buckets being configured', 'Public dataset sharing (approved use cases)', 'CDN origin buckets requiring public read access'],
+      tuningGuidance: 'Maintain a whitelist of buckets approved for public access. Always alert on non-whitelisted buckets being made public. Consider organization policy constraints to prevent public access at the org level.',
+      investigationWorkflow: '1. Identify the bucket name and its contents/sensitivity\n2. Check if the bucket is on the approved public access whitelist\n3. Review the principal making the change and their authorization\n4. Determine how long the bucket was publicly accessible\n5. Check access logs for any downloads during the exposure window\n6. Remove public access immediately if unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Storage IAM Changes - Last 24h',
+          description: 'Lists all storage permission changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_serviceName == "storage.googleapis.com"\n| where protoPayload_methodName has "setIamPermissions" or protoPayload_methodName has "SetIamPolicy"\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_resourceName, resource_labels_project_id\n| order by count_ desc'
+        },
+        {
+          name: 'Storage Permission Changes Over Time',
+          description: 'Trends storage IAM changes to identify spikes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where protoPayload_serviceName == "storage.googleapis.com"\n| where protoPayload_methodName has "IamPolicy" or protoPayload_methodName has "IamPermissions"\n| timestats span=1d count() by resource_labels_project_id'
+        },
+        {
+          name: 'All Activity by Bucket Modifier',
+          description: 'Reviews all actions by the principal who modified bucket permissions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_authenticationInfo_principalEmail == "$SUSPECT_PRINCIPAL"\n| summarize count() by protoPayload_methodName, protoPayload_serviceName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-sec-007',
+      name: 'Unauthorized API Calls Indicating Credential Compromise',
+      objective: 'Detects a high volume of permission denied errors from a single principal, indicating potential use of stolen credentials or service account key abuse.',
+      severity: 'Medium',
+      mitre: ['T1580 - Cloud Infrastructure Discovery', 'T1078.004 - Valid Accounts: Cloud Accounts'],
+      tags: ['security', 'discovery', 'gcp', 'reconnaissance', 'credential-abuse'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_methodName', 'protoPayload_status_code', 'protoPayload_serviceName', 'protoPayload_requestMetadata_callerIp', 'resource_labels_project_id'],
+      detectionLogic: 'Monitors for principals generating more than 30 permission denied (status code 7) responses within 15 minutes. High error rates across diverse services suggest credential abuse or enumeration. Correlates caller IP with known ranges and checks if the principal has legitimate access patterns.',
+      falsePositives: ['Misconfigured applications with wrong service account', 'New service deployments with incomplete IAM bindings', 'Developers testing permissions boundaries'],
+      tuningGuidance: 'Baseline normal error rates per principal type. Exclude known noisy service accounts after verification. Increase sensitivity for principals calling from IPs outside expected ranges. Set separate thresholds for human vs service account identities.',
+      investigationWorkflow: '1. Identify the principal and whether it is human or service account\n2. Analyze the diversity of services/methods being called — broad diversity indicates enumeration\n3. Review callerIp for unexpected origins\n4. Check if the principal has any successful calls mixed in\n5. Determine if credentials may have been exfiltrated\n6. Rotate credentials if compromise is suspected',
+      criblSearchQueries: [
+        {
+          name: 'Permission Denied by Principal - Last 24h',
+          description: 'Lists principals with the most permission denied errors',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_status_code == 7\n| summarize error_count=count(), services_hit=dcount(protoPayload_serviceName) by protoPayload_authenticationInfo_principalEmail, protoPayload_requestMetadata_callerIp\n| where error_count > 30\n| order by error_count desc'
+        },
+        {
+          name: 'Failed Methods by Suspect Principal',
+          description: 'Shows which methods are failing for a specific principal to understand enumeration scope',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_authenticationInfo_principalEmail == "$SUSPECT_PRINCIPAL"\n| where protoPayload_status_code == 7\n| summarize count() by protoPayload_methodName, protoPayload_serviceName\n| order by count_ desc'
+        },
+        {
+          name: 'Error Rate Spike Detection',
+          description: 'Visualizes permission denied errors over time to identify attack windows',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_status_code == 7\n| timestats span=15m count() by protoPayload_authenticationInfo_principalEmail\n| order by count_ desc'
+        },
+        {
+          name: 'Success vs Failure Ratio by Principal',
+          description: 'Compares successful vs failed calls to identify anomalous principals',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize total=count(), failures=countif(protoPayload_status_code == 7) by protoPayload_authenticationInfo_principalEmail\n| extend failure_pct = round(todouble(failures) / todouble(total) * 100, 2)\n| where failure_pct > 70 and total > 20\n| order by failure_pct desc'
+        }
+      ]
+    }
+  ],
+  'cisco-meraki': [
+    {
+      id: 'mrk-sec-001',
+      name: 'Outbound Connection to Known Malicious Port',
+      objective: 'Detects outbound connections to ports commonly associated with C2 frameworks, botnets, and malware communication channels from internal hosts.',
+      severity: 'High',
+      mitre: ['T1571 - Non-Standard Port', 'T1071 - Application Layer Protocol'],
+      tags: ['security', 'c2', 'meraki', 'network', 'exfiltration'],
+      requiredFields: ['timestamp', 'type', 'src', 'dst', 'dport', 'protocol'],
+      detectionLogic: 'Monitors for outbound connections to ports associated with known C2 frameworks: 4444 (Metasploit), 1234 (common backdoor), 8080 (alternate HTTP C2), 6667 (IRC botnet), 31337 (Back Orifice), 5555 (Android debug), 9001 (Tor). Filters by protocol TCP and correlates source with internal network ranges.',
+      falsePositives: ['Legitimate services running on non-standard ports', 'Development environments using common backdoor ports for testing', 'Tor exit nodes used for legitimate privacy purposes'],
+      tuningGuidance: 'Customize port list based on threat intelligence feeds. Whitelist known internal services on flagged ports. Reduce noise by requiring sustained connections (multiple flows to same dst:dport). Add organization-specific C2 indicators.',
+      investigationWorkflow: '1. Identify the source host and determine its role/owner\n2. Check the destination IP against threat intelligence\n3. Review connection frequency and data volume\n4. Check if the destination port is expected for any legitimate service\n5. Inspect the source host for malware indicators\n6. Block the destination and isolate the source if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'Suspicious Outbound Ports - Last 24h',
+          description: 'Lists connections to known C2 ports',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport in ("4444", "1234", "6667", "31337", "5555", "9001")\n| where protocol == "tcp"\n| summarize count() by src, dst, dport\n| order by count_ desc'
+        },
+        {
+          name: 'Repeat Connections to Suspicious Ports',
+          description: 'Identifies hosts with sustained connections suggesting active C2',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport in ("4444", "1234", "6667", "31337", "5555", "9001")\n| summarize connection_count=count(), first_seen=min(timestamp), last_seen=max(timestamp) by src, dst, dport\n| where connection_count > 5\n| order by connection_count desc'
+        },
+        {
+          name: 'Source Host Full Activity',
+          description: 'Shows all network activity from a suspicious source host',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src == "$SUSPECT_IP"\n| summarize count() by dst, dport, protocol\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-002',
+      name: 'Internal Lateral Movement via SMB',
+      objective: 'Detects internal hosts connecting to multiple other internal hosts on SMB (port 445), which may indicate lateral movement or worm propagation.',
+      severity: 'Critical',
+      mitre: ['T1021.002 - Remote Services: SMB/Windows Admin Shares', 'T1570 - Lateral Tool Transfer'],
+      tags: ['security', 'lateral-movement', 'meraki', 'smb', 'network'],
+      requiredFields: ['timestamp', 'src', 'dst', 'dport', 'protocol', 'type'],
+      detectionLogic: 'Monitors for a single source IP connecting to more than 5 unique destination IPs on port 445 (SMB) within a 30-minute window. Normal workstation behavior involves connecting to 1-2 file servers. Broad SMB scanning suggests WannaCry-style propagation or credential-based lateral movement.',
+      falsePositives: ['File server backup operations', 'Vulnerability scanners performing SMB assessments', 'IT admin tools performing legitimate remote management'],
+      tuningGuidance: 'Whitelist known file servers, backup systems, and vulnerability scanners by IP. Set unique destination threshold based on normal network behavior (typically 3-5 for workstations). Exclude server subnets from source if they legitimately serve many SMB clients.',
+      investigationWorkflow: '1. Identify the source host and determine if it is a workstation or server\n2. Review the destination IPs — are they random or targeted?\n3. Check for successful vs failed SMB connections\n4. Look for associated authentication events on destination hosts\n5. Check the source for malware indicators or compromised credentials\n6. Isolate the source immediately if propagation is suspected',
+      criblSearchQueries: [
+        {
+          name: 'SMB Lateral Movement Candidates - Last 24h',
+          description: 'Identifies hosts connecting to many internal destinations on port 445',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport == "445"\n| where protocol == "tcp"\n| summarize unique_destinations=dcount(dst) by src\n| where unique_destinations > 5\n| order by unique_destinations desc'
+        },
+        {
+          name: 'SMB Connection Timeline for Source',
+          description: 'Shows the timeline of SMB connections from a suspect source',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src == "$SUSPECT_IP"\n| where dport == "445"\n| order by timestamp asc\n| summarize count() by dst, bin(timestamp, 5m)\n| order by timestamp asc'
+        },
+        {
+          name: 'SMB Baseline Comparison',
+          description: 'Compares current SMB behavior against 7-day baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| where dport == "445"\n| summarize daily_unique_dst=dcount(dst) by src, bin(timestamp, 1d)\n| summarize avg_daily=avg(daily_unique_dst), max_daily=max(daily_unique_dst) by src\n| where max_daily > 10\n| order by max_daily desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-003',
+      name: 'Rogue Wireless Access Point Detection',
+      objective: 'Detects unauthorized wireless clients or access points broadcasting SSIDs that mimic corporate networks, indicating potential evil twin attacks.',
+      severity: 'High',
+      mitre: ['T1557.002 - Adversary-in-the-Middle: ARP Cache Poisoning', 'T1200 - Hardware Additions'],
+      tags: ['security', 'wireless', 'meraki', 'rogue-ap', 'evil-twin'],
+      requiredFields: ['timestamp', 'type', 'mac', 'network', 'ssid', 'clientMac'],
+      detectionLogic: 'Monitors Meraki air marshal events for rogue AP detections. Looks for SSIDs that are similar to or exactly match corporate SSIDs but originate from unmanaged MAC addresses. Also flags new MACs appearing on production networks that are not in the approved device inventory.',
+      falsePositives: ['Personal hotspots with similar SSID names', 'Neighboring business networks with similar naming', 'New legitimate APs not yet added to inventory'],
+      tuningGuidance: 'Maintain MAC address inventory of all managed APs. Define corporate SSID list for comparison. Use Levenshtein distance or pattern matching for similar SSID detection. Suppress known neighbor networks.',
+      investigationWorkflow: '1. Identify the rogue MAC address and SSID being broadcast\n2. Compare against inventory of managed Meraki APs\n3. Determine physical location using signal triangulation\n4. Check if any clients have associated with the rogue AP\n5. Physically locate and remove the device if unauthorized\n6. Review traffic logs for any data intercepted during exposure',
+      criblSearchQueries: [
+        {
+          name: 'Rogue AP Events - Last 24h',
+          description: 'Lists all rogue wireless detections from Meraki air marshal',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type has "rogue"\n| summarize count() by mac, ssid, network\n| order by count_ desc'
+        },
+        {
+          name: 'Unknown MACs on Corporate SSIDs',
+          description: 'Identifies MAC addresses appearing on corporate SSIDs that may not be authorized',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ssid == "$CORPORATE_SSID"\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), event_count=count() by mac, network\n| order by first_seen desc'
+        },
+        {
+          name: 'Client Associations with Suspicious APs',
+          description: 'Shows clients that connected to potentially rogue access points',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type has "association"\n| where mac == "$SUSPECT_AP_MAC"\n| summarize count() by clientMac, ssid\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-004',
+      name: 'DNS Tunneling via High-Volume DNS Queries',
+      objective: 'Detects potential DNS tunneling where data is exfiltrated via DNS queries to unusual domains with high query volumes or unusually long subdomains.',
+      severity: 'High',
+      mitre: ['T1048.003 - Exfiltration Over Alternative Protocol: DNS', 'T1071.004 - Application Layer Protocol: DNS'],
+      tags: ['security', 'exfiltration', 'meraki', 'dns', 'tunneling'],
+      requiredFields: ['timestamp', 'src', 'dst', 'dport', 'protocol', 'url', 'type'],
+      detectionLogic: 'Monitors for hosts generating an unusually high number of DNS queries (port 53) or queries with anomalous URL patterns indicating encoded data in subdomains. Flags sources generating more than 500 DNS queries per 15 minutes to non-corporate resolvers, or queries with base64-like subdomain patterns exceeding 50 characters.',
+      falsePositives: ['Legitimate high-volume DNS services (CDN, ad-tech)', 'DNS-based service discovery in microservice architectures', 'Anti-virus or security tools performing DNS lookups'],
+      tuningGuidance: 'Baseline normal DNS query volumes per source. Focus on queries to external resolvers (not corporate DNS). Filter out known high-volume legitimate domains. Tune subdomain length threshold based on normal patterns.',
+      investigationWorkflow: '1. Identify the source host generating high DNS volume\n2. Analyze destination DNS servers — are they expected corporate resolvers?\n3. Examine query patterns for encoded data (long random subdomains)\n4. Check the destination domains against threat intelligence\n5. Capture sample queries for analysis\n6. Block the suspicious domain and investigate the source host',
+      criblSearchQueries: [
+        {
+          name: 'High-Volume DNS Sources - Last 24h',
+          description: 'Identifies hosts with abnormally high DNS query counts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport == "53"\n| summarize query_count=count() by src, dst\n| where query_count > 500\n| order by query_count desc'
+        },
+        {
+          name: 'DNS Queries to Non-Standard Resolvers',
+          description: 'Shows DNS traffic going to non-corporate DNS servers',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport == "53"\n| where dst != "$CORPORATE_DNS_1" and dst != "$CORPORATE_DNS_2"\n| summarize count() by src, dst\n| order by count_ desc'
+        },
+        {
+          name: 'DNS Query Pattern Analysis',
+          description: 'Examines URL patterns in DNS queries for tunneling indicators',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport == "53"\n| where url != ""\n| extend url_length = strlen(url)\n| where url_length > 50\n| summarize count() by src, url\n| order by count_ desc'
+        },
+        {
+          name: 'DNS Volume Over Time by Source',
+          description: 'Trends DNS query volume to identify burst patterns typical of tunneling',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport == "53"\n| timestats span=15m count() by src\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-005',
+      name: 'Port Scan Detection from Internal Host',
+      objective: 'Detects internal hosts performing port scans against other hosts, indicating potential reconnaissance prior to lateral movement or exploitation.',
+      severity: 'Medium',
+      mitre: ['T1046 - Network Service Scanning', 'T1595.001 - Active Scanning: Scanning IP Blocks'],
+      tags: ['security', 'reconnaissance', 'meraki', 'port-scan', 'discovery'],
+      requiredFields: ['timestamp', 'src', 'dst', 'dport', 'sport', 'protocol', 'type'],
+      detectionLogic: 'Monitors for a single source IP connecting to more than 20 unique destination ports on the same host within 5 minutes, or connecting to the same port across more than 15 unique destination IPs within 5 minutes. Both patterns indicate active scanning — vertical (many ports, one host) or horizontal (one port, many hosts).',
+      falsePositives: ['Vulnerability scanners (Qualys, Tenable, Nessus)', 'Network monitoring tools performing service checks', 'Load balancers health-checking multiple backend ports'],
+      tuningGuidance: 'Whitelist known scanner IPs and monitoring systems. Set port diversity threshold (default 20) based on network size. Exclude server-to-server monitoring subnets. Consider time window adjustments for slower scans.',
+      investigationWorkflow: '1. Determine if the source is a known scanning tool or monitoring system\n2. Analyze scan pattern — vertical (single host) vs horizontal (single port)\n3. Check timing distribution of connections for automation indicators\n4. Review what services were discovered (successful connections)\n5. Correlate with any subsequent exploitation attempts\n6. Investigate the source host for compromise indicators',
+      criblSearchQueries: [
+        {
+          name: 'Vertical Port Scans - Last 24h',
+          description: 'Detects hosts scanning many ports on a single target',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_ports=dcount(dport) by src, dst\n| where unique_ports > 20\n| order by unique_ports desc'
+        },
+        {
+          name: 'Horizontal Port Scans - Last 24h',
+          description: 'Detects hosts scanning the same port across many targets',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize unique_targets=dcount(dst) by src, dport\n| where unique_targets > 15\n| order by unique_targets desc'
+        },
+        {
+          name: 'Scan Activity Timeline',
+          description: 'Shows scan activity patterns over time from a suspect source',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src == "$SUSPECT_IP"\n| timestats span=5m dcount(dport) as ports_hit, dcount(dst) as hosts_hit by src'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-006',
+      name: 'URL Request to Known Phishing or Malware Domain',
+      objective: 'Detects web requests to domains known to host phishing pages or malware, indicating a user may have clicked a malicious link.',
+      severity: 'Medium',
+      mitre: ['T1566.002 - Phishing: Spearphishing Link', 'T1204.001 - User Execution: Malicious Link'],
+      tags: ['security', 'phishing', 'meraki', 'web', 'malware'],
+      requiredFields: ['timestamp', 'src', 'url', 'dst', 'type', 'mac', 'pattern'],
+      detectionLogic: 'Monitors Meraki content filtering and URL logs for requests matching known malicious URL patterns. Correlates the pattern field (which contains threat category) with the source MAC and IP to identify affected users. Flags any request where the pattern indicates malware, phishing, or command-and-control categories.',
+      falsePositives: ['Security researchers accessing malicious URLs for analysis', 'Redirect chains through compromised legitimate domains', 'False positives in threat intelligence feeds'],
+      tuningGuidance: 'Keep threat intelligence URL lists updated. Exclude security team IPs from alerting (but still log). Focus on patterns categorized as malware or phishing rather than general suspicious. Correlate with email logs to identify phishing campaign scope.',
+      investigationWorkflow: '1. Identify the source MAC/IP and determine the affected user\n2. Review the URL and domain against multiple threat intelligence sources\n3. Check the pattern/category for threat type\n4. Determine if the connection was blocked or allowed\n5. If allowed, scan the endpoint for malware indicators\n6. Check if other users accessed the same URL indicating a phishing campaign',
+      criblSearchQueries: [
+        {
+          name: 'Malicious URL Requests - Last 24h',
+          description: 'Lists all requests matching threat patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where pattern != "" and pattern != "none"\n| summarize count() by src, mac, url, pattern\n| order by count_ desc'
+        },
+        {
+          name: 'Affected Users by Threat Category',
+          description: 'Groups malicious URL hits by source to identify most affected users',
+          query: 'dataset="$DATASET" earliest=-24h\n| where pattern has "malware" or pattern has "phishing" or pattern has "command"\n| summarize hit_count=count(), unique_urls=dcount(url) by src, mac\n| order by hit_count desc'
+        },
+        {
+          name: 'Campaign Detection - Multiple Users Same URL',
+          description: 'Identifies URLs accessed by multiple users indicating a phishing campaign',
+          query: 'dataset="$DATASET" earliest=-24h\n| where pattern != "" and pattern != "none"\n| summarize affected_users=dcount(src) by url, pattern\n| where affected_users > 1\n| order by affected_users desc'
+        },
+        {
+          name: 'Post-Click Activity from Affected Host',
+          description: 'Reviews all network activity from an affected host after clicking malicious URL',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src == "$AFFECTED_IP"\n| order by timestamp asc\n| summarize count() by dst, dport, type\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-sec-007',
+      name: 'Large Data Transfer to External Destination',
+      objective: 'Detects unusually large data transfers to external IP addresses that may indicate data exfiltration or unauthorized bulk data movement.',
+      severity: 'Critical',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1567 - Exfiltration Over Web Service'],
+      tags: ['security', 'exfiltration', 'meraki', 'data-loss', 'network'],
+      requiredFields: ['timestamp', 'src', 'dst', 'dport', 'protocol', 'type', 'mac'],
+      detectionLogic: 'Monitors for internal hosts maintaining long-duration connections or generating high connection counts to single external destinations. Focuses on non-standard ports and protocols that bypass normal web proxy inspection. Flags sources with more than 100 connections to the same external destination in 1 hour or connections to known cloud storage endpoints on non-443 ports.',
+      falsePositives: ['Legitimate cloud backup services', 'Large file uploads to approved SaaS platforms', 'Video conferencing generating high traffic volumes', 'Software update downloads'],
+      tuningGuidance: 'Baseline normal transfer patterns per host role. Whitelist known backup destinations and approved cloud services. Focus on transfers during non-business hours. Correlate with DLP policies for sensitive data indicators.',
+      investigationWorkflow: '1. Identify the source host and its role in the organization\n2. Determine the destination — is it a known cloud service or unknown IP?\n3. Calculate approximate data volume based on connection count and duration\n4. Check if the transfer occurred during business hours\n5. Review the destination against threat intelligence and geolocation\n6. Contact the host owner and review data classification of transferred content',
+      criblSearchQueries: [
+        {
+          name: 'High-Volume External Transfers - Last 24h',
+          description: 'Identifies hosts with high connection counts to external destinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type has "flow"\n| summarize connection_count=count() by src, dst, dport\n| where connection_count > 100\n| order by connection_count desc'
+        },
+        {
+          name: 'Non-Standard Port External Transfers',
+          description: 'Shows large transfers over non-standard ports which bypass proxy inspection',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dport != "80" and dport != "443" and dport != "53"\n| summarize connection_count=count() by src, dst, dport, protocol\n| where connection_count > 50\n| order by connection_count desc'
+        },
+        {
+          name: 'After-Hours Data Transfers',
+          description: 'Identifies large transfers occurring outside business hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend hour = hourofday(timestamp)\n| where hour < 6 or hour > 22\n| summarize count() by src, dst, dport\n| where count_ > 20\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'cisco-sdwan': [
+    {
+      id: 'sdw-sec-001',
+      name: 'SLA Violation on Critical Circuit Indicating Possible DDoS',
+      objective: 'Detects sustained SLA violations (high latency, jitter, or loss) on critical WAN circuits that may indicate a volumetric DDoS attack or circuit saturation by a threat actor.',
+      severity: 'High',
+      mitre: ['T1498 - Network Denial of Service', 'T1499 - Endpoint Denial of Service'],
+      tags: ['security', 'availability', 'sdwan', 'ddos', 'sla'],
+      requiredFields: ['entry_time', 'vdevice_name', 'src_ip', 'dst_ip', 'local_color', 'remote_color', 'sla_class', 'latency', 'jitter', 'loss_percentage', 'site_id'],
+      detectionLogic: 'Monitors for WAN circuits exceeding SLA thresholds: latency > 300ms, jitter > 50ms, or loss_percentage > 10% sustained for more than 5 consecutive measurement intervals. Correlates across multiple tunnels from the same site to determine if the issue is circuit-specific (DDoS) or site-wide (ISP outage). Examines whether SLA class changes indicate traffic failover.',
+      falsePositives: ['ISP maintenance windows causing temporary degradation', 'Planned circuit migrations', 'Legitimate traffic bursts during business hours', 'Weather or physical infrastructure issues'],
+      tuningGuidance: 'Set latency/jitter/loss thresholds per circuit type (MPLS vs internet vs LTE). Define critical sites where SLA violations warrant immediate investigation. Correlate with ISP maintenance calendars to suppress known events.',
+      investigationWorkflow: '1. Identify the affected site and circuit (local_color/remote_color)\n2. Determine if the issue is on a single tunnel or affecting all tunnels at the site\n3. Check if traffic has failed over to backup circuits\n4. Review traffic volumes for signs of volumetric attack\n5. Correlate with firewall logs for attack traffic patterns\n6. Contact ISP if DDoS is confirmed for upstream mitigation',
+      criblSearchQueries: [
+        {
+          name: 'SLA Violations by Site - Last 24h',
+          description: 'Identifies sites experiencing SLA violations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where latency > 300 or jitter > 50 or loss_percentage > 10\n| summarize violation_count=count() by site_id, vdevice_name, local_color\n| order by violation_count desc'
+        },
+        {
+          name: 'Sustained SLA Degradation Detection',
+          description: 'Finds circuits with sustained performance issues over time',
+          query: 'dataset="$DATASET" earliest=-4h\n| where latency > 300 or jitter > 50 or loss_percentage > 10\n| summarize violation_count=count(), avg_latency=avg(latency), avg_loss=avg(loss_percentage) by vdevice_name, local_color, remote_color, bin(entry_time, 15m)\n| where violation_count > 3\n| order by avg_latency desc'
+        },
+        {
+          name: 'Cross-Circuit Comparison for Site',
+          description: 'Compares all circuits at a site to determine if issue is localized',
+          query: 'dataset="$DATASET" earliest=-4h\n| where site_id == "$AFFECTED_SITE"\n| summarize avg_latency=avg(latency), avg_jitter=avg(jitter), avg_loss=avg(loss_percentage) by local_color, remote_color\n| order by avg_latency desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-002',
+      name: 'Unauthorized Tunnel Establishment Between Sites',
+      objective: 'Detects new or unexpected tunnel connections between sites that do not have a defined connectivity policy, which may indicate tunneling-based data exfiltration or unauthorized network bridging.',
+      severity: 'Critical',
+      mitre: ['T1572 - Protocol Tunneling', 'T1090 - Proxy'],
+      tags: ['security', 'tunneling', 'sdwan', 'unauthorized-access', 'exfiltration'],
+      requiredFields: ['entry_time', 'vdevice_name', 'src_ip', 'dst_ip', 'local_color', 'remote_color', 'site_id'],
+      detectionLogic: 'Baselines normal tunnel pairs (src_ip/dst_ip combinations) and alerts on new tunnel establishments that have not been seen in the previous 30 days. Focuses on tunnels using unexpected color combinations (e.g., internet tunnel between sites that should only use MPLS) or connections to sites outside the known site inventory.',
+      falsePositives: ['New branch deployments adding legitimate tunnels', 'Disaster recovery testing establishing backup tunnels', 'SD-WAN policy changes creating new preferred paths'],
+      tuningGuidance: 'Maintain baseline of approved site-to-site tunnel pairs. Update after planned network changes. Set learning period for new deployments. Focus on tunnels using internet color from sites that should be MPLS-only.',
+      investigationWorkflow: '1. Identify the new tunnel endpoints (src_ip, dst_ip)\n2. Determine if both sites are in the known inventory\n3. Check if a change management ticket exists for new connectivity\n4. Review the color/transport used vs expected policy\n5. Examine traffic volume through the new tunnel\n6. If unauthorized, tear down the tunnel and investigate both endpoints',
+      criblSearchQueries: [
+        {
+          name: 'New Tunnel Pairs - Last 24h vs 30-Day Baseline',
+          description: 'Identifies tunnel pairs seen in last 24h but not in prior 30 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by src_ip, dst_ip, local_color, remote_color, site_id\n| order by count_ desc'
+        },
+        {
+          name: 'Tunnel Establishment by Color Type',
+          description: 'Groups tunnels by transport color to identify unexpected paths',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize tunnel_count=dcount(dst_ip) by vdevice_name, local_color, site_id\n| order by tunnel_count desc'
+        },
+        {
+          name: 'Site Connectivity Changes Over Time',
+          description: 'Tracks new tunnel pairs appearing over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize first_seen=min(entry_time) by src_ip, dst_ip, local_color, remote_color\n| where first_seen > ago(24h)\n| order by first_seen desc'
+        },
+        {
+          name: 'Traffic Volume on New Tunnels',
+          description: 'Measures activity level on recently established tunnels',
+          query: 'dataset="$DATASET" earliest=-24h\n| where src_ip == "$NEW_TUNNEL_SRC" and dst_ip == "$NEW_TUNNEL_DST"\n| timestats span=1h count() by local_color, remote_color'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-003',
+      name: 'Sudden Traffic Rerouting Away from Secure Transport',
+      objective: 'Detects traffic that shifts from secure transports (MPLS, private) to internet tunnels without a corresponding SLA event, which may indicate route manipulation or policy tampering.',
+      severity: 'High',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1565.002 - Data Manipulation: Transmitted Data Manipulation'],
+      tags: ['security', 'route-manipulation', 'sdwan', 'transport', 'integrity'],
+      requiredFields: ['entry_time', 'vdevice_name', 'src_ip', 'dst_ip', 'local_color', 'remote_color', 'sla_class', 'site_id'],
+      detectionLogic: 'Monitors for changes in traffic distribution across transport colors. Alerts when traffic that normally flows over MPLS or private circuits suddenly shifts to internet tunnels without a corresponding SLA violation on the preferred path. This may indicate route poisoning, policy manipulation, or BFD session spoofing forcing traffic to a less secure path where it can be intercepted.',
+      falsePositives: ['Legitimate SD-WAN app-aware routing decisions', 'Planned maintenance rerouting traffic', 'SLA class reconfigurations changing preferred paths'],
+      tuningGuidance: 'Baseline normal color distribution per site over 7 days. Alert when internet traffic percentage exceeds 2x normal without corresponding SLA degradation on MPLS. Exclude maintenance windows.',
+      investigationWorkflow: '1. Identify which site experienced the traffic shift\n2. Check if an SLA violation on the preferred path triggered the reroute\n3. Review SD-WAN policy and control plane for unauthorized changes\n4. Examine BFD session states for anomalies\n5. Check vManage audit logs for policy modifications\n6. If no legitimate cause found, investigate for route manipulation',
+      criblSearchQueries: [
+        {
+          name: 'Traffic Color Distribution by Site - Last 24h',
+          description: 'Shows traffic distribution across transport types per site',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by site_id, vdevice_name, local_color\n| order by site_id, count_ desc'
+        },
+        {
+          name: 'Color Shift Detection',
+          description: 'Compares current color distribution vs baseline to detect shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize recent_count=count() by site_id, local_color\n| order by site_id, recent_count desc'
+        },
+        {
+          name: 'SLA Status During Reroute Window',
+          description: 'Checks if SLA degradation justified the traffic reroute',
+          query: 'dataset="$DATASET" earliest=-4h\n| where site_id == "$AFFECTED_SITE"\n| summarize avg_latency=avg(latency), avg_loss=avg(loss_percentage) by local_color, remote_color, bin(entry_time, 15m)\n| order by entry_time desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-004',
+      name: 'Anomalous Traffic Flow Between Unexpected Sites',
+      objective: 'Detects traffic flows between site pairs that do not normally communicate, which may indicate compromised edge devices being used for pivoting or data exfiltration between segments.',
+      severity: 'Medium',
+      mitre: ['T1021 - Remote Services', 'T1090.001 - Proxy: Internal Proxy'],
+      tags: ['security', 'lateral-movement', 'sdwan', 'segmentation', 'anomaly'],
+      requiredFields: ['entry_time', 'vdevice_name', 'src_ip', 'dst_ip', 'src_port', 'dst_port', 'site_id'],
+      detectionLogic: 'Baselines normal communication patterns between site pairs over 30 days. Alerts when traffic appears between sites that have not communicated in the baseline period, or when existing site pairs show dramatic increases in traffic volume. Correlates with dst_port to identify services being accessed.',
+      falsePositives: ['New application deployments creating cross-site communication', 'Disaster recovery failover activating backup paths', 'Temporary project collaborations between offices'],
+      tuningGuidance: 'Build site communication matrix from 30-day baseline. Define expected site pairs and alert on deviations. Set volume threshold for existing pairs at 3x normal. Exclude sites known to be in transition.',
+      investigationWorkflow: '1. Identify the communicating sites and determine if they should be connected\n2. Review the ports/services being used in the communication\n3. Check if an application deployment or business change explains the traffic\n4. Examine traffic volume and patterns for data exfiltration indicators\n5. Review edge device configurations for unauthorized changes\n6. Block the traffic if no legitimate business justification exists',
+      criblSearchQueries: [
+        {
+          name: 'Site Communication Matrix - Last 7 Days',
+          description: 'Maps which sites are communicating and how much',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize flow_count=count() by site_id, dst_ip\n| order by flow_count desc'
+        },
+        {
+          name: 'New Site Pairs - Last 24h',
+          description: 'Identifies site pairs communicating for the first time recently',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(entry_time), count() by src_ip, dst_ip, site_id\n| order by first_seen desc'
+        },
+        {
+          name: 'Cross-Site Port Analysis',
+          description: 'Shows which services are being accessed in cross-site communications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where site_id == "$SUSPECT_SITE"\n| summarize count() by dst_ip, dst_port, src_ip\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-005',
+      name: 'Complete Packet Loss on WAN Circuit Indicating Link Manipulation',
+      objective: 'Detects circuits experiencing 100% packet loss which, if not correlated with known outages, may indicate deliberate link severing or black hole routing attacks.',
+      severity: 'Critical',
+      mitre: ['T1498 - Network Denial of Service', 'T1565 - Data Manipulation'],
+      tags: ['security', 'availability', 'sdwan', 'black-hole', 'link-down'],
+      requiredFields: ['entry_time', 'vdevice_name', 'local_color', 'remote_color', 'loss_percentage', 'latency', 'site_id'],
+      detectionLogic: 'Monitors for circuits reporting 100% packet loss for more than 3 consecutive measurement intervals. Correlates with other circuits at the same site — if only one circuit is affected while others are healthy, the issue may be targeted. Also flags circuits that transition directly from healthy (0% loss) to complete failure without gradual degradation, which is atypical of normal circuit issues.',
+      falsePositives: ['ISP circuit failures', 'Physical cable cuts or hardware failures', 'Planned maintenance taking circuits down', 'Power outages at remote sites'],
+      tuningGuidance: 'Correlate with ISP notification feeds and maintenance calendars. Focus on circuits going from healthy to 100% loss instantly (no gradual degradation). Alert at higher priority when redundant circuits at the same site also degrade simultaneously.',
+      investigationWorkflow: '1. Identify the affected circuit and site\n2. Check if other circuits at the same site are healthy\n3. Review the loss pattern — sudden vs gradual onset\n4. Correlate with ISP status and maintenance windows\n5. Check for BGP/routing changes that might cause black holes\n6. If no legitimate cause, investigate for deliberate link manipulation',
+      criblSearchQueries: [
+        {
+          name: 'Complete Loss Events - Last 24h',
+          description: 'Lists all circuits experiencing 100% packet loss',
+          query: 'dataset="$DATASET" earliest=-24h\n| where loss_percentage == 100\n| summarize duration_count=count() by vdevice_name, local_color, remote_color, site_id\n| order by duration_count desc'
+        },
+        {
+          name: 'Sudden Loss Transition Detection',
+          description: 'Identifies circuits that went from healthy to complete failure instantly',
+          query: 'dataset="$DATASET" earliest=-4h\n| where site_id == "$AFFECTED_SITE"\n| order by entry_time asc\n| summarize min_loss=min(loss_percentage), max_loss=max(loss_percentage), avg_loss=avg(loss_percentage) by vdevice_name, local_color, bin(entry_time, 5m)\n| order by entry_time desc'
+        },
+        {
+          name: 'Site Health Comparison During Outage',
+          description: 'Compares all circuits at the affected site to determine if issue is isolated',
+          query: 'dataset="$DATASET" earliest=-4h\n| where site_id == "$AFFECTED_SITE"\n| summarize avg_loss=avg(loss_percentage), avg_latency=avg(latency) by local_color, remote_color, vdevice_name\n| order by avg_loss desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-006',
+      name: 'Traffic to Unexpected External Destinations via SD-WAN',
+      objective: 'Detects SD-WAN traffic flows to external IP destinations not in the known destination baseline, which may indicate C2 communication or data exfiltration through the WAN fabric.',
+      severity: 'Medium',
+      mitre: ['T1071 - Application Layer Protocol', 'T1048 - Exfiltration Over Alternative Protocol'],
+      tags: ['security', 'c2', 'sdwan', 'exfiltration', 'anomaly'],
+      requiredFields: ['entry_time', 'vdevice_name', 'src_ip', 'dst_ip', 'dst_port', 'local_color', 'site_id'],
+      detectionLogic: 'Baselines normal destination IP ranges per site over 14 days. Alerts when traffic flows to destination IPs or subnets not previously seen from a given site. Prioritizes destinations in known adversary IP ranges, hosting providers commonly used for C2, or countries where the organization has no presence.',
+      falsePositives: ['New SaaS application adoption', 'Cloud infrastructure scaling adding new IPs', 'CDN IP rotation providing new edge nodes', 'Employee VPN connections to new destinations'],
+      tuningGuidance: 'Build per-site destination baseline over 14-30 days. Exclude known CDN and cloud provider ranges from new destination alerts. Focus on destinations with low request count but regular timing (heartbeat pattern). Integrate threat intelligence for destination enrichment.',
+      investigationWorkflow: '1. Identify the new destination IP and perform geolocation/reputation lookup\n2. Determine which site and device is generating the traffic\n3. Review the destination port for known service associations\n4. Check traffic pattern — is it periodic (C2 beacon) or bulk (exfiltration)?\n5. Cross-reference with endpoint security logs from the source site\n6. Block the destination if confirmed malicious',
+      criblSearchQueries: [
+        {
+          name: 'New Destinations by Site - Last 24h',
+          description: 'Identifies destination IPs seen for the first time from each site',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(entry_time), count() by dst_ip, dst_port, site_id, vdevice_name\n| order by first_seen desc'
+        },
+        {
+          name: 'Periodic Connection Pattern Detection',
+          description: 'Identifies regular/periodic connections that may indicate C2 beaconing',
+          query: 'dataset="$DATASET" earliest=-24h\n| where site_id == "$SUSPECT_SITE"\n| summarize count() by dst_ip, dst_port, bin(entry_time, 1h)\n| order by dst_ip, entry_time'
+        },
+        {
+          name: 'External Destination Volume Analysis',
+          description: 'Shows traffic volume to external destinations for exfiltration detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize flow_count=count() by dst_ip, dst_port, site_id\n| where flow_count > 50\n| order by flow_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-sec-007',
+      name: 'Multiple Sites Experiencing Simultaneous SLA Degradation',
+      objective: 'Detects correlated SLA degradation across multiple sites simultaneously, which may indicate a coordinated DDoS attack against the organization WAN infrastructure or BGP hijacking.',
+      severity: 'High',
+      mitre: ['T1498.001 - Network Denial of Service: Direct Network Flood', 'T1499.001 - Endpoint Denial of Service: OS Exhaustion Flood'],
+      tags: ['security', 'ddos', 'sdwan', 'coordinated-attack', 'availability'],
+      requiredFields: ['entry_time', 'vdevice_name', 'local_color', 'latency', 'jitter', 'loss_percentage', 'site_id', 'sla_class'],
+      detectionLogic: 'Monitors for SLA violations occurring at 3 or more sites within the same 15-minute window. Correlated degradation across geographically distributed sites on the same carrier/color is unlikely to be coincidental and suggests a targeted attack against the organization. Examines if the same color (transport) is affected across sites.',
+      falsePositives: ['Major ISP outage affecting multiple regions', 'Global internet routing issues', 'Organization-wide bandwidth-intensive operations (large-scale patching)', 'Simultaneous maintenance across carrier network'],
+      tuningGuidance: 'Set site count threshold based on organization size (3+ for small, 5+ for large). Correlate affected color to determine if issue is carrier-specific. Integrate ISP status feeds to suppress during known carrier events.',
+      investigationWorkflow: '1. Identify all affected sites and the common transport color\n2. Determine if a single carrier/ISP is responsible\n3. Check ISP status pages and NOC communications\n4. If no ISP issue, investigate for coordinated DDoS\n5. Review traffic patterns for volumetric attack indicators\n6. Engage carrier and activate DDoS mitigation if confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Multi-Site SLA Violations - Last 4h',
+          description: 'Identifies time windows where multiple sites are experiencing SLA issues',
+          query: 'dataset="$DATASET" earliest=-4h\n| where latency > 200 or loss_percentage > 5\n| summarize affected_sites=dcount(site_id) by bin(entry_time, 15m), local_color\n| where affected_sites >= 3\n| order by affected_sites desc'
+        },
+        {
+          name: 'Affected Sites Detail',
+          description: 'Lists all sites experiencing degradation in the alert window',
+          query: 'dataset="$DATASET" earliest=-4h\n| where latency > 200 or loss_percentage > 5\n| summarize avg_latency=avg(latency), avg_loss=avg(loss_percentage), avg_jitter=avg(jitter) by site_id, vdevice_name, local_color\n| order by avg_loss desc'
+        },
+        {
+          name: 'Degradation by Carrier/Color',
+          description: 'Determines if the issue is isolated to a specific transport provider',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize avg_latency=avg(latency), avg_loss=avg(loss_percentage), sites_affected=dcount(site_id) by local_color\n| order by avg_loss desc'
+        },
+        {
+          name: 'Historical Comparison - Same Time Last Week',
+          description: 'Compares current performance against the same period last week for baseline',
+          query: 'dataset="$DATASET" earliest=-7d latest=-6d\n| summarize baseline_latency=avg(latency), baseline_loss=avg(loss_percentage) by site_id, local_color\n| order by baseline_latency desc'
+        }
+      ]
+    }
+  ],
+  'qualys-tenable': [
+    {
+      id: 'vul-sec-001',
+      name: 'Critical Vulnerability with Active Exploitation on Internet-Facing Host',
+      objective: 'Detects critical severity vulnerabilities (CVSS >= 9.0) on hosts that are internet-facing, especially those with known active exploitation in the wild.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1203 - Exploitation for Client Execution'],
+      tags: ['security', 'vulnerability', 'critical', 'internet-facing', 'exploit'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'severity', 'title', 'cve_id', 'cvss_score', 'port', 'protocol', 'status'],
+      detectionLogic: 'Monitors for new vulnerability findings with cvss_score >= 9.0 and severity level 5 (critical) on hosts with open ports (80, 443, 8080, 8443, 22) indicating internet exposure. Cross-references CVE IDs against CISA KEV catalog and known exploitation databases. Alerts immediately for actively exploited critical vulnerabilities on externally accessible hosts.',
+      falsePositives: ['Internal-only hosts with public-facing ports for inter-service communication', 'Vulnerabilities with high CVSS but requiring local access', 'False positive scanner detections on patched systems with updated signatures pending'],
+      tuningGuidance: 'Maintain list of confirmed internet-facing hosts from external ASM data. Prioritize CVEs in CISA KEV. Filter by status to exclude vulnerabilities marked as remediated. Adjust port list based on organization external services.',
+      investigationWorkflow: '1. Confirm the host is actually internet-facing using external scanning or ASM data\n2. Verify the vulnerability is active (status not Fixed/Remediated)\n3. Check if the CVE has known public exploits or is in CISA KEV\n4. Determine if compensating controls exist (WAF, IPS rules)\n5. Initiate emergency patching or apply virtual patching\n6. Review logs for the host for any exploitation indicators',
+      criblSearchQueries: [
+        {
+          name: 'Critical Vulnerabilities on Exposed Hosts',
+          description: 'Lists critical vulnerabilities on hosts with internet-facing ports',
+          query: 'dataset="$DATASET" earliest=-7d\n| where cvss_score >= 9.0\n| where port in ("80", "443", "8080", "8443", "22")\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, title, cve_id, cvss_score, port\n| order by cvss_score desc'
+        },
+        {
+          name: 'New Critical Findings - Last 24h',
+          description: 'Shows critical vulnerabilities first discovered in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where cvss_score >= 9.0\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, cve_id, title, cvss_score\n| order by cvss_score desc'
+        },
+        {
+          name: 'Critical Vulnerability Trend by Host',
+          description: 'Tracks critical vulnerability count over time per host',
+          query: 'dataset="$DATASET" earliest=-30d\n| where cvss_score >= 9.0\n| where status != "Fixed"\n| timestats span=1d dcount(cve_id) by host_ip'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-002',
+      name: 'Vulnerability Reappearance After Remediation',
+      objective: 'Detects vulnerabilities that were previously marked as fixed but have reappeared on the same host, indicating failed patching, configuration drift, or rollback.',
+      severity: 'High',
+      mitre: ['T1195.002 - Supply Chain Compromise: Compromise Software Supply Chain', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'vulnerability', 'regression', 'patch-management', 'drift'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'qid', 'title', 'cve_id', 'cvss_score', 'first_found', 'last_found', 'status'],
+      detectionLogic: 'Monitors for vulnerability findings where the same QID/CVE on the same host has a first_found date significantly later than a previous last_found date, or where status transitions from Fixed back to Active. This indicates the patch was rolled back, the system was reimaged without patches, or the vulnerability was reintroduced through configuration changes.',
+      falsePositives: ['System reimaging as part of normal lifecycle (rebuilds)', 'Scanner false positives due to detection signature changes', 'Application updates reintroducing previously patched components'],
+      tuningGuidance: 'Track remediation history per host/QID pair. Alert on regression within 30 days of remediation. Exclude hosts known to be in rebuild cycles. Focus on high-severity regressions (CVSS >= 7.0).',
+      investigationWorkflow: '1. Verify the vulnerability has genuinely reappeared (not a scanner false positive)\n2. Check host patch history and recent changes\n3. Determine if the host was rebuilt, rolled back, or reconfigured\n4. Review change management for the host around the reappearance date\n5. Ensure the root cause is addressed to prevent future regressions\n6. Repatch the vulnerability and validate',
+      criblSearchQueries: [
+        {
+          name: 'Vulnerability Regressions - Last 30 Days',
+          description: 'Identifies vulnerabilities that reappeared after being remediated',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status == "Active" or status == "New"\n| summarize latest_found=max(last_found), earliest_found=min(first_found) by host_ip, qid, title, cve_id\n| order by latest_found desc'
+        },
+        {
+          name: 'Hosts with Most Regressions',
+          description: 'Ranks hosts by number of reappearing vulnerabilities indicating systemic issues',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status == "Active" or status == "Reopened"\n| summarize regression_count=dcount(qid) by host_ip, host_fqdn\n| where regression_count > 3\n| order by regression_count desc'
+        },
+        {
+          name: 'High-CVSS Regressions',
+          description: 'Focuses on high-severity vulnerability regressions that need immediate attention',
+          query: 'dataset="$DATASET" earliest=-30d\n| where cvss_score >= 7.0\n| where status == "Active" or status == "Reopened"\n| summarize count() by host_ip, host_fqdn, cve_id, title, cvss_score\n| order by cvss_score desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-003',
+      name: 'Host with Excessive Vulnerability Count',
+      objective: 'Detects hosts accumulating an unusually high number of unpatched vulnerabilities, indicating neglected systems that present significant attack surface.',
+      severity: 'High',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1210 - Exploitation of Remote Services'],
+      tags: ['security', 'vulnerability', 'hygiene', 'neglected-host', 'risk'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'host_os', 'severity', 'title', 'cvss_score', 'status'],
+      detectionLogic: 'Monitors for hosts with more than 50 active (unfixed) vulnerabilities, or more than 5 critical/high vulnerabilities simultaneously. Correlates with host_os to identify end-of-life operating systems. Hosts exceeding vulnerability thresholds are likely unmanaged, forgotten, or exempt from patching programs and represent significant risk.',
+      falsePositives: ['Legacy systems with accepted risk and compensating controls', 'Lab or test environments not in patching scope', 'Newly discovered hosts pending initial remediation cycle'],
+      tuningGuidance: 'Set thresholds per environment type (production stricter than dev). Exclude hosts with documented risk acceptance. Adjust counts based on organization patch cycle timing (higher threshold right before patch window).',
+      investigationWorkflow: '1. Identify the host and determine its role and owner\n2. Check if the host is in an active patching program\n3. Review the OS version for end-of-life status\n4. Determine if compensating controls exist for this host\n5. Escalate to asset owner for remediation planning\n6. Consider network isolation if risk is unacceptable',
+      criblSearchQueries: [
+        {
+          name: 'Hosts with Highest Vulnerability Counts',
+          description: 'Ranks hosts by total active vulnerability count',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Fixed"\n| summarize vuln_count=count(), critical_count=countif(cvss_score >= 9.0), high_count=countif(cvss_score >= 7.0) by host_ip, host_fqdn, host_os\n| where vuln_count > 50\n| order by vuln_count desc'
+        },
+        {
+          name: 'End-of-Life OS with Vulnerabilities',
+          description: 'Identifies hosts running deprecated operating systems with active vulnerabilities',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Fixed"\n| where host_os has "2008" or host_os has "2003" or host_os has "XP" or host_os has "7"\n| summarize vuln_count=count() by host_ip, host_fqdn, host_os\n| order by vuln_count desc'
+        },
+        {
+          name: 'Vulnerability Accumulation Trend',
+          description: 'Tracks how vulnerability counts are growing over time for neglected hosts',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status != "Fixed"\n| timestats span=1d dcount(qid) by host_ip\n| order by count_ desc'
+        },
+        {
+          name: 'Critical Vulnerabilities on Neglected Hosts',
+          description: 'Lists specific critical vulnerabilities on high-count hosts for prioritization',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Fixed"\n| where cvss_score >= 9.0\n| where host_ip == "$NEGLECTED_HOST"\n| summarize count() by title, cve_id, cvss_score, port\n| order by cvss_score desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-004',
+      name: 'Aging Critical Vulnerability Beyond SLA',
+      objective: 'Detects critical and high severity vulnerabilities that remain unpatched beyond organizational SLA timelines (e.g., 15 days for critical, 30 days for high), indicating remediation process failure.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1133 - External Remote Services'],
+      tags: ['security', 'vulnerability', 'sla', 'compliance', 'overdue'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'severity', 'title', 'cve_id', 'cvss_score', 'first_found', 'last_found', 'status'],
+      detectionLogic: 'Calculates vulnerability age from first_found to current date. Alerts when critical vulnerabilities (CVSS >= 9.0) exceed 15 days unfixed, or high vulnerabilities (CVSS >= 7.0) exceed 30 days unfixed. Correlates with host role and exposure to prioritize alerting. Tracks aging trend to identify systematic remediation failures.',
+      falsePositives: ['Vulnerabilities with approved exception/risk acceptance', 'Hosts scheduled for decommissioning', 'Vulnerabilities awaiting vendor patch availability'],
+      tuningGuidance: 'Align SLA thresholds with organizational policy (adjust 15/30 day defaults). Exclude hosts with documented risk acceptance tickets. Factor in patch availability dates for vulnerabilities without vendor fixes. Consider separate SLAs for internet-facing vs internal.',
+      investigationWorkflow: '1. Identify the overdue vulnerability and host details\n2. Check for existing remediation tickets or risk acceptance records\n3. Determine if a vendor patch is available\n4. Contact the asset owner about remediation timeline\n5. Escalate to management if SLA is significantly exceeded\n6. Apply compensating controls while awaiting remediation',
+      criblSearchQueries: [
+        {
+          name: 'Critical Vulnerabilities Beyond 15-Day SLA',
+          description: 'Lists critical vulnerabilities that have exceeded the remediation SLA',
+          query: 'dataset="$DATASET" earliest=-90d\n| where cvss_score >= 9.0\n| where status != "Fixed"\n| extend age_days = datetime_diff("day", now(), first_found)\n| where age_days > 15\n| summarize count() by host_ip, host_fqdn, cve_id, title, cvss_score, first_found\n| order by first_found asc'
+        },
+        {
+          name: 'High Vulnerabilities Beyond 30-Day SLA',
+          description: 'Lists high-severity vulnerabilities exceeding their SLA',
+          query: 'dataset="$DATASET" earliest=-90d\n| where cvss_score >= 7.0 and cvss_score < 9.0\n| where status != "Fixed"\n| extend age_days = datetime_diff("day", now(), first_found)\n| where age_days > 30\n| summarize count() by host_ip, host_fqdn, cve_id, title, cvss_score\n| order by cvss_score desc'
+        },
+        {
+          name: 'SLA Compliance by Team/Subnet',
+          description: 'Shows SLA compliance rates grouped by network segment for accountability',
+          query: 'dataset="$DATASET" earliest=-30d\n| where cvss_score >= 7.0\n| where status != "Fixed"\n| extend age_days = datetime_diff("day", now(), first_found)\n| summarize total=count(), overdue=countif(age_days > 30) by host_ip\n| extend compliance_pct = round((todouble(total - overdue) / todouble(total)) * 100, 2)\n| order by compliance_pct asc'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-005',
+      name: 'New Zero-Day or Recently Published CVE Detected',
+      objective: 'Detects newly published CVEs (within 7 days of disclosure) found in the environment, enabling rapid response to emerging threats before exploitation campaigns scale.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1211 - Exploitation for Defense Evasion'],
+      tags: ['security', 'vulnerability', 'zero-day', 'emerging-threat', 'rapid-response'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'cve_id', 'cvss_score', 'title', 'first_found', 'status', 'port'],
+      detectionLogic: 'Monitors for vulnerability findings where the CVE publication date is within the last 7 days and the finding was first detected in the current scan cycle. Cross-references with threat intelligence for CVEs with proof-of-concept exploits or active exploitation reports. Immediate alerting for any newly published CVE with CVSS >= 7.0.',
+      falsePositives: ['Scanner false positives on newly added detection signatures', 'CVEs with high CVSS but limited real-world exploitability', 'Vulnerabilities in components not actually exposed'],
+      tuningGuidance: 'Integrate CVE publication date feeds for accurate age calculation. Prioritize CVEs with known exploitation (CISA KEV updates). Adjust the 7-day window based on organization risk tolerance. Focus on CVEs affecting externally reachable services.',
+      investigationWorkflow: '1. Verify the CVE details and confirm it applies to the detected software version\n2. Check for available patches or workarounds\n3. Determine the host exposure level (internet-facing vs internal)\n4. Review threat intelligence for active exploitation campaigns\n5. Apply emergency patches or workarounds for actively exploited CVEs\n6. Monitor affected hosts for indicators of compromise',
+      criblSearchQueries: [
+        {
+          name: 'Recently Published CVEs in Environment',
+          description: 'Lists CVEs first found in the last 7 days that may be newly published',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Fixed"\n| where first_found > ago(7d)\n| summarize affected_hosts=dcount(host_ip) by cve_id, title, cvss_score\n| order by cvss_score desc'
+        },
+        {
+          name: 'New CVE Impact Assessment',
+          description: 'Shows all hosts affected by a specific new CVE for remediation planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| where cve_id == "$NEW_CVE"\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, port, protocol\n| order by count_ desc'
+        },
+        {
+          name: 'High-CVSS New Findings on External Ports',
+          description: 'Prioritizes new high-severity findings on internet-facing services',
+          query: 'dataset="$DATASET" earliest=-7d\n| where first_found > ago(7d)\n| where cvss_score >= 7.0\n| where port in ("80", "443", "22", "8080", "8443")\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, cve_id, title, cvss_score, port\n| order by cvss_score desc'
+        },
+        {
+          name: 'New CVE Detection Timeline',
+          description: 'Shows when new CVEs were first detected across the environment',
+          query: 'dataset="$DATASET" earliest=-7d\n| where first_found > ago(7d)\n| where cvss_score >= 7.0\n| timestats span=1d dcount(cve_id) as new_cves, dcount(host_ip) as affected_hosts'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-006',
+      name: 'Database Service Vulnerability on Production Host',
+      objective: 'Detects vulnerabilities affecting database services (MySQL, PostgreSQL, MSSQL, Oracle, MongoDB) on hosts likely in production, which could lead to data breach if exploited.',
+      severity: 'High',
+      mitre: ['T1210 - Exploitation of Remote Services', 'T1505.001 - Server Software Component: SQL Stored Procedures'],
+      tags: ['security', 'vulnerability', 'database', 'data-breach', 'production'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'title', 'cve_id', 'cvss_score', 'port', 'protocol', 'status', 'severity'],
+      detectionLogic: 'Monitors for vulnerability findings on database service ports (3306 MySQL, 5432 PostgreSQL, 1433 MSSQL, 1521 Oracle, 27017 MongoDB) with severity >= High. Correlates with host_fqdn patterns to identify production systems (e.g., prod-, prd-, database naming conventions). Prioritizes findings that enable remote code execution or authentication bypass.',
+      falsePositives: ['Development or staging databases with relaxed patching SLAs', 'Database ports open but service not actually running', 'Compensating controls (network segmentation) mitigating the risk'],
+      tuningGuidance: 'Define production host identification patterns (FQDN, IP ranges). Focus on RCE and auth bypass vulnerability titles. Exclude dev/test databases if risk-accepted. Consider network segmentation as a mitigating factor.',
+      investigationWorkflow: '1. Identify the database type and version from the vulnerability details\n2. Confirm the host is a production database server\n3. Check if the vulnerability enables remote exploitation or requires authentication\n4. Review network access controls — can the port be reached from untrusted networks?\n5. Determine patch availability and schedule emergency maintenance\n6. Apply virtual patching (WAF/IPS rules) as interim mitigation',
+      criblSearchQueries: [
+        {
+          name: 'Database Vulnerabilities - Active',
+          description: 'Lists all active vulnerabilities on database service ports',
+          query: 'dataset="$DATASET" earliest=-7d\n| where port in ("3306", "5432", "1433", "1521", "27017")\n| where status != "Fixed"\n| where cvss_score >= 7.0\n| summarize count() by host_ip, host_fqdn, port, cve_id, title, cvss_score\n| order by cvss_score desc'
+        },
+        {
+          name: 'Production Database Hosts with Vulnerabilities',
+          description: 'Identifies likely production database hosts based on naming conventions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where port in ("3306", "5432", "1433", "1521", "27017")\n| where status != "Fixed"\n| where host_fqdn has "prod" or host_fqdn has "prd" or host_fqdn has "db"\n| summarize vuln_count=count(), max_cvss=max(cvss_score) by host_ip, host_fqdn, port\n| order by max_cvss desc'
+        },
+        {
+          name: 'Database Vulnerability Severity Distribution',
+          description: 'Shows severity breakdown of database vulnerabilities for risk assessment',
+          query: 'dataset="$DATASET" earliest=-7d\n| where port in ("3306", "5432", "1433", "1521", "27017")\n| where status != "Fixed"\n| summarize count() by severity, port\n| order by severity desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-sec-007',
+      name: 'SSL/TLS Certificate or Configuration Vulnerability',
+      objective: 'Detects SSL/TLS vulnerabilities including expired certificates, weak cipher suites, and protocol downgrade vulnerabilities that could enable man-in-the-middle attacks.',
+      severity: 'Medium',
+      mitre: ['T1557 - Adversary-in-the-Middle', 'T1040 - Network Sniffing'],
+      tags: ['security', 'vulnerability', 'ssl', 'tls', 'encryption', 'certificate'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'title', 'qid', 'severity', 'port', 'protocol', 'status', 'cvss_score'],
+      detectionLogic: 'Monitors for vulnerability findings related to SSL/TLS configuration issues including: expired or self-signed certificates, SSLv3/TLS 1.0/1.1 enabled, weak cipher suites (RC4, DES, NULL), POODLE, BEAST, Heartbleed, and certificate trust chain issues. Filters by title keywords and known QIDs related to cryptographic weaknesses.',
+      falsePositives: ['Internal services using self-signed certificates by design', 'Legacy systems requiring older TLS versions with compensating controls', 'Certificate renewals in progress'],
+      tuningGuidance: 'Exclude internal services with documented self-signed certificate acceptance. Focus on internet-facing services for highest priority. Group by vulnerability type (expired cert vs weak cipher vs protocol) for different response workflows.',
+      investigationWorkflow: '1. Identify the specific SSL/TLS issue (expired cert, weak cipher, old protocol)\n2. Determine if the service is internet-facing or internal\n3. Check certificate expiration dates and renewal status\n4. Review TLS configuration for disabled weak ciphers/protocols\n5. Schedule certificate renewal or TLS hardening\n6. Verify fix with targeted rescan after remediation',
+      criblSearchQueries: [
+        {
+          name: 'SSL/TLS Vulnerabilities - Active',
+          description: 'Lists all active SSL/TLS related vulnerabilities',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title has "SSL" or title has "TLS" or title has "Certificate" or title has "cipher"\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, title, port, severity\n| order by severity desc'
+        },
+        {
+          name: 'Expired Certificates',
+          description: 'Identifies hosts with expired SSL certificates requiring immediate renewal',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title has "expired" or title has "Expired"\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, port, title\n| order by count_ desc'
+        },
+        {
+          name: 'Weak Protocols and Ciphers',
+          description: 'Shows hosts with outdated TLS versions or weak cipher suites',
+          query: 'dataset="$DATASET" earliest=-7d\n| where title has "SSLv3" or title has "TLS 1.0" or title has "RC4" or title has "DES" or title has "NULL cipher"\n| where status != "Fixed"\n| summarize count() by host_ip, host_fqdn, title, port\n| order by count_ desc'
+        },
+        {
+          name: 'SSL Vulnerability Trend',
+          description: 'Tracks SSL/TLS vulnerability counts over time for improvement metrics',
+          query: 'dataset="$DATASET" earliest=-30d\n| where title has "SSL" or title has "TLS" or title has "Certificate"\n| where status != "Fixed"\n| timestats span=1d count() by severity'
+        }
+      ]
+    }
+  ],
+  'citrix-netscaler': [
+    {
+      id: 'ctx-sec-001',
+      name: 'Citrix NetScaler Brute Force Authentication Attempt',
+      objective: 'Detects multiple failed authentication attempts from a single client IP against Citrix Gateway, indicating potential credential brute-force or password spraying attacks.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.003 - Password Spraying'],
+      tags: ['security', 'authentication', 'brute-force', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'httpStatusCode', 'httpURL', 'vserverName'],
+      detectionLogic: 'Counts HTTP 401 responses per client IP within a 5-minute window. Triggers when a single source IP generates more than 20 failed authentication attempts against Citrix Gateway login endpoints. Correlates with vserverName to identify targeted virtual servers.',
+      falsePositives: ['Misconfigured load balancer health checks', 'Automated monitoring tools with expired credentials', 'Users with cached expired credentials on multiple devices'],
+      tuningGuidance: 'Adjust the threshold of 20 failed attempts based on normal authentication patterns. Whitelist known monitoring IPs and health check sources. Consider increasing the time window for environments with slower authentication flows.',
+      investigationWorkflow: '1. Identify the source clientIP and determine if it is internal or external\n2. Check if the IP has successfully authenticated before or after the failed attempts\n3. Determine the targeted vserverName and associated applications\n4. Look for lateral movement or successful logins from the same IP\n5. Check threat intelligence feeds for the source IP reputation',
+      criblSearchQueries: [
+        {
+          name: 'Failed Auth Count by Client IP',
+          description: 'Counts failed authentication attempts (HTTP 401) per client IP in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpStatusCode == 401\n| summarize attempt_count=count() by clientIP, vserverName\n| where attempt_count > 20\n| order by attempt_count desc'
+        },
+        {
+          name: 'Authentication Timeline for Suspicious IP',
+          description: 'Shows the timeline of authentication attempts from a specific client IP',
+          query: 'dataset="$DATASET" earliest=-1h\n| where clientIP == "$SUSPECT_IP"\n| summarize count() by httpStatusCode, bin(timestamp, 1m)\n| order by timestamp asc'
+        },
+        {
+          name: 'Targeted Virtual Servers',
+          description: 'Identifies which virtual servers are being targeted by brute force attempts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpStatusCode == 401\n| summarize failed_count=count(), unique_ips=dcount(clientIP) by vserverName\n| where failed_count > 50\n| order by failed_count desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-002',
+      name: 'Citrix NetScaler Path Traversal Attempt',
+      objective: 'Detects path traversal sequences in HTTP URLs targeting Citrix NetScaler, which may indicate exploitation attempts against known CVEs such as CVE-2019-19781 or CVE-2023-3519.',
+      severity: 'Critical',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1083 - File and Directory Discovery'],
+      tags: ['security', 'exploitation', 'cve', 'path-traversal', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'httpURL', 'httpMethod', 'httpStatusCode', 'nsip'],
+      detectionLogic: 'Scans httpURL field for path traversal patterns including ../, %2e%2e, and known Citrix exploit paths such as /vpns/ or /nsconfig/. Triggers on any request containing directory traversal sequences regardless of response code, as even blocked attempts indicate active targeting.',
+      falsePositives: ['Vulnerability scanners run by the security team', 'Penetration testing activities', 'Legitimate URLs that coincidentally contain encoded dots'],
+      tuningGuidance: 'Whitelist authorized vulnerability scanner IPs. Add exceptions for known penetration testing windows. Adjust URL pattern matching to exclude legitimate application paths that may trigger false positives.',
+      investigationWorkflow: '1. Examine the full httpURL to determine the specific exploit being attempted\n2. Check the httpStatusCode to determine if the exploit was successful (200 vs 403/404)\n3. Investigate the clientIP for additional malicious activity\n4. Verify the targeted nsip is patched against known CVEs\n5. Check for any post-exploitation indicators such as webshell uploads or command execution',
+      criblSearchQueries: [
+        {
+          name: 'Path Traversal Attempts',
+          description: 'Identifies requests containing path traversal sequences',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(\\.\\.\\/|%2e%2e|%252e%252e|/vpns/|/nsconfig/)"\n| summarize count() by clientIP, httpURL, httpStatusCode\n| order by count_ desc'
+        },
+        {
+          name: 'Successful Exploit Indicators',
+          description: 'Filters for path traversal attempts that received successful responses',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(\\.\\.\\/|%2e%2e)" and httpStatusCode >= 200 and httpStatusCode < 300\n| summarize count() by clientIP, httpURL, httpMethod\n| order by count_ desc'
+        },
+        {
+          name: 'Targeted NetScaler Instances',
+          description: 'Shows which NetScaler instances are being targeted by exploitation attempts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where httpURL matches regex "(\\.\\.\\/|%2e%2e|/vpns/|/nsconfig/)"\n| summarize attempt_count=count(), unique_attackers=dcount(clientIP) by nsip\n| order by attempt_count desc'
+        },
+        {
+          name: 'Attacker Profiling',
+          description: 'Profiles attacker behavior across methods and targets',
+          query: 'dataset="$DATASET" earliest=-24h\n| where clientIP == "$SUSPECT_IP"\n| summarize count() by httpMethod, httpURL, httpStatusCode\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-003',
+      name: 'Citrix NetScaler Anomalous Data Exfiltration',
+      objective: 'Detects unusually large data transfers through Citrix NetScaler that may indicate data exfiltration via the gateway, especially when combined with unusual destination patterns.',
+      severity: 'High',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1030 - Data Transfer Size Limits'],
+      tags: ['security', 'exfiltration', 'data-loss', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'serverIP', 'totalBytesSent', 'totalBytesRecvd', 'vserverName'],
+      detectionLogic: 'Calculates total bytes sent per client session and flags transfers exceeding a baseline threshold (e.g., 500MB in a single session or 1GB aggregate within 1 hour). Compares against historical transfer patterns per user/IP to identify statistical outliers using standard deviation analysis.',
+      falsePositives: ['Large legitimate file downloads from internal applications', 'Backup operations through the gateway', 'Software deployment or update activities', 'Video conferencing or streaming through the proxy'],
+      tuningGuidance: 'Establish per-user baseline transfer volumes over a 30-day period. Adjust thresholds based on business unit and role. Whitelist known large-transfer applications and backup server IPs. Consider time-of-day patterns for more accurate detection.',
+      investigationWorkflow: '1. Identify the clientIP and associated user account\n2. Determine the serverIP destinations receiving the large transfers\n3. Compare the transfer volume against the users historical baseline\n4. Check the time of day and whether it aligns with normal business hours\n5. Investigate what data resides on the destination servers\n6. Correlate with DLP alerts or file access logs',
+      criblSearchQueries: [
+        {
+          name: 'Top Data Transfers by Client',
+          description: 'Identifies clients with the highest outbound data transfer volumes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize total_sent=sum(totalBytesSent), total_recv=sum(totalBytesRecvd), session_count=count() by clientIP\n| extend total_sent_mb=total_sent / 1048576\n| where total_sent_mb > 500\n| order by total_sent_mb desc'
+        },
+        {
+          name: 'Hourly Transfer Volume Anomalies',
+          description: 'Shows hourly data transfer patterns to identify spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize hourly_bytes=sum(totalBytesSent) by clientIP, bin(timestamp, 1h)\n| extend hourly_mb=hourly_bytes / 1048576\n| where hourly_mb > 100\n| order by hourly_mb desc'
+        },
+        {
+          name: 'Destination Analysis for High-Volume Transfers',
+          description: 'Maps high-volume transfer destinations for a specific client',
+          query: 'dataset="$DATASET" earliest=-24h\n| where clientIP == "$SUSPECT_IP"\n| summarize bytes_sent=sum(totalBytesSent) by serverIP, vserverName\n| extend mb_sent=bytes_sent / 1048576\n| order by mb_sent desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-004',
+      name: 'Citrix NetScaler Slow HTTP DoS Attack',
+      objective: 'Detects slow HTTP denial-of-service attacks (Slowloris, RUDY) against Citrix NetScaler by identifying connections with abnormally high server response times combined with minimal data transfer.',
+      severity: 'Medium',
+      mitre: ['T1499.001 - OS Exhaustion Flood', 'T1499 - Endpoint Denial of Service'],
+      tags: ['security', 'dos', 'availability', 'slowloris', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'serverResponseTime', 'totalBytesRecvd', 'totalBytesSent', 'vserverName'],
+      detectionLogic: 'Identifies connections where serverResponseTime exceeds normal thresholds (>30 seconds) while totalBytesRecvd remains very low (<1KB). Multiple such connections from the same clientIP within a short window indicate slow HTTP attack patterns. Correlates with connection count to differentiate from legitimate slow connections.',
+      falsePositives: ['Users on extremely slow network connections', 'Long-running legitimate API calls', 'Timeout conditions from server-side processing delays'],
+      tuningGuidance: 'Adjust serverResponseTime threshold based on application normal response profiles. Set minimum connection count threshold to reduce noise from individual slow connections. Whitelist known long-running API endpoints.',
+      investigationWorkflow: '1. Check the number of concurrent slow connections from the clientIP\n2. Verify if the vserverName is experiencing degraded performance\n3. Determine if the connections are targeting a specific endpoint\n4. Check if connection counts are approaching vserver limits\n5. Implement rate limiting or IP blocking if attack is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Slow Connections Detection',
+          description: 'Identifies clients with multiple abnormally slow connections and minimal data transfer',
+          query: 'dataset="$DATASET" earliest=-1h\n| where serverResponseTime > 30000 and totalBytesRecvd < 1024\n| summarize slow_count=count() by clientIP, vserverName\n| where slow_count > 10\n| order by slow_count desc'
+        },
+        {
+          name: 'Response Time Distribution',
+          description: 'Shows response time distribution to identify outlier patterns',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize avg_response=avg(serverResponseTime), max_response=max(serverResponseTime), p95_response=percentile(serverResponseTime, 95) by vserverName\n| where avg_response > 10000\n| order by avg_response desc'
+        },
+        {
+          name: 'Virtual Server Health Impact',
+          description: 'Assesses whether slow attacks are impacting virtual server performance',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize total_connections=count(), slow_connections=countif(serverResponseTime > 30000), avg_bytes=avg(totalBytesRecvd) by vserverName, bin(timestamp, 5m)\n| extend slow_ratio=slow_connections * 100 / total_connections\n| where slow_ratio > 20\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-005',
+      name: 'Citrix NetScaler Unauthorized Admin Access',
+      objective: 'Detects access attempts to Citrix NetScaler administrative interfaces from unauthorized IP addresses, indicating potential unauthorized management plane access.',
+      severity: 'Critical',
+      mitre: ['T1078 - Valid Accounts', 'T1021 - Remote Services'],
+      tags: ['security', 'admin-access', 'management-plane', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'httpURL', 'httpMethod', 'httpStatusCode', 'nsip', 'destinationPort'],
+      detectionLogic: 'Monitors for HTTP requests to known Citrix NetScaler administrative paths (/nitro/, /menu/neo, /menu/ss, /gui/) on management ports. Triggers when requests originate from IPs outside the authorized admin subnet list. Includes both successful and failed access attempts.',
+      falsePositives: ['New admin workstations not yet added to the allowlist', 'Emergency access from non-standard locations', 'Automated configuration management tools from new IPs'],
+      tuningGuidance: 'Maintain an updated list of authorized admin source IPs/subnets. Add exceptions for break-glass accounts with enhanced logging. Consider restricting detection to successful responses only if volume is too high.',
+      investigationWorkflow: '1. Determine if the clientIP belongs to the organization\n2. Check if the access was successful (httpStatusCode 200)\n3. Review what administrative actions were performed\n4. Verify with the network team if this is authorized access\n5. Check for any configuration changes made during the session\n6. If unauthorized, immediately block the IP and rotate admin credentials',
+      criblSearchQueries: [
+        {
+          name: 'Admin Interface Access Attempts',
+          description: 'Identifies all access attempts to administrative endpoints',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(/nitro/|/menu/neo|/menu/ss|/gui/)"\n| summarize count() by clientIP, httpURL, httpStatusCode, nsip\n| order by count_ desc'
+        },
+        {
+          name: 'Successful Admin Access from Non-Standard IPs',
+          description: 'Filters for successful admin access from potentially unauthorized sources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(/nitro/|/menu/neo|/gui/)" and httpStatusCode >= 200 and httpStatusCode < 300\n| where clientIP !matches regex "^(10\\.0\\.1\\.|192\\.168\\.100\\.)"\n| summarize count() by clientIP, httpURL, nsip\n| order by count_ desc'
+        },
+        {
+          name: 'Admin Access Timeline',
+          description: 'Shows temporal pattern of administrative access for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-7d\n| where httpURL matches regex "(/nitro/|/menu/neo|/gui/)"\n| summarize access_count=count(), unique_ips=dcount(clientIP) by bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Admin Action Correlation',
+          description: 'Correlates admin access with specific HTTP methods indicating configuration changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(/nitro/)" and httpMethod in ("POST", "PUT", "DELETE")\n| summarize count() by clientIP, httpMethod, httpURL, httpStatusCode\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-006',
+      name: 'Citrix NetScaler Server-Side Request Forgery Indicators',
+      objective: 'Detects potential SSRF attempts through Citrix NetScaler by identifying requests where the serverIP resolves to internal infrastructure addresses that should not be directly accessible through the gateway.',
+      severity: 'High',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1018 - Remote System Discovery'],
+      tags: ['security', 'ssrf', 'exploitation', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'serverIP', 'httpURL', 'httpMethod', 'httpStatusCode', 'vserverName'],
+      detectionLogic: 'Identifies requests where the backend serverIP contacted is within sensitive internal ranges (metadata services 169.254.169.254, management networks, database subnets) that should never be accessed through a content-switching or load-balancing vserver. Also detects URL patterns containing internal IP addresses or cloud metadata endpoints.',
+      falsePositives: ['Misconfigured backend service pools', 'Legitimate internal API calls through the gateway', 'Health check configurations pointing to internal services'],
+      tuningGuidance: 'Define a list of sensitive internal subnets that should never appear as serverIP for external-facing vservers. Whitelist legitimate backend pools. Monitor for new serverIP addresses appearing that are outside expected ranges.',
+      investigationWorkflow: '1. Verify the serverIP and determine if it matches a sensitive internal resource\n2. Check the httpURL for embedded internal IPs or metadata service paths\n3. Determine if the request was successful and what data was returned\n4. Check the vserver configuration for unexpected backend changes\n5. Investigate the clientIP for additional malicious indicators\n6. Review NetScaler configuration for any unauthorized policy modifications',
+      criblSearchQueries: [
+        {
+          name: 'Internal IP Access via Gateway',
+          description: 'Detects requests routing to sensitive internal IPs through the gateway',
+          query: 'dataset="$DATASET" earliest=-24h\n| where serverIP matches regex "^(169\\.254\\.|10\\.0\\.0\\.|172\\.16\\.)"\n| summarize count() by clientIP, serverIP, httpURL, vserverName\n| order by count_ desc'
+        },
+        {
+          name: 'Metadata Service Access Attempts',
+          description: 'Identifies attempts to reach cloud metadata services through the proxy',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(169\\.254\\.169\\.254|metadata\\.google|metadata\\.azure)" or serverIP == "169.254.169.254"\n| summarize count() by clientIP, httpURL, serverIP, httpStatusCode\n| order by count_ desc'
+        },
+        {
+          name: 'Unusual Backend Server Discovery',
+          description: 'Finds new or unusual backend server IPs that may indicate SSRF exploitation',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize first_seen=min(timestamp), request_count=count() by serverIP, vserverName\n| where first_seen > ago(24h)\n| order by first_seen desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-sec-007',
+      name: 'Citrix NetScaler HTTP Response Splitting',
+      objective: 'Detects HTTP response splitting and header injection attempts against Citrix NetScaler that could enable cache poisoning, cross-site scripting, or session hijacking.',
+      severity: 'Medium',
+      mitre: ['T1189 - Drive-by Compromise', 'T1059.007 - JavaScript'],
+      tags: ['security', 'injection', 'http-smuggling', 'citrix'],
+      requiredFields: ['timestamp', 'clientIP', 'httpURL', 'httpMethod', 'httpStatusCode', 'profileName', 'vserverName'],
+      detectionLogic: 'Scans httpURL for CRLF injection sequences (%0d%0a, %0D%0A, \\r\\n) and header injection patterns. Also detects URL-encoded newline characters followed by HTTP header syntax patterns. Triggers on any request containing these sequences regardless of the response code.',
+      falsePositives: ['Legitimate URLs containing encoded characters for non-malicious purposes', 'Web application frameworks that use encoded newlines in parameters', 'Security scanning tools testing for vulnerabilities'],
+      tuningGuidance: 'Whitelist specific application paths that legitimately use encoded characters. Add exceptions for authorized security scanning tools. Consider monitoring only external-facing vservers to reduce noise.',
+      investigationWorkflow: '1. Decode the full httpURL to examine the injection payload\n2. Determine if the injection was successful by checking response headers\n3. Check if the clientIP has attempted other injection techniques\n4. Verify the targeted profileName has appropriate security policies\n5. Review WAF logs for correlated blocked requests\n6. Check for evidence of cache poisoning on downstream systems',
+      criblSearchQueries: [
+        {
+          name: 'CRLF Injection Attempts',
+          description: 'Identifies requests containing CRLF injection sequences',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(%0[dD]%0[aA]|%0d%0a|\\\\r\\\\n)"\n| summarize count() by clientIP, httpURL, httpStatusCode, vserverName\n| order by count_ desc'
+        },
+        {
+          name: 'Header Injection Patterns',
+          description: 'Detects attempts to inject HTTP headers via URL manipulation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where httpURL matches regex "(%0[dD]%0[aA]).*(Content-Type|Set-Cookie|Location|X-)"\n| summarize count() by clientIP, httpURL, profileName\n| order by count_ desc'
+        },
+        {
+          name: 'Injection Source Analysis',
+          description: 'Profiles sources attempting injection attacks',
+          query: 'dataset="$DATASET" earliest=-7d\n| where httpURL matches regex "(%0[dD]%0[aA]|%3Cscript|%27|%22)"\n| summarize attack_count=count(), unique_urls=dcount(httpURL) by clientIP\n| where attack_count > 5\n| order by attack_count desc'
+        },
+        {
+          name: 'Targeted Profile Assessment',
+          description: 'Shows which application profiles are most targeted by injection attempts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where httpURL matches regex "(%0[dD]%0[aA]|%3Cscript|%27|%22)"\n| summarize count() by profileName, vserverName\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'darktrace-ndr': [
+    {
+      id: 'dtk-sec-001',
+      name: 'Darktrace Critical Severity Model Breach',
+      objective: 'Detects Darktrace model breaches with maximum severity scores indicating highly anomalous behavior that requires immediate investigation, such as active data exfiltration or command-and-control activity.',
+      severity: 'Critical',
+      mitre: ['T1041 - Exfiltration Over C2 Channel', 'T1071 - Application Layer Protocol'],
+      tags: ['security', 'anomaly', 'darktrace', 'high-confidence'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'model_name', 'score', 'category', 'device_label'],
+      detectionLogic: 'Triggers on Darktrace model breaches where the score field exceeds 0.9 (90% confidence). Focuses on breaches in critical categories such as Critical, Compromise, and Data Exfiltration. Correlates multiple high-score breaches from the same device to identify confirmed incidents.',
+      falsePositives: ['Newly deployed devices generating baseline anomalies', 'Network topology changes causing temporary anomaly spikes', 'Authorized penetration testing activities'],
+      tuningGuidance: 'Adjust score threshold based on environment noise level. Whitelist devices undergoing planned maintenance or migration. Consider category-specific thresholds for different detection contexts.',
+      investigationWorkflow: '1. Review the model_name to understand what behavior triggered the alert\n2. Identify the source_ip and corresponding device_label\n3. Examine the destination_ip for known malicious infrastructure\n4. Check for additional model breaches from the same device\n5. Review Darktrace AI Analyst summary for automated investigation\n6. Determine if containment action is warranted via Antigena',
+      criblSearchQueries: [
+        {
+          name: 'Critical Model Breaches',
+          description: 'Lists all model breaches with scores above 0.9 in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where score > 0.9\n| summarize count() by device_label, model_name, category, source_ip\n| order by count_ desc'
+        },
+        {
+          name: 'Device Breach History',
+          description: 'Shows breach history for a specific device to understand escalation pattern',
+          query: 'dataset="$DATASET" earliest=-7d\n| where device_label == "$DEVICE"\n| summarize count() by model_name, score, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Critical Breach Timeline',
+          description: 'Temporal view of critical breaches to identify attack progression',
+          query: 'dataset="$DATASET" earliest=-24h\n| where score > 0.9\n| summarize breach_count=count() by bin(timestamp, 15m), category\n| order by timestamp asc'
+        },
+        {
+          name: 'Destination Analysis for Critical Breaches',
+          description: 'Maps destination IPs involved in critical model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where score > 0.9\n| summarize count() by destination_ip, model_name, source_ip\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-002',
+      name: 'Darktrace Beaconing Activity Detected',
+      objective: 'Identifies devices exhibiting beaconing behavior detected by Darktrace models, which is a strong indicator of command-and-control communication with external infrastructure.',
+      severity: 'High',
+      mitre: ['T1071.001 - Web Protocols', 'T1573 - Encrypted Channel', 'T1095 - Non-Application Layer Protocol'],
+      tags: ['security', 'c2', 'beaconing', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'destination_port', 'model_name', 'score', 'device_label'],
+      detectionLogic: 'Filters for Darktrace model breaches where model_name contains beaconing-related keywords (Beacon, Beaconing, Regular Connections, Periodic Activity). Correlates with destination_ip and destination_port to identify persistent C2 channels. Higher priority when destination is external and port is commonly used for C2 (443, 8443, 80, 8080).',
+      falsePositives: ['Legitimate heartbeat connections to cloud services', 'NTP synchronization', 'Monitoring agents with regular check-in intervals', 'Software update mechanisms'],
+      tuningGuidance: 'Whitelist known SaaS and cloud service IPs that generate regular periodic connections. Exclude NTP servers and known monitoring endpoints. Increase score threshold if environment has many periodic automation tools.',
+      investigationWorkflow: '1. Examine the destination_ip and port to determine if it is a known service\n2. Check the regularity and interval of connections from the source device\n3. Investigate the device_label to understand what system is beaconing\n4. Look for DNS queries associated with the destination IP\n5. Check if any data is being exfiltrated alongside the beaconing\n6. Block the destination IP if confirmed as C2 and isolate the device',
+      criblSearchQueries: [
+        {
+          name: 'Beaconing Model Breaches',
+          description: 'Identifies all beaconing-related model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(beacon|periodic|regular.connect)"\n| summarize count() by device_label, source_ip, destination_ip, destination_port, score\n| order by score desc'
+        },
+        {
+          name: 'Beaconing Destination Frequency',
+          description: 'Shows how frequently a device communicates with suspected C2 destinations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where source_ip == "$SUSPECT_IP"\n| summarize connection_count=count() by destination_ip, destination_port, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Multi-Device Beaconing to Same Destination',
+          description: 'Detects multiple devices beaconing to the same external destination',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(beacon|periodic)"\n| summarize unique_sources=dcount(source_ip), devices=makeset(device_label) by destination_ip, destination_port\n| where unique_sources > 1\n| order by unique_sources desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-003',
+      name: 'Darktrace Lateral Movement Detection',
+      objective: 'Detects internal lateral movement patterns identified by Darktrace models, indicating an attacker or compromised system attempting to move through the network to access additional resources.',
+      severity: 'High',
+      mitre: ['T1021 - Remote Services', 'T1570 - Lateral Tool Transfer', 'T1210 - Exploitation of Remote Services'],
+      tags: ['security', 'lateral-movement', 'internal', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'source_port', 'destination_port', 'model_name', 'score', 'device_label', 'subnet'],
+      detectionLogic: 'Filters for Darktrace model breaches related to lateral movement categories including internal reconnaissance, unusual admin connections, new internal connections, and SMB/RDP/SSH anomalies. Correlates source and destination IPs within internal subnets and tracks connection patterns to identify systematic lateral traversal.',
+      falsePositives: ['IT administrators performing maintenance across multiple servers', 'Automated deployment tools scanning infrastructure', 'Vulnerability scanners performing internal assessments', 'New applications establishing connections to multiple backends'],
+      tuningGuidance: 'Whitelist known admin workstations and jump boxes. Exclude configuration management tool source IPs. Create exceptions for scheduled maintenance windows. Adjust subnet scope to focus on sensitive network segments.',
+      investigationWorkflow: '1. Map all destination_ips contacted by the source device\n2. Identify the subnet boundaries being crossed\n3. Check authentication logs for the source device identity\n4. Determine if administrative credentials are being used\n5. Look for data staging or exfiltration following lateral movement\n6. Contain the source device if compromise is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Lateral Movement Model Breaches',
+          description: 'Lists all lateral movement related model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category matches regex "(?i)(lateral|internal|compromise)" or model_name matches regex "(?i)(lateral|internal.scan|admin.conn|SMB|RDP)"\n| summarize count() by device_label, source_ip, model_name, score\n| order by score desc'
+        },
+        {
+          name: 'Internal Connection Spread',
+          description: 'Shows the spread of internal connections from a suspected compromised device',
+          query: 'dataset="$DATASET" earliest=-24h\n| where source_ip == "$SUSPECT_IP"\n| summarize unique_destinations=dcount(destination_ip), ports_used=makeset(destination_port) by subnet\n| order by unique_destinations desc'
+        },
+        {
+          name: 'Lateral Movement Timeline',
+          description: 'Tracks the progression of lateral movement over time',
+          query: 'dataset="$DATASET" earliest=-48h\n| where source_ip == "$SUSPECT_IP" and category matches regex "(?i)(lateral|internal|compromise)"\n| summarize count() by destination_ip, model_name, bin(timestamp, 30m)\n| order by timestamp asc'
+        },
+        {
+          name: 'Cross-Subnet Movement',
+          description: 'Identifies movement across different network subnets',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(lateral|unusual.connect|new.connection)"\n| summarize unique_subnets=dcount(subnet), breach_count=count() by source_ip, device_label\n| where unique_subnets > 2\n| order by unique_subnets desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-004',
+      name: 'Darktrace Data Exfiltration Model Breach',
+      objective: 'Detects Darktrace model breaches indicating potential data exfiltration, including unusual data uploads, large external transfers, and anomalous data patterns leaving the network.',
+      severity: 'Critical',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1567 - Exfiltration Over Web Service', 'T1041 - Exfiltration Over C2 Channel'],
+      tags: ['security', 'exfiltration', 'data-loss', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'destination_port', 'model_name', 'score', 'category', 'device_label'],
+      detectionLogic: 'Triggers on model breaches where category or model_name indicates data exfiltration patterns such as unusual external data transfer, data sent to rare destination, anomalous upload volume, or unusual data download. Prioritizes alerts with score > 0.7 and correlates with destination analysis.',
+      falsePositives: ['Legitimate cloud backup operations', 'Large file sharing via approved services', 'Video uploads to authorized platforms', 'Database replication to cloud environments'],
+      tuningGuidance: 'Whitelist approved cloud storage destinations. Exclude known backup server IPs. Adjust score threshold based on false positive volume. Create exceptions for authorized data migration projects.',
+      investigationWorkflow: '1. Identify the source device and user responsible for the data transfer\n2. Determine the destination_ip and whether it is a known service or suspicious\n3. Estimate the volume of data transferred\n4. Check if the data transfer aligns with the users normal behavior\n5. Review DLP controls for what type of data may have been transferred\n6. If malicious, preserve evidence and initiate incident response',
+      criblSearchQueries: [
+        {
+          name: 'Data Exfiltration Breaches',
+          description: 'Lists all data exfiltration related model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category matches regex "(?i)(exfil|data.loss)" or model_name matches regex "(?i)(exfil|unusual.transfer|data.sent|upload)"\n| summarize count() by device_label, source_ip, destination_ip, model_name, score\n| order by score desc'
+        },
+        {
+          name: 'High-Volume External Transfer Sources',
+          description: 'Identifies devices triggering multiple data transfer anomalies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(transfer|upload|data.sent|exfil)"\n| summarize breach_count=count(), avg_score=avg(score), destinations=dcount(destination_ip) by source_ip, device_label\n| where breach_count > 3\n| order by avg_score desc'
+        },
+        {
+          name: 'Exfiltration Destination Profiling',
+          description: 'Profiles external destinations receiving anomalous data volumes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where model_name matches regex "(?i)(exfil|transfer|upload)" and score > 0.7\n| summarize source_count=dcount(source_ip), total_breaches=count() by destination_ip, destination_port\n| order by total_breaches desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-005',
+      name: 'Darktrace Credential Compromise Indicators',
+      objective: 'Detects Darktrace model breaches related to credential theft or misuse, including pass-the-hash, Kerberoasting, and anomalous authentication patterns that suggest stolen credentials.',
+      severity: 'High',
+      mitre: ['T1558 - Steal or Forge Kerberos Tickets', 'T1550 - Use Alternate Authentication Material', 'T1078 - Valid Accounts'],
+      tags: ['security', 'credentials', 'identity', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'model_name', 'score', 'category', 'device_label', 'subnet'],
+      detectionLogic: 'Filters model breaches where model_name or category indicates credential abuse patterns including unusual credential use, Kerberos anomalies, NTLM anomalies, impossible travel, and multiple failed authentication. Correlates with device and subnet context to identify compromised accounts.',
+      falsePositives: ['Users connecting from VPN with different IP than usual', 'Service accounts with rotated credentials', 'Admin accounts legitimately used across multiple systems', 'Password resets triggering multiple authentication events'],
+      tuningGuidance: 'Whitelist known VPN exit IPs for impossible travel detection. Exclude service accounts with known multi-system access patterns. Adjust sensitivity for environments with many shared admin accounts.',
+      investigationWorkflow: '1. Identify the device and user associated with the credential anomaly\n2. Check if the user has recently traveled or changed locations\n3. Look for impossible travel patterns in authentication logs\n4. Determine if service accounts are being used from unexpected sources\n5. Check for additional lateral movement from the affected account\n6. Force password reset if credential compromise is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'Credential-Related Model Breaches',
+          description: 'Identifies all credential abuse related model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(credential|kerberos|ntlm|auth|password|login)"\n| summarize count() by device_label, source_ip, model_name, score\n| order by score desc'
+        },
+        {
+          name: 'Multi-System Credential Anomalies',
+          description: 'Finds devices with credential anomalies across multiple destinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where category matches regex "(?i)(credential|compromise|anomal)"\n| summarize dest_count=dcount(destination_ip), breach_count=count() by source_ip, device_label\n| where dest_count > 3\n| order by dest_count desc'
+        },
+        {
+          name: 'Credential Breach Trend',
+          description: 'Shows trending of credential-related breaches over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where model_name matches regex "(?i)(credential|kerberos|ntlm|auth)"\n| summarize daily_count=count() by bin(timestamp, 1d), category\n| order by timestamp asc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-006',
+      name: 'Darktrace Cryptomining Activity Detection',
+      objective: 'Detects Darktrace model breaches indicating cryptocurrency mining activity on network devices, which may indicate unauthorized resource usage or compromised systems running mining malware.',
+      severity: 'Medium',
+      mitre: ['T1496 - Resource Hijacking'],
+      tags: ['security', 'cryptomining', 'resource-abuse', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'destination_port', 'model_name', 'score', 'device_label', 'subnet'],
+      detectionLogic: 'Filters for model breaches containing crypto-mining related indicators in model_name such as mining, crypto, Stratum protocol, or connections to known mining pool ports (3333, 4444, 8333, 14444, 45700). Also triggers on models detecting sustained high-entropy connections or unusual computational behavior.',
+      falsePositives: ['Authorized blockchain development or testing', 'Legitimate cryptocurrency operations by finance teams', 'Research projects involving blockchain technology'],
+      tuningGuidance: 'Whitelist any authorized mining or blockchain infrastructure. Add exceptions for development environments working on blockchain projects. Monitor and alert on any new device triggering mining models.',
+      investigationWorkflow: '1. Identify the device_label and determine if it is a server or workstation\n2. Check the destination_ip against known mining pool addresses\n3. Verify the destination_port matches common mining protocols\n4. Determine if the device owner authorized any mining activity\n5. Check for initial compromise vector (how did mining software get installed)\n6. Remove mining software and remediate the compromise',
+      criblSearchQueries: [
+        {
+          name: 'Cryptomining Model Breaches',
+          description: 'Identifies all mining-related model breaches',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(mining|crypto|stratum|coin)" or destination_port in (3333, 4444, 8333, 14444, 45700)\n| summarize count() by device_label, source_ip, destination_ip, destination_port, model_name\n| order by count_ desc'
+        },
+        {
+          name: 'Mining Activity Timeline',
+          description: 'Shows when mining activity started and its duration',
+          query: 'dataset="$DATASET" earliest=-30d\n| where model_name matches regex "(?i)(mining|crypto|stratum)"\n| summarize first_seen=min(timestamp), last_seen=max(timestamp), breach_count=count() by device_label, source_ip\n| order by first_seen asc'
+        },
+        {
+          name: 'Affected Subnet Analysis',
+          description: 'Determines if mining is spreading across subnets',
+          query: 'dataset="$DATASET" earliest=-7d\n| where model_name matches regex "(?i)(mining|crypto)"\n| summarize affected_devices=dcount(source_ip), device_list=makeset(device_label) by subnet\n| where affected_devices > 1\n| order by affected_devices desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-sec-007',
+      name: 'Darktrace Unusual External Connection to Rare Destination',
+      objective: 'Detects connections to external destinations that are rare for the organization and the specific device, indicating potential C2 communication, data staging, or initial access callbacks.',
+      severity: 'Medium',
+      mitre: ['T1071 - Application Layer Protocol', 'T1102 - Web Service', 'T1568 - Dynamic Resolution'],
+      tags: ['security', 'rare-destination', 'anomaly', 'darktrace'],
+      requiredFields: ['timestamp', 'source_ip', 'destination_ip', 'destination_port', 'model_name', 'score', 'device_label', 'breach_id'],
+      detectionLogic: 'Triggers on Darktrace models that detect connections to destinations never or rarely seen in the organizations network history. Focuses on model breaches related to rare external endpoints, new external connections, and unusual destinations. Correlates with device baseline behavior and organizational connection patterns.',
+      falsePositives: ['Users visiting new legitimate websites', 'New SaaS tool onboarding', 'CDN or cloud service IP rotations', 'Marketing or sales tools connecting to new prospect domains'],
+      tuningGuidance: 'Allow a learning period for new applications and services. Whitelist CDN and major cloud provider IP ranges. Focus alerting on devices in sensitive network segments. Consider reducing severity for user workstations versus servers.',
+      investigationWorkflow: '1. Identify the destination_ip and perform reputation lookup\n2. Check if any other devices have connected to the same destination\n3. Determine what service is running on the destination_port\n4. Review the device_label normal connection patterns\n5. Check DNS logs for the domain associated with the destination\n6. If suspicious, block the destination and investigate the device for compromise',
+      criblSearchQueries: [
+        {
+          name: 'Rare Destination Breaches',
+          description: 'Lists all model breaches for connections to rare external destinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where model_name matches regex "(?i)(rare|unusual|new.external|never.seen)"\n| summarize count() by device_label, source_ip, destination_ip, destination_port, score\n| order by score desc'
+        },
+        {
+          name: 'Single-Device Rare Destinations',
+          description: 'Finds destinations contacted by only one device (higher suspicion)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where model_name matches regex "(?i)(rare|unusual|new.external)"\n| summarize unique_sources=dcount(source_ip) by destination_ip, destination_port\n| where unique_sources == 1\n| order by destination_ip'
+        },
+        {
+          name: 'Rare Destination Breach Correlation',
+          description: 'Correlates rare destination connections with other breach types on same device',
+          query: 'dataset="$DATASET" earliest=-24h\n| where device_label == "$DEVICE"\n| summarize count() by model_name, category, destination_ip, score\n| order by score desc'
+        },
+        {
+          name: 'New Destination Trend',
+          description: 'Shows trend of rare destination breaches to identify campaign patterns',
+          query: 'dataset="$DATASET" earliest=-14d\n| where model_name matches regex "(?i)(rare|unusual|new.external)"\n| summarize daily_breaches=count(), unique_destinations=dcount(destination_ip) by bin(timestamp, 1d)\n| order by timestamp asc'
+        }
+      ]
+    }
+  ],
+  'aws-cloudtrail': [
+    {
+      id: 'ctr-sec-001',
+      name: 'AWS Root Account Usage Detected',
+      objective: 'Detects any usage of the AWS root account, which should rarely be used in well-governed environments and may indicate credential compromise or unauthorized privileged access.',
+      severity: 'Critical',
+      mitre: ['T1078.004 - Cloud Accounts', 'T1078 - Valid Accounts'],
+      tags: ['security', 'aws', 'root-account', 'privilege-escalation'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'userIdentity_userName', 'eventName', 'sourceIPAddress', 'awsRegion'],
+      detectionLogic: 'Triggers when userIdentity_arn contains "root" or userIdentity_userName equals "root". Any root account activity should be investigated as organizations should use IAM users/roles instead. Excludes AWS service-initiated events by filtering on sourceIPAddress not matching AWS service patterns.',
+      falsePositives: ['Initial account setup by cloud team', 'Annual root credential rotation', 'Emergency break-glass procedures', 'AWS Support case escalation requiring root'],
+      tuningGuidance: 'Create explicit exceptions for documented root usage procedures. Alert on any root console login separately from API usage. Consider separate rules for read-only vs. write operations. Document all authorized root usage in runbooks.',
+      investigationWorkflow: '1. Determine the sourceIPAddress and whether it is a known admin location\n2. Check what eventName actions were performed with root\n3. Verify with the cloud team if this was authorized break-glass usage\n4. Review all actions taken during the root session\n5. Check for IAM changes, new users created, or policies modified\n6. If unauthorized, immediately rotate root credentials and enable MFA',
+      criblSearchQueries: [
+        {
+          name: 'Root Account Activity',
+          description: 'Lists all root account events in CloudTrail',
+          query: 'dataset="$DATASET" earliest=-24h\n| where userIdentity_arn matches regex "root" or userIdentity_userName == "root"\n| summarize count() by eventName, sourceIPAddress, awsRegion\n| order by count_ desc'
+        },
+        {
+          name: 'Root Account Timeline',
+          description: 'Shows temporal pattern of root account usage',
+          query: 'dataset="$DATASET" earliest=-90d\n| where userIdentity_arn matches regex "root"\n| summarize count() by bin(eventTime, 1d), eventName\n| order by eventTime asc'
+        },
+        {
+          name: 'Root Account Actions Detail',
+          description: 'Detailed view of all actions performed by root',
+          query: 'dataset="$DATASET" earliest=-24h\n| where userIdentity_arn matches regex "root"\n| summarize count() by eventName, eventSource, sourceIPAddress, errorCode\n| order by count_ desc'
+        },
+        {
+          name: 'Root Account Source Analysis',
+          description: 'Analyzes source IPs and user agents for root access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where userIdentity_arn matches regex "root"\n| summarize count() by sourceIPAddress, userAgent, awsRegion\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-002',
+      name: 'AWS IAM Policy Modification for Privilege Escalation',
+      objective: 'Detects IAM policy changes that could indicate privilege escalation, including attaching administrator policies, creating new policies with dangerous permissions, or modifying existing policies.',
+      severity: 'High',
+      mitre: ['T1098 - Account Manipulation', 'T1078.004 - Cloud Accounts', 'T1484 - Domain Policy Modification'],
+      tags: ['security', 'aws', 'iam', 'privilege-escalation'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'userIdentity_userName', 'eventName', 'eventSource', 'requestParameters', 'sourceIPAddress'],
+      detectionLogic: 'Monitors for IAM API calls that modify permissions including PutUserPolicy, PutGroupPolicy, PutRolePolicy, AttachUserPolicy, AttachGroupPolicy, AttachRolePolicy, CreatePolicy, and CreatePolicyVersion. Prioritizes alerts when the policy being attached contains Administrator or PowerUser in the name, or when inline policies grant * permissions.',
+      falsePositives: ['Terraform or CloudFormation infrastructure deployments', 'Authorized IAM administrators managing permissions', 'Automated CI/CD pipelines deploying new services', 'AWS SSO provisioning new permission sets'],
+      tuningGuidance: 'Whitelist known CI/CD pipeline roles and service accounts. Create exceptions for IaC tools (Terraform, CloudFormation) with validated source IPs. Focus on user-initiated changes versus automated. Alert separately on AdministratorAccess policy attachments.',
+      investigationWorkflow: '1. Identify who made the change via userIdentity_arn\n2. Examine requestParameters to understand what policy was modified or attached\n3. Determine if the change grants excessive permissions (Admin, PowerUser, *)\n4. Check if this aligns with a change request or deployment\n5. Review subsequent actions by the affected principal\n6. Revert unauthorized changes and investigate the actors access',
+      criblSearchQueries: [
+        {
+          name: 'IAM Policy Modifications',
+          description: 'Lists all IAM policy modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventSource == "iam.amazonaws.com" and eventName matches regex "(PutUserPolicy|PutGroupPolicy|PutRolePolicy|AttachUserPolicy|AttachGroupPolicy|AttachRolePolicy|CreatePolicy|CreatePolicyVersion)"\n| summarize count() by userIdentity_arn, eventName, sourceIPAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Administrator Policy Attachments',
+          description: 'Specifically identifies when AdministratorAccess is attached',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventName matches regex "(Attach.*Policy)" and requestParameters matches regex "(?i)administrator"\n| summarize count() by userIdentity_arn, eventName, requestParameters, eventTime\n| order by eventTime desc'
+        },
+        {
+          name: 'Policy Change Actors',
+          description: 'Profiles which identities are making IAM changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventSource == "iam.amazonaws.com" and eventName matches regex "(Put|Attach|Create).*Policy"\n| summarize change_count=count(), unique_events=dcount(eventName) by userIdentity_arn, sourceIPAddress\n| order by change_count desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-003',
+      name: 'AWS CloudTrail Logging Disabled or Deleted',
+      objective: 'Detects attempts to disable, stop, or delete CloudTrail logging, which is a critical defense evasion technique used by attackers to hide their activities after gaining access.',
+      severity: 'Critical',
+      mitre: ['T1562.008 - Disable Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'aws', 'defense-evasion', 'cloudtrail'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'eventName', 'eventSource', 'sourceIPAddress', 'awsRegion', 'errorCode'],
+      detectionLogic: 'Triggers on CloudTrail API calls: StopLogging, DeleteTrail, UpdateTrail (when disabling logging), PutEventSelectors (when reducing event scope). Any successful execution of StopLogging or DeleteTrail should be treated as a critical security incident. Even failed attempts indicate malicious intent.',
+      falsePositives: ['CloudTrail consolidation projects moving to organization trails', 'Authorized decommissioning of duplicate trails', 'Terraform destroy operations during infrastructure cleanup'],
+      tuningGuidance: 'This detection should have very few exceptions. Only whitelist documented trail consolidation activities with change tickets. Alert on both successful and failed attempts. Consider making this a zero-tolerance alert that always triggers investigation.',
+      investigationWorkflow: '1. Immediately determine if CloudTrail logging is currently active\n2. Identify the userIdentity_arn that performed the action\n3. Check if this was an authorized change with a corresponding change ticket\n4. Review all other actions by this identity in the time window\n5. If unauthorized, re-enable logging immediately and investigate full scope\n6. Check for other security control tampering (GuardDuty, Config, SecurityHub)',
+      criblSearchQueries: [
+        {
+          name: 'CloudTrail Tampering Events',
+          description: 'Identifies all attempts to modify or disable CloudTrail',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventSource == "cloudtrail.amazonaws.com" and eventName in ("StopLogging", "DeleteTrail", "UpdateTrail", "PutEventSelectors")\n| summarize count() by userIdentity_arn, eventName, sourceIPAddress, awsRegion, errorCode\n| order by eventTime desc'
+        },
+        {
+          name: 'Successful Trail Modifications',
+          description: 'Filters for only successful CloudTrail modifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventSource == "cloudtrail.amazonaws.com" and eventName in ("StopLogging", "DeleteTrail", "UpdateTrail") and (errorCode == "" or errorCode == "null")\n| summarize count() by userIdentity_arn, eventName, awsRegion, eventTime\n| order by eventTime desc'
+        },
+        {
+          name: 'Security Control Tampering Correlation',
+          description: 'Checks for other security controls being disabled around the same time',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventName matches regex "(StopLogging|DeleteTrail|DeleteDetector|DisableRule|DeleteFlowLogs|StopMonitoring)"\n| summarize count() by userIdentity_arn, eventName, eventSource\n| order by count_ desc'
+        },
+        {
+          name: 'Actor Activity Before and After',
+          description: 'Shows all activity by the actor around the time of trail modification',
+          query: 'dataset="$DATASET" earliest=-24h\n| where userIdentity_arn == "$SUSPECT_ARN"\n| summarize count() by eventName, eventSource, bin(eventTime, 5m)\n| order by eventTime asc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-004',
+      name: 'AWS Unauthorized API Calls from New Region',
+      objective: 'Detects API calls from AWS regions not normally used by the organization, which may indicate compromised credentials being used from attacker infrastructure in unexpected geographic locations.',
+      severity: 'Medium',
+      mitre: ['T1078.004 - Cloud Accounts', 'T1535 - Unused/Unsupported Cloud Regions'],
+      tags: ['security', 'aws', 'anomaly', 'unused-region'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'eventName', 'awsRegion', 'sourceIPAddress', 'userAgent'],
+      detectionLogic: 'Maintains a baseline of AWS regions used by the organization. Triggers when API calls originate from regions outside the authorized list. Common attack pattern involves using credentials in rarely-monitored regions (ap-southeast, af-south, me-south) where security controls may not be deployed.',
+      falsePositives: ['Multi-region disaster recovery testing', 'New region enablement for legitimate expansion', 'AWS global services that log in us-east-1', 'CDN or global accelerator configurations'],
+      tuningGuidance: 'Define the list of authorized regions for your organization. Whitelist known global services that operate in us-east-1 (IAM, CloudFront, Route53). Consider severity escalation for regions that are not enabled in the account but still appear in logs.',
+      investigationWorkflow: '1. Determine if the awsRegion is one the organization has ever used\n2. Check what resources or services were accessed in the unusual region\n3. Verify the userIdentity_arn and whether they have legitimate multi-region access\n4. Look for resource creation events (EC2 instances, Lambda functions) in the region\n5. Check if the region is even enabled in the account settings\n6. If unauthorized, terminate any resources created and rotate credentials',
+      criblSearchQueries: [
+        {
+          name: 'Activity in Unusual Regions',
+          description: 'Shows API activity in regions outside the normal operating set',
+          query: 'dataset="$DATASET" earliest=-24h\n| where awsRegion !in ("us-east-1", "us-west-2", "eu-west-1")\n| summarize count() by awsRegion, userIdentity_arn, eventName\n| order by count_ desc'
+        },
+        {
+          name: 'Region Usage Baseline',
+          description: 'Establishes normal region usage patterns over 30 days',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize event_count=count(), unique_users=dcount(userIdentity_arn) by awsRegion\n| order by event_count desc'
+        },
+        {
+          name: 'New Region Resource Creation',
+          description: 'Detects resource creation in unusual regions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where awsRegion !in ("us-east-1", "us-west-2", "eu-west-1") and eventName matches regex "(Create|Run|Launch|Put)"\n| summarize count() by awsRegion, eventName, userIdentity_arn, eventSource\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-005',
+      name: 'AWS Access Key Exfiltration and Misuse',
+      objective: 'Detects potential access key compromise by identifying API calls from IP addresses or user agents inconsistent with the keys historical usage pattern, indicating stolen credentials.',
+      severity: 'High',
+      mitre: ['T1528 - Steal Application Access Token', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'aws', 'credential-theft', 'access-key'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'userIdentity_accessKeyId', 'eventName', 'sourceIPAddress', 'userAgent', 'awsRegion'],
+      detectionLogic: 'Establishes a baseline of sourceIPAddress and userAgent patterns for each access key. Triggers when an access key is used from a new sourceIPAddress that differs significantly from historical patterns, especially when combined with unusual userAgent strings or activity outside normal hours. Also detects rapid geographic impossible travel for API keys.',
+      falsePositives: ['Dynamic IP addresses for on-premises environments', 'New developer workstations', 'VPN IP pool rotation', 'CI/CD runners with dynamic IPs'],
+      tuningGuidance: 'Build per-key IP baselines over 14 days. Whitelist known CI/CD IP ranges. Allow for NAT gateway IP changes. Focus on keys that suddenly appear from residential or foreign IP space. Consider whitelisting cloud provider IP ranges for service accounts.',
+      investigationWorkflow: '1. Identify the userIdentity_accessKeyId and its associated user\n2. Compare the new sourceIPAddress against the keys historical IPs\n3. Check the userAgent for unusual SDK versions or tools\n4. Look for enumeration or reconnaissance patterns (List*, Describe*, Get*)\n5. Determine if the IP is from an unusual geography\n6. If compromised, disable the access key immediately and audit all recent actions',
+      criblSearchQueries: [
+        {
+          name: 'Access Key IP Baseline Deviation',
+          description: 'Identifies access keys used from IPs not seen in the previous 14 days',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize recent_ips=makeset(sourceIPAddress) by userIdentity_accessKeyId, userIdentity_arn\n| where array_length(recent_ips) > 3\n| order by array_length(recent_ips) desc'
+        },
+        {
+          name: 'Suspicious User Agent Patterns',
+          description: 'Detects unusual user agent strings that may indicate stolen keys used in different environments',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by userIdentity_accessKeyId, userAgent, sourceIPAddress\n| where userAgent matches regex "(python|curl|boto|custom)"\n| order by count_ desc'
+        },
+        {
+          name: 'Access Key Activity After Hours',
+          description: 'Shows access key usage outside normal business hours',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour=hourofday(eventTime)\n| where hour < 6 or hour > 22\n| summarize count() by userIdentity_accessKeyId, userIdentity_arn, sourceIPAddress, hour\n| order by count_ desc'
+        },
+        {
+          name: 'Key Usage Across Multiple Regions',
+          description: 'Detects a single key being used across many regions rapidly',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize region_count=dcount(awsRegion), regions=makeset(awsRegion) by userIdentity_accessKeyId\n| where region_count > 3\n| order by region_count desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-006',
+      name: 'AWS S3 Bucket Policy Modification for Public Access',
+      objective: 'Detects S3 bucket policy changes that could expose data publicly, including removing block public access settings, adding public ACLs, or modifying bucket policies to allow anonymous access.',
+      severity: 'High',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1530 - Data from Cloud Storage'],
+      tags: ['security', 'aws', 's3', 'data-exposure', 'misconfiguration'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'eventName', 'eventSource', 'requestParameters', 'sourceIPAddress', 'recipientAccountId'],
+      detectionLogic: 'Monitors S3 API calls that modify access controls: PutBucketPolicy, PutBucketAcl, PutBucketPublicAccessBlock (when disabling), DeleteBucketPolicy, PutObjectAcl. Specifically flags when requestParameters contain Principal:* or Effect:Allow with public access patterns. Critical when PutBucketPublicAccessBlock sets all values to false.',
+      falsePositives: ['Static website hosting configuration', 'Public dataset publishing', 'CDN origin bucket configuration', 'Terraform applying intended public bucket configs'],
+      tuningGuidance: 'Whitelist known public buckets (static websites, public datasets). Alert with higher severity when previously private buckets become public. Create exceptions for authorized IaC pipelines with validated requestParameters.',
+      investigationWorkflow: '1. Identify which bucket was modified and what data it contains\n2. Check the new policy/ACL to determine the scope of public access\n3. Verify if this was an authorized change with a change ticket\n4. Determine if sensitive data is now exposed\n5. If unauthorized, immediately revert the policy change\n6. Check access logs for the bucket to see if data was accessed while public',
+      criblSearchQueries: [
+        {
+          name: 'S3 Public Access Modifications',
+          description: 'Identifies all S3 bucket access control modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventSource == "s3.amazonaws.com" and eventName in ("PutBucketPolicy", "PutBucketAcl", "PutBucketPublicAccessBlock", "DeleteBucketPolicy", "PutObjectAcl")\n| summarize count() by userIdentity_arn, eventName, sourceIPAddress\n| order by count_ desc'
+        },
+        {
+          name: 'Public Access Block Disabled',
+          description: 'Detects when S3 public access block is removed or disabled',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventName == "PutBucketPublicAccessBlock" or eventName == "DeletePublicAccessBlock"\n| summarize count() by userIdentity_arn, requestParameters, eventTime\n| order by eventTime desc'
+        },
+        {
+          name: 'S3 Policy with Public Principal',
+          description: 'Identifies bucket policy changes containing public access patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventName == "PutBucketPolicy" and requestParameters matches regex "(Principal.*\\\\*|public)"\n| summarize count() by userIdentity_arn, requestParameters, sourceIPAddress\n| order by eventTime desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-sec-007',
+      name: 'AWS Reconnaissance API Call Burst',
+      objective: 'Detects rapid enumeration of AWS resources using Describe, List, and Get API calls, which is characteristic of initial reconnaissance by attackers who have obtained valid credentials.',
+      severity: 'Medium',
+      mitre: ['T1580 - Cloud Infrastructure Discovery', 'T1526 - Cloud Service Discovery', 'T1087.004 - Cloud Account'],
+      tags: ['security', 'aws', 'reconnaissance', 'enumeration'],
+      requiredFields: ['eventTime', 'userIdentity_arn', 'userIdentity_accessKeyId', 'eventName', 'eventSource', 'sourceIPAddress', 'errorCode'],
+      detectionLogic: 'Detects a high volume of read-only API calls (Describe*, List*, Get*) across multiple AWS services within a short time window. Triggers when a single identity makes more than 50 unique Describe/List calls across more than 5 different services within 15 minutes. Common tools like Pacu, ScoutSuite, and Prowler generate this pattern.',
+      falsePositives: ['Cloud security posture management (CSPM) tools', 'Infrastructure auditing scripts', 'AWS Config recording', 'Terraform plan operations', 'New developer exploring the environment'],
+      tuningGuidance: 'Whitelist known CSPM tools and their service roles. Exclude AWS Config recorder role. Set higher thresholds for automation accounts. Consider time-of-day correlation to differentiate human vs. automated reconnaissance.',
+      investigationWorkflow: '1. Identify the userIdentity_arn performing the enumeration\n2. Check if this identity is associated with a security tool or human user\n3. Review the breadth of services enumerated\n4. Look for subsequent write operations or privilege escalation attempts\n5. Check the sourceIPAddress for reputation and expected origin\n6. If unauthorized, disable the access key and investigate further compromise',
+      criblSearchQueries: [
+        {
+          name: 'Reconnaissance Burst Detection',
+          description: 'Identifies identities making high volumes of read-only calls',
+          query: 'dataset="$DATASET" earliest=-1h\n| where eventName matches regex "^(Describe|List|Get)"\n| summarize call_count=count(), unique_events=dcount(eventName), unique_services=dcount(eventSource) by userIdentity_arn, sourceIPAddress\n| where call_count > 50 and unique_services > 5\n| order by call_count desc'
+        },
+        {
+          name: 'Service Enumeration Breadth',
+          description: 'Shows which services are being enumerated by a specific identity',
+          query: 'dataset="$DATASET" earliest=-1h\n| where userIdentity_arn == "$SUSPECT_ARN" and eventName matches regex "^(Describe|List|Get)"\n| summarize call_count=count() by eventSource, eventName\n| order by call_count desc'
+        },
+        {
+          name: 'Post-Reconnaissance Activity',
+          description: 'Checks for write operations following reconnaissance activity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where userIdentity_arn == "$SUSPECT_ARN" and eventName !matches regex "^(Describe|List|Get)"\n| summarize count() by eventName, eventSource, errorCode\n| order by count_ desc'
+        },
+        {
+          name: 'Access Denied Patterns',
+          description: 'Shows access denied errors indicating credential testing across services',
+          query: 'dataset="$DATASET" earliest=-1h\n| where errorCode in ("AccessDenied", "UnauthorizedOperation")\n| summarize denied_count=count(), services=dcount(eventSource) by userIdentity_arn, sourceIPAddress\n| where denied_count > 20\n| order by denied_count desc'
+        }
+      ]
+    }
+  ],
+  'aws-cloudwatch': [
+    {
+      id: 'cwl-sec-001',
+      name: 'AWS CloudWatch Log Group Deletion',
+      objective: 'Detects deletion of CloudWatch log groups which may indicate an attacker attempting to destroy evidence of their activities or a misconfigured automation removing critical audit logs.',
+      severity: 'Critical',
+      mitre: ['T1070.001 - Clear Linux or Mac System Logs', 'T1562.008 - Disable Cloud Logs'],
+      tags: ['security', 'aws', 'log-tampering', 'defense-evasion'],
+      requiredFields: ['timestamp', 'logGroup', 'message', 'owner'],
+      detectionLogic: 'Monitors for log entries indicating log group deletion events. Parses the message field for DeleteLogGroup API calls and correlates with the affected logGroup. Critical severity because log deletion directly impacts security monitoring and incident investigation capabilities.',
+      falsePositives: ['Authorized cleanup of deprecated log groups', 'Infrastructure as code tear-down operations', 'Environment decommissioning activities'],
+      tuningGuidance: 'Whitelist known automation accounts that manage log group lifecycle. Create exceptions for non-production accounts during tear-down. Protect critical security log groups with resource policies that prevent deletion.',
+      investigationWorkflow: '1. Identify which logGroup was deleted and what data it contained\n2. Determine who initiated the deletion from the message details\n3. Check if the log group contained security-relevant logs (VPC Flow, CloudTrail, etc.)\n4. Verify if this was an authorized change with documentation\n5. Check for other log groups deleted around the same time\n6. If malicious, attempt to recover data and investigate the actors other activities',
+      criblSearchQueries: [
+        {
+          name: 'Log Group Deletion Events',
+          description: 'Identifies CloudWatch log group deletion events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)DeleteLogGroup"\n| summarize count() by logGroup, owner, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Log Group Modification Timeline',
+          description: 'Shows all log group modifications over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message matches regex "(?i)(DeleteLogGroup|CreateLogGroup|PutRetentionPolicy)"\n| summarize count() by logGroup, bin(timestamp, 1d)\n| order by timestamp desc'
+        },
+        {
+          name: 'Bulk Deletion Detection',
+          description: 'Detects multiple log groups being deleted in a short window',
+          query: 'dataset="$DATASET" earliest=-1h\n| where message matches regex "(?i)DeleteLogGroup"\n| summarize deletion_count=count(), groups_deleted=makeset(logGroup) by owner, bin(timestamp, 15m)\n| where deletion_count > 2\n| order by deletion_count desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-002',
+      name: 'AWS VPC Flow Log Suspicious Denied Traffic Spike',
+      objective: 'Detects sudden spikes in denied network traffic captured in VPC Flow Logs via CloudWatch, indicating potential network scanning, DDoS attempts, or misconfigured security groups.',
+      severity: 'High',
+      mitre: ['T1046 - Network Service Scanning', 'T1595 - Active Scanning'],
+      tags: ['security', 'aws', 'vpc', 'network-scanning', 'denied-traffic'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'owner'],
+      detectionLogic: 'Parses VPC Flow Log entries from CloudWatch log messages for REJECT actions. Aggregates rejected connection counts per source IP and compares against baseline. Triggers when rejected connections exceed 100 per minute from a single source or when a single source attempts connections to more than 20 unique destination ports.',
+      falsePositives: ['Port scanners from authorized vulnerability management tools', 'Misconfigured applications generating connection errors', 'Load balancer health checks to decommissioned instances', 'Network changes temporarily breaking legitimate traffic'],
+      tuningGuidance: 'Whitelist known vulnerability scanner source IPs. Adjust threshold based on normal denied traffic baseline. Filter specific logGroups to focus on production VPCs. Consider time-of-day patterns for scan detection.',
+      investigationWorkflow: '1. Parse the message field to extract source IP, destination IP, and port patterns\n2. Determine if the scanning source is internal or external\n3. Identify the target subnet and what services are being probed\n4. Check if the source IP is associated with authorized scanning tools\n5. Look for successful connections (ACCEPT) from the same source indicating found services\n6. Block the source IP if unauthorized scanning is confirmed',
+      criblSearchQueries: [
+        {
+          name: 'VPC Flow Deny Spikes',
+          description: 'Identifies high volumes of rejected traffic in VPC Flow Logs',
+          query: 'dataset="$DATASET" earliest=-1h\n| where logGroup matches regex "(?i)vpc.?flow" and message matches regex "REJECT"\n| summarize reject_count=count() by logStream, bin(timestamp, 5m)\n| where reject_count > 100\n| order by reject_count desc'
+        },
+        {
+          name: 'Port Scan Pattern Detection',
+          description: 'Detects potential port scanning by analyzing denied traffic patterns',
+          query: 'dataset="$DATASET" earliest=-1h\n| where logGroup matches regex "(?i)vpc.?flow" and message matches regex "REJECT"\n| extend parts=split(message, " ")\n| summarize unique_ports=dcount(parts[5]), total_rejects=count() by parts[3]\n| where unique_ports > 20\n| order by unique_ports desc'
+        },
+        {
+          name: 'Denied Traffic Baseline Comparison',
+          description: 'Compares current denied traffic volume against baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| where logGroup matches regex "(?i)vpc.?flow" and message matches regex "REJECT"\n| summarize hourly_rejects=count() by bin(timestamp, 1h)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-003',
+      name: 'AWS Lambda Function Error Surge Indicating Exploitation',
+      objective: 'Detects sudden surges in Lambda function errors that may indicate exploitation attempts, injection attacks, or runtime manipulation of serverless functions.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'aws', 'lambda', 'serverless', 'exploitation'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'id'],
+      detectionLogic: 'Monitors Lambda function log groups for error patterns including runtime exceptions, timeout errors, and permission denied messages. Triggers when error rate exceeds 10x the normal baseline within a 5-minute window. Specifically looks for patterns indicating injection (eval, exec, import os, subprocess) or unauthorized access attempts.',
+      falsePositives: ['Code deployments with bugs', 'Downstream service outages causing cascading errors', 'Resource limit hits during traffic spikes', 'Cold start timeouts during scaling events'],
+      tuningGuidance: 'Establish per-function error baselines. Exclude functions with known high error rates. Focus on public-facing functions (API Gateway triggers). Adjust multiplier threshold based on function criticality.',
+      investigationWorkflow: '1. Identify the specific Lambda function from the logGroup\n2. Review error messages for exploitation indicators (injection patterns, unusual imports)\n3. Check if the function is publicly accessible via API Gateway\n4. Review recent code deployments that may have introduced vulnerabilities\n5. Examine the input events that triggered the errors\n6. If exploitation confirmed, disable the function and patch the vulnerability',
+      criblSearchQueries: [
+        {
+          name: 'Lambda Error Surge',
+          description: 'Identifies Lambda functions with abnormal error rates',
+          query: 'dataset="$DATASET" earliest=-1h\n| where logGroup matches regex "/aws/lambda/" and message matches regex "(?i)(error|exception|timeout|task timed out)"\n| summarize error_count=count() by logGroup, bin(timestamp, 5m)\n| where error_count > 50\n| order by error_count desc'
+        },
+        {
+          name: 'Injection Pattern Detection',
+          description: 'Searches for injection attempt patterns in Lambda logs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where logGroup matches regex "/aws/lambda/" and message matches regex "(?i)(eval\\(|exec\\(|import os|subprocess|__import__|cmd\\.exe|/bin/sh)"\n| summarize count() by logGroup, message\n| order by count_ desc'
+        },
+        {
+          name: 'Function Error Rate Comparison',
+          description: 'Compares current vs historical error rates per function',
+          query: 'dataset="$DATASET" earliest=-7d\n| where logGroup matches regex "/aws/lambda/" and message matches regex "(?i)(error|exception)"\n| summarize daily_errors=count() by logGroup, bin(timestamp, 1d)\n| order by logGroup, timestamp desc'
+        },
+        {
+          name: 'Permission Denied in Lambda',
+          description: 'Detects Lambda functions encountering unexpected permission errors',
+          query: 'dataset="$DATASET" earliest=-24h\n| where logGroup matches regex "/aws/lambda/" and message matches regex "(?i)(AccessDenied|Unauthorized|forbidden|permission)"\n| summarize count() by logGroup, logStream\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-004',
+      name: 'AWS CloudWatch Subscription Filter Manipulation',
+      objective: 'Detects modification of CloudWatch subscription filters which could be used to redirect or copy log data to attacker-controlled destinations for exfiltration or to prevent logs from reaching security tools.',
+      severity: 'High',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1562.008 - Disable Cloud Logs'],
+      tags: ['security', 'aws', 'log-manipulation', 'exfiltration'],
+      requiredFields: ['timestamp', 'logGroup', 'message', 'subscriptionFilters', 'owner'],
+      detectionLogic: 'Monitors for changes to subscription filters that route log data to destinations. Triggers when new subscription filters are created pointing to external accounts, when existing filters are modified to change destinations, or when filters are deleted that feed security monitoring tools. Cross-references owner and subscriptionFilters fields to detect cross-account log forwarding.',
+      falsePositives: ['Legitimate log aggregation setup by the platform team', 'New SIEM onboarding adding subscription filters', 'Infrastructure as code deployments updating filter configurations'],
+      tuningGuidance: 'Maintain an allowlist of authorized subscription filter destinations. Alert on any cross-account destinations not in the approved list. Monitor for subscription filter deletions on security-critical log groups.',
+      investigationWorkflow: '1. Identify which logGroup subscription filter was modified\n2. Determine the new destination (Lambda, Kinesis, or cross-account)\n3. Check if the destination account is owned by the organization\n4. Verify the change was authorized by the platform team\n5. If unauthorized, remove the subscription filter immediately\n6. Audit what log data may have been forwarded to the unauthorized destination',
+      criblSearchQueries: [
+        {
+          name: 'Subscription Filter Changes',
+          description: 'Lists all subscription filter modification events',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)(PutSubscriptionFilter|DeleteSubscriptionFilter)"\n| summarize count() by logGroup, subscriptionFilters, owner\n| order by count_ desc'
+        },
+        {
+          name: 'Cross-Account Subscription Filters',
+          description: 'Identifies subscription filters pointing to external accounts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where subscriptionFilters != "" and subscriptionFilters != "null"\n| summarize count() by logGroup, subscriptionFilters, owner\n| order by count_ desc'
+        },
+        {
+          name: 'Security Log Group Filter Audit',
+          description: 'Audits subscription filters on security-critical log groups',
+          query: 'dataset="$DATASET" earliest=-7d\n| where logGroup matches regex "(?i)(cloudtrail|vpc-flow|guardduty|security)" and message matches regex "(?i)(SubscriptionFilter)"\n| summarize count() by logGroup, subscriptionFilters, owner, bin(timestamp, 1d)\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-005',
+      name: 'AWS EC2 Instance Unauthorized SSH Access Attempts',
+      objective: 'Detects brute force SSH authentication attempts against EC2 instances by parsing system authentication logs forwarded to CloudWatch, identifying potential credential attacks.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1110.001 - Password Guessing', 'T1021.004 - SSH'],
+      tags: ['security', 'aws', 'ssh', 'brute-force', 'ec2'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'id'],
+      detectionLogic: 'Parses CloudWatch log messages from system authentication log groups (var/log/auth.log, var/log/secure) for failed SSH authentication patterns. Triggers when more than 10 failed SSH attempts from a single source IP within 5 minutes, or when failed attempts target multiple different usernames indicating password spraying.',
+      falsePositives: ['Automated SSH key rotation failures', 'Configuration management tools with expired keys', 'Developers with incorrect SSH key configurations', 'Bastion host health checks'],
+      tuningGuidance: 'Whitelist known bastion host and jump box IPs. Exclude configuration management tool source IPs. Adjust threshold based on environment. Consider separate thresholds for public vs. private instances.',
+      investigationWorkflow: '1. Extract the attacking source IP from the log messages\n2. Determine which EC2 instance (logStream) is being targeted\n3. Check if any attempts were successful (look for Accepted publickey/password)\n4. Verify the instance security group allows SSH from the attacking IP\n5. Check if the source IP appears in threat intelligence feeds\n6. If attacks are ongoing, update security groups to block the source',
+      criblSearchQueries: [
+        {
+          name: 'SSH Brute Force Detection',
+          description: 'Identifies high volumes of failed SSH authentication attempts',
+          query: 'dataset="$DATASET" earliest=-1h\n| where logGroup matches regex "(?i)(auth|secure|ssh)" and message matches regex "(?i)(Failed password|Failed publickey|Invalid user)"\n| summarize failed_count=count() by logStream, bin(timestamp, 5m)\n| where failed_count > 10\n| order by failed_count desc'
+        },
+        {
+          name: 'SSH Source IP Analysis',
+          description: 'Extracts and profiles source IPs from failed SSH attempts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)(Failed password|Failed publickey)"\n| extend source_ip=extract("from ([0-9.]+)", 1, message)\n| summarize attempt_count=count(), target_instances=dcount(logStream) by source_ip\n| where attempt_count > 20\n| order by attempt_count desc'
+        },
+        {
+          name: 'Successful SSH After Failed Attempts',
+          description: 'Detects successful SSH logins that follow a series of failures (possible breach)',
+          query: 'dataset="$DATASET" earliest=-24h\n| where logGroup matches regex "(?i)(auth|secure)" and message matches regex "(?i)(Accepted password|Accepted publickey)"\n| summarize count() by logStream, message, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Username Enumeration Detection',
+          description: 'Identifies attempts using multiple usernames suggesting password spraying',
+          query: 'dataset="$DATASET" earliest=-1h\n| where message matches regex "(?i)(Invalid user|Failed password for)"\n| extend username=extract("(?:Invalid user|Failed password for) (\\\\S+)", 1, message)\n| summarize unique_users=dcount(username), attempts=count() by logStream\n| where unique_users > 5\n| order by unique_users desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-006',
+      name: 'AWS Application Log Injection Attack Patterns',
+      objective: 'Detects application-layer injection attacks (SQL injection, command injection, XSS) by analyzing application logs forwarded to CloudWatch for known malicious patterns.',
+      severity: 'Medium',
+      mitre: ['T1190 - Exploit Public-Facing Application', 'T1059 - Command and Scripting Interpreter'],
+      tags: ['security', 'aws', 'injection', 'application-security', 'web-attack'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'id'],
+      detectionLogic: 'Scans application log messages for common injection patterns including SQL injection (UNION SELECT, OR 1=1, DROP TABLE), command injection (;cat /etc/passwd, |whoami, $(command)), and XSS (<script>, javascript:, onerror=). Groups by logStream to identify targeted applications and by source patterns to identify attackers.',
+      falsePositives: ['Security testing by authorized teams', 'Application error messages containing SQL fragments', 'Legitimate URLs containing encoded characters', 'Development/staging environments with test data'],
+      tuningGuidance: 'Focus on production application log groups. Whitelist authorized penetration testing periods. Tune regex patterns to reduce false positives from legitimate application data. Consider severity escalation when injection is followed by successful responses.',
+      investigationWorkflow: '1. Identify the application from logGroup and logStream\n2. Analyze the injection payload to understand the attack type\n3. Determine if the attack was successful by checking subsequent logs\n4. Identify the source of the attack from application access logs\n5. Check WAF logs for correlated blocked requests\n6. Patch the vulnerability if injection was successful',
+      criblSearchQueries: [
+        {
+          name: 'SQL Injection Patterns',
+          description: 'Detects common SQL injection attack patterns in application logs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)(UNION\\\\s+SELECT|OR\\\\s+1\\\\s*=\\\\s*1|DROP\\\\s+TABLE|INFORMATION_SCHEMA|SLEEP\\\\(|BENCHMARK\\\\()"\n| summarize count() by logGroup, logStream, bin(timestamp, 1h)\n| order by count_ desc'
+        },
+        {
+          name: 'Command Injection Patterns',
+          description: 'Identifies command injection attempts in log messages',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(;\\\\s*(cat|ls|whoami|id|uname)|\\\\|\\\\s*(cat|ls|whoami)|\\\\$\\\\(|`.*`)"\n| summarize count() by logGroup, logStream\n| order by count_ desc'
+        },
+        {
+          name: 'XSS Attack Patterns',
+          description: 'Detects cross-site scripting patterns in application logs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)(<script|javascript:|onerror\\\\s*=|onload\\\\s*=|<img\\\\s+src\\\\s*=\\\\s*x)"\n| summarize count() by logGroup, logStream, bin(timestamp, 1h)\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-sec-007',
+      name: 'AWS CloudWatch Log Retention Policy Reduction',
+      objective: 'Detects when CloudWatch log retention policies are reduced to shorter periods, which may indicate an attacker attempting to ensure evidence of their activities is automatically purged.',
+      severity: 'Medium',
+      mitre: ['T1562.008 - Disable Cloud Logs', 'T1070 - Indicator Removal'],
+      tags: ['security', 'aws', 'log-retention', 'defense-evasion'],
+      requiredFields: ['timestamp', 'logGroup', 'message', 'owner'],
+      detectionLogic: 'Detects PutRetentionPolicy API calls that reduce the retention period of CloudWatch log groups, especially when the new retention is very short (1 day, 3 days, or 5 days). Also triggers when retention policies are removed entirely (setting logs to never expire could be legitimate, but reducing is suspicious). Prioritizes security-critical log groups.',
+      falsePositives: ['Cost optimization efforts reducing non-critical log retention', 'Compliance updates changing retention requirements', 'Automated lifecycle policies for development environments'],
+      tuningGuidance: 'Define minimum acceptable retention periods for different log group categories. Exempt non-production accounts from medium/low severity alerts. Alert at critical severity when security log groups (CloudTrail, VPC Flow, GuardDuty) have retention reduced.',
+      investigationWorkflow: '1. Identify which logGroup had its retention modified\n2. Determine the old and new retention periods\n3. Check if the logGroup contains security-relevant data\n4. Verify if this change was authorized via change management\n5. Look for other evidence-destruction activities by the same actor\n6. Restore appropriate retention if the change was unauthorized',
+      criblSearchQueries: [
+        {
+          name: 'Retention Policy Reductions',
+          description: 'Identifies log groups with recently reduced retention policies',
+          query: 'dataset="$DATASET" earliest=-24h\n| where message matches regex "(?i)PutRetentionPolicy"\n| summarize count() by logGroup, owner, bin(timestamp, 1h)\n| order by timestamp desc'
+        },
+        {
+          name: 'Short Retention Policies',
+          description: 'Finds log groups set to very short retention periods',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message matches regex "(?i)PutRetentionPolicy.*(retentionInDays|1|3|5)"\n| summarize count() by logGroup, owner\n| order by count_ desc'
+        },
+        {
+          name: 'Security Log Group Retention Audit',
+          description: 'Audits retention changes on security-critical log groups',
+          query: 'dataset="$DATASET" earliest=-30d\n| where logGroup matches regex "(?i)(cloudtrail|vpc|guardduty|security|audit)" and message matches regex "(?i)(RetentionPolicy)"\n| summarize count() by logGroup, owner, bin(timestamp, 1d)\n| order by timestamp desc'
+        }
+      ]
+    }
+  ],
+  'aws-cloudwatch-metrics': [
+    {
+      id: 'cwm-sec-001',
+      name: 'AWS EC2 CPU Spike Indicating Cryptomining',
+      objective: 'Detects sustained high CPU utilization on EC2 instances that may indicate unauthorized cryptocurrency mining, resource hijacking, or compute-intensive malware execution.',
+      severity: 'High',
+      mitre: ['T1496 - Resource Hijacking'],
+      tags: ['security', 'aws', 'cryptomining', 'ec2', 'resource-abuse'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'StatisticType', 'Period'],
+      detectionLogic: 'Monitors EC2 CPUUtilization metrics for sustained values above 90% over multiple consecutive periods (minimum 30 minutes). Correlates with instance tags and type to identify unexpected compute-intensive behavior. Excludes known batch processing instances and auto-scaling events. Triggers when idle instances suddenly show sustained high CPU.',
+      falsePositives: ['Legitimate batch processing jobs', 'Auto-scaling events handling traffic spikes', 'CI/CD build instances', 'Machine learning training workloads', 'Stress testing activities'],
+      tuningGuidance: 'Whitelist known compute-intensive instances (batch, ML training, CI/CD). Set different thresholds per instance type. Correlate with billing anomalies for validation. Exclude instances tagged for high-compute workloads.',
+      investigationWorkflow: '1. Identify the affected instance from Dimensions\n2. Check if the instance is tagged for compute-intensive workloads\n3. Review when the CPU spike started versus instance launch time\n4. Check network metrics for connections to mining pool IPs\n5. SSH into the instance and check running processes\n6. If mining confirmed, terminate the instance and investigate access vector',
+      criblSearchQueries: [
+        {
+          name: 'Sustained High CPU Instances',
+          description: 'Identifies EC2 instances with sustained high CPU utilization',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/EC2" and MetricName == "CPUUtilization" and Value > 90\n| summarize avg_cpu=avg(Value), high_periods=count() by Dimensions\n| where high_periods > 6\n| order by avg_cpu desc'
+        },
+        {
+          name: 'CPU Utilization Timeline',
+          description: 'Shows CPU usage pattern over time for suspected instances',
+          query: 'dataset="$DATASET" earliest=-48h\n| where Namespace == "AWS/EC2" and MetricName == "CPUUtilization" and Dimensions matches regex "$INSTANCE_ID"\n| summarize avg_value=avg(Value) by bin(Timestamp, 5m)\n| order by Timestamp asc'
+        },
+        {
+          name: 'Network Correlation for Mining',
+          description: 'Correlates CPU spikes with network traffic patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/EC2" and MetricName in ("CPUUtilization", "NetworkOut", "NetworkIn") and Dimensions matches regex "$INSTANCE_ID"\n| summarize avg_value=avg(Value) by MetricName, bin(Timestamp, 15m)\n| order by Timestamp asc'
+        },
+        {
+          name: 'Fleet-Wide CPU Anomalies',
+          description: 'Detects multiple instances with simultaneous CPU spikes indicating a broader compromise',
+          query: 'dataset="$DATASET" earliest=-1h\n| where Namespace == "AWS/EC2" and MetricName == "CPUUtilization" and Value > 90\n| summarize affected_instances=dcount(Dimensions), avg_cpu=avg(Value) by bin(Timestamp, 5m)\n| where affected_instances > 3\n| order by affected_instances desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-002',
+      name: 'AWS Anomalous Network Traffic Volume Egress',
+      objective: 'Detects unusual outbound network traffic volumes from AWS resources that may indicate data exfiltration, C2 communication, or compromised instances participating in DDoS attacks.',
+      severity: 'Critical',
+      mitre: ['T1048 - Exfiltration Over Alternative Protocol', 'T1498 - Network Denial of Service'],
+      tags: ['security', 'aws', 'exfiltration', 'network', 'anomaly'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'StatisticType', 'AccountId', 'Region'],
+      detectionLogic: 'Monitors NetworkOut metrics across EC2, NAT Gateway, and VPC endpoints for sudden volume increases. Triggers when outbound traffic exceeds 3x the 7-day rolling average for the same time period. Also detects sustained high egress during non-business hours when legitimate traffic should be minimal.',
+      falsePositives: ['Scheduled backup windows', 'Content delivery or media streaming', 'Data migration projects', 'Legitimate large file transfers', 'Marketing email campaigns'],
+      tuningGuidance: 'Establish per-instance and per-account baseline egress patterns. Whitelist backup and replication windows. Adjust multiplier based on application type. Set stricter thresholds for after-hours traffic.',
+      investigationWorkflow: '1. Identify the resource generating anomalous egress from Dimensions\n2. Determine the traffic volume compared to historical baseline\n3. Check VPC Flow Logs for destination IPs of the outbound traffic\n4. Determine if the traffic is going to known or suspicious destinations\n5. Verify if any scheduled operations align with the traffic spike\n6. If exfiltration suspected, capture traffic and isolate the instance',
+      criblSearchQueries: [
+        {
+          name: 'Anomalous Egress Detection',
+          description: 'Identifies resources with abnormally high outbound traffic',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName == "NetworkOut" and Namespace == "AWS/EC2"\n| summarize total_egress=sum(Value), avg_egress=avg(Value), max_egress=max(Value) by Dimensions, Region\n| where total_egress > 10737418240\n| order by total_egress desc'
+        },
+        {
+          name: 'Egress Baseline Comparison',
+          description: 'Compares current egress against 7-day historical average',
+          query: 'dataset="$DATASET" earliest=-7d\n| where MetricName == "NetworkOut" and Namespace == "AWS/EC2"\n| summarize daily_egress=sum(Value) by Dimensions, bin(Timestamp, 1d)\n| order by Dimensions, Timestamp desc'
+        },
+        {
+          name: 'After-Hours Egress',
+          description: 'Detects high egress during non-business hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName == "NetworkOut" and Namespace == "AWS/EC2"\n| extend hour=hourofday(Timestamp)\n| where hour < 6 or hour > 22\n| summarize nighttime_egress=sum(Value) by Dimensions\n| where nighttime_egress > 1073741824\n| order by nighttime_egress desc'
+        },
+        {
+          name: 'NAT Gateway Egress Spikes',
+          description: 'Monitors NAT Gateway for unusual egress indicating subnet-wide exfiltration',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName == "BytesOutToDestination" and Namespace == "AWS/NATGateway"\n| summarize total_bytes=sum(Value) by Dimensions, bin(Timestamp, 1h)\n| order by total_bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-003',
+      name: 'AWS IAM Authentication Failure Spike',
+      objective: 'Detects spikes in IAM authentication failures and API throttling that may indicate credential stuffing, access key abuse, or automated brute-force attacks against AWS APIs.',
+      severity: 'High',
+      mitre: ['T1110 - Brute Force', 'T1078.004 - Cloud Accounts'],
+      tags: ['security', 'aws', 'authentication', 'brute-force', 'iam'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'AccountId'],
+      detectionLogic: 'Monitors CloudWatch metrics for authentication and authorization failures including CallCount with error dimensions, ThrottleCount spikes, and custom metrics for 4xx errors. Triggers when error count exceeds 50 in a 5-minute period or when throttling increases by more than 5x baseline.',
+      falsePositives: ['Misconfigured applications with wrong credentials', 'IAM policy changes causing temporary access failures', 'Rate limiting during legitimate traffic spikes', 'Expired temporary credentials in cached sessions'],
+      tuningGuidance: 'Set baseline error rates per account and service. Whitelist known applications that generate expected auth failures during rotation. Differentiate between throttling (quota) and access denied (permissions). Alert at lower thresholds for privileged APIs.',
+      investigationWorkflow: '1. Identify the Namespace and Dimensions to determine which service is failing\n2. Cross-reference with CloudTrail for specific error codes and source identities\n3. Determine if failures are from a single identity or distributed\n4. Check if the failures correlate with credential rotation events\n5. Look for successful authentications between failures indicating credential guessing\n6. If attack confirmed, block source and rotate affected credentials',
+      criblSearchQueries: [
+        {
+          name: 'Authentication Failure Metrics',
+          description: 'Identifies spikes in authentication failure metrics',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName matches regex "(?i)(error|4xx|denied|unauthorized|throttle)" and Value > 0\n| summarize total_errors=sum(Value) by Namespace, MetricName, AccountId, bin(Timestamp, 5m)\n| where total_errors > 50\n| order by total_errors desc'
+        },
+        {
+          name: 'Throttling Spike Detection',
+          description: 'Detects unusual API throttling that may indicate automated attacks',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName matches regex "(?i)throttl" and Value > 0\n| summarize throttle_count=sum(Value) by Namespace, Dimensions, bin(Timestamp, 15m)\n| where throttle_count > 100\n| order by throttle_count desc'
+        },
+        {
+          name: 'Error Rate Trend',
+          description: 'Shows error rate trends to identify attack patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where MetricName matches regex "(?i)(error|4xx)" and Namespace matches regex "AWS/"\n| summarize hourly_errors=sum(Value) by Namespace, bin(Timestamp, 1h)\n| order by Timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-004',
+      name: 'AWS S3 Bucket Request Anomaly',
+      objective: 'Detects anomalous S3 bucket access patterns through CloudWatch metrics, including unusual request volumes, high error rates, or unexpected GET/PUT ratios that may indicate data exfiltration or ransomware preparation.',
+      severity: 'High',
+      mitre: ['T1530 - Data from Cloud Storage', 'T1486 - Data Encrypted for Impact'],
+      tags: ['security', 'aws', 's3', 'data-access', 'anomaly'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'Period', 'AccountId'],
+      detectionLogic: 'Monitors S3 request metrics (GetRequests, PutRequests, DeleteRequests, BytesDownloaded) for anomalous patterns. Triggers when: (1) GET requests exceed 10x normal for a bucket, (2) DELETE requests spike unexpectedly, (3) BytesDownloaded exceeds historical 95th percentile, or (4) unusual PUT:GET ratio suggesting ransomware (encrypt-then-delete pattern).',
+      falsePositives: ['Data lake ETL job executions', 'Backup operations', 'Content migration between buckets', 'Marketing campaigns driving asset downloads', 'Log archival processes'],
+      tuningGuidance: 'Establish per-bucket request baselines. Whitelist known ETL and backup operations. Focus on buckets containing sensitive data. Alert at lower thresholds for buckets with restricted access. Monitor DELETE metrics with zero tolerance for critical buckets.',
+      investigationWorkflow: '1. Identify the affected S3 bucket from Dimensions\n2. Determine the type of anomaly (read spike, delete spike, unusual pattern)\n3. Cross-reference with CloudTrail S3 data events for the requester identity\n4. Check if the access pattern matches known ETL or backup schedules\n5. For ransomware indicators, verify if objects are being re-encrypted\n6. If malicious, enable versioning, restrict access, and preserve evidence',
+      criblSearchQueries: [
+        {
+          name: 'S3 Request Volume Anomalies',
+          description: 'Identifies S3 buckets with abnormal request volumes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/S3" and MetricName in ("GetRequests", "PutRequests", "DeleteRequests")\n| summarize total_requests=sum(Value) by Dimensions, MetricName, bin(Timestamp, 1h)\n| where total_requests > 10000\n| order by total_requests desc'
+        },
+        {
+          name: 'S3 Delete Spike Detection',
+          description: 'Detects unusual spikes in S3 object deletions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/S3" and MetricName == "DeleteRequests" and Value > 0\n| summarize delete_count=sum(Value) by Dimensions, bin(Timestamp, 15m)\n| where delete_count > 100\n| order by delete_count desc'
+        },
+        {
+          name: 'S3 Download Volume Anomaly',
+          description: 'Identifies buckets with anomalous download volumes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where Namespace == "AWS/S3" and MetricName == "BytesDownloaded"\n| summarize daily_bytes=sum(Value) by Dimensions, bin(Timestamp, 1d)\n| order by Dimensions, Timestamp desc'
+        },
+        {
+          name: 'Ransomware Pattern Detection',
+          description: 'Detects PUT-then-DELETE patterns that may indicate ransomware',
+          query: 'dataset="$DATASET" earliest=-1h\n| where Namespace == "AWS/S3" and MetricName in ("PutRequests", "DeleteRequests")\n| summarize total=sum(Value) by Dimensions, MetricName, bin(Timestamp, 5m)\n| order by Dimensions, Timestamp, MetricName'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-005',
+      name: 'AWS RDS Database Connection Surge',
+      objective: 'Detects sudden surges in database connections to RDS instances that may indicate SQL injection exploitation, credential brute-forcing, or unauthorized database access attempts.',
+      severity: 'Medium',
+      mitre: ['T1110 - Brute Force', 'T1190 - Exploit Public-Facing Application'],
+      tags: ['security', 'aws', 'rds', 'database', 'brute-force'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'Period', 'Region'],
+      detectionLogic: 'Monitors RDS DatabaseConnections and LoginFailures metrics. Triggers when connection count exceeds 3x the normal peak for the instance, or when login failures spike above baseline. Also detects connections outside normal business hours that exceed a minimal threshold, indicating potential automated attacks.',
+      falsePositives: ['Application deployment causing connection pool recreation', 'Auto-scaling events adding new application instances', 'Connection pool misconfiguration', 'Batch processing windows with high DB utilization'],
+      tuningGuidance: 'Establish per-instance connection baselines by time of day. Whitelist known deployment windows. Set different thresholds for production vs. development instances. Monitor FreeableMemory alongside connections to detect exhaustion attacks.',
+      investigationWorkflow: '1. Identify the affected RDS instance from Dimensions\n2. Determine if the connection surge is from new or existing sources\n3. Check for corresponding authentication failures in database logs\n4. Verify if application deployments coincide with the surge\n5. Review security group rules for the RDS instance\n6. If attack confirmed, restrict security groups and investigate source',
+      criblSearchQueries: [
+        {
+          name: 'RDS Connection Surge',
+          description: 'Identifies RDS instances with abnormal connection counts',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/RDS" and MetricName == "DatabaseConnections"\n| summarize max_connections=max(Value), avg_connections=avg(Value) by Dimensions, Region\n| where max_connections > avg_connections * 3\n| order by max_connections desc'
+        },
+        {
+          name: 'RDS Connection Timeline',
+          description: 'Shows connection count over time for a specific instance',
+          query: 'dataset="$DATASET" earliest=-48h\n| where Namespace == "AWS/RDS" and MetricName == "DatabaseConnections" and Dimensions matches regex "$INSTANCE_ID"\n| summarize connections=avg(Value) by bin(Timestamp, 5m)\n| order by Timestamp asc'
+        },
+        {
+          name: 'RDS Resource Exhaustion Indicators',
+          description: 'Correlates connection surges with resource exhaustion metrics',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/RDS" and MetricName in ("DatabaseConnections", "FreeableMemory", "CPUUtilization") and Dimensions matches regex "$INSTANCE_ID"\n| summarize avg_value=avg(Value) by MetricName, bin(Timestamp, 15m)\n| order by Timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-006',
+      name: 'AWS Lambda Invocation Anomaly and Abuse',
+      objective: 'Detects anomalous Lambda function invocation patterns that may indicate function abuse for cryptomining, unauthorized data processing, or exploitation of serverless infrastructure.',
+      severity: 'Medium',
+      mitre: ['T1496 - Resource Hijacking', 'T1648 - Serverless Execution'],
+      tags: ['security', 'aws', 'lambda', 'serverless', 'abuse'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'AccountId', 'Region'],
+      detectionLogic: 'Monitors Lambda metrics including Invocations, Duration, and ConcurrentExecutions for anomalous patterns. Triggers when: (1) a function that normally has low invocations suddenly spikes 10x, (2) Duration significantly increases suggesting code modification, (3) ConcurrentExecutions approach account limits, or (4) new functions appear with high invocation rates.',
+      falsePositives: ['Legitimate traffic spikes to API-triggered functions', 'Batch processing events', 'Load testing activities', 'Event-driven spikes from SQS/SNS'],
+      tuningGuidance: 'Establish per-function invocation baselines. Whitelist event-driven functions with known burst patterns. Set duration baselines to detect code changes. Monitor account-level concurrency to detect fleet-wide abuse.',
+      investigationWorkflow: '1. Identify the Lambda function from Dimensions\n2. Compare current invocation rate against historical baseline\n3. Check if the function code was recently modified\n4. Review the functions trigger source for unusual activity\n5. Check Duration metrics for evidence of code modification\n6. If abuse confirmed, disable the function and investigate the modification vector',
+      criblSearchQueries: [
+        {
+          name: 'Lambda Invocation Anomalies',
+          description: 'Identifies Lambda functions with abnormal invocation volumes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/Lambda" and MetricName == "Invocations"\n| summarize total_invocations=sum(Value), avg_invocations=avg(Value) by Dimensions, Region\n| where total_invocations > 10000\n| order by total_invocations desc'
+        },
+        {
+          name: 'Lambda Duration Changes',
+          description: 'Detects functions with significant duration increases suggesting code modification',
+          query: 'dataset="$DATASET" earliest=-7d\n| where Namespace == "AWS/Lambda" and MetricName == "Duration"\n| summarize avg_duration=avg(Value) by Dimensions, bin(Timestamp, 1d)\n| order by Dimensions, Timestamp desc'
+        },
+        {
+          name: 'Lambda Concurrency Pressure',
+          description: 'Monitors concurrent execution approaching account limits',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/Lambda" and MetricName == "ConcurrentExecutions"\n| summarize max_concurrent=max(Value) by Region, bin(Timestamp, 5m)\n| where max_concurrent > 500\n| order by max_concurrent desc'
+        },
+        {
+          name: 'Lambda Error Rate with Invocation Spike',
+          description: 'Correlates invocation spikes with error rates',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/Lambda" and MetricName in ("Invocations", "Errors") and Dimensions matches regex "$FUNCTION"\n| summarize total=sum(Value) by MetricName, bin(Timestamp, 15m)\n| order by Timestamp asc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-sec-007',
+      name: 'AWS EBS Volume Snapshot Anomaly',
+      objective: 'Detects unusual EBS snapshot creation or modification patterns that may indicate an attacker creating snapshots for data exfiltration or pre-ransomware disk cloning activities.',
+      severity: 'High',
+      mitre: ['T1537 - Transfer Data to Cloud Account', 'T1530 - Data from Cloud Storage'],
+      tags: ['security', 'aws', 'ebs', 'snapshot', 'exfiltration'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'Value', 'Unit', 'AccountId', 'Region'],
+      detectionLogic: 'Monitors EBS volume read/write metrics and correlates with snapshot creation patterns. Triggers when: (1) VolumeReadOps spikes significantly before a known snapshot event, (2) multiple volumes in an account show simultaneous read spikes suggesting bulk cloning, or (3) Volume metrics show unusual I/O patterns indicating full-disk reads consistent with snapshot exfiltration.',
+      falsePositives: ['Scheduled backup operations', 'Disaster recovery testing', 'AMI creation for deployment pipelines', 'Database backup snapshots'],
+      tuningGuidance: 'Whitelist scheduled backup windows and automation accounts. Focus on volumes attached to sensitive instances. Set different thresholds for production vs. development. Alert on snapshot creation in unusual accounts or regions.',
+      investigationWorkflow: '1. Identify the affected volumes from Dimensions\n2. Determine which instances the volumes are attached to\n3. Cross-reference with CloudTrail for CreateSnapshot API calls\n4. Check if snapshots were shared with external accounts\n5. Verify against backup schedules and authorized operations\n6. If unauthorized, delete shared snapshots and revoke permissions',
+      criblSearchQueries: [
+        {
+          name: 'Volume Read Spike Detection',
+          description: 'Identifies volumes with abnormal read operations suggesting data copying',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/EBS" and MetricName == "VolumeReadOps"\n| summarize total_reads=sum(Value), avg_reads=avg(Value), max_reads=max(Value) by Dimensions\n| where max_reads > avg_reads * 5\n| order by total_reads desc'
+        },
+        {
+          name: 'Bulk Volume Activity',
+          description: 'Detects simultaneous high I/O across multiple volumes indicating bulk operation',
+          query: 'dataset="$DATASET" earliest=-1h\n| where Namespace == "AWS/EBS" and MetricName == "VolumeReadOps" and Value > 1000\n| summarize active_volumes=dcount(Dimensions), total_ops=sum(Value) by bin(Timestamp, 5m), AccountId\n| where active_volumes > 5\n| order by active_volumes desc'
+        },
+        {
+          name: 'Volume I/O Pattern Analysis',
+          description: 'Analyzes read/write patterns for specific volumes over time',
+          query: 'dataset="$DATASET" earliest=-48h\n| where Namespace == "AWS/EBS" and MetricName in ("VolumeReadOps", "VolumeWriteOps") and Dimensions matches regex "$VOLUME_ID"\n| summarize ops=sum(Value) by MetricName, bin(Timestamp, 15m)\n| order by Timestamp asc'
+        },
+        {
+          name: 'Cross-Region Volume Activity',
+          description: 'Detects EBS activity in unusual regions that may indicate snapshot copy for exfiltration',
+          query: 'dataset="$DATASET" earliest=-24h\n| where Namespace == "AWS/EBS" and MetricName == "VolumeReadOps"\n| summarize total_ops=sum(Value), volume_count=dcount(Dimensions) by Region\n| order by total_ops desc'
+        }
+      ]
+    }
+  ],
 };

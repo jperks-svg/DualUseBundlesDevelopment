@@ -9824,5 +9824,10639 @@ export const observabilityDetections = {
         }
       ]
     }
-  ]
+  ],
+  'cisco-firepower': [
+    {
+      id: 'cfp-obs-001',
+      name: 'Intrusion Policy Event Volume Spike',
+      objective: 'Detect sudden increases in intrusion events that may indicate an active attack, misconfigured policy, or environmental change triggering false positives at scale.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'intrusion', 'volume', 'capacity'],
+      requiredFields: ['timestamp', 'SignatureID', 'IntrrusionPolicy', 'SourceIP', 'DestinationIP', 'Protocol'],
+      detectionLogic: 'Alert when intrusion event volume exceeds 300% of the 7-day rolling baseline within a 15-minute evaluation window. Break down by IntrrusionPolicy and SignatureID to isolate noisy signatures from genuine attack surges.',
+      operationalValue: 'High intrusion event volumes can overwhelm analyst queues, degrade Firepower appliance performance, and mask real threats in noise. Early detection enables rapid tuning or escalation.',
+      changeMgmtRelevance: 'Intrusion policy updates or new signature deployments commonly cause event volume spikes. Correlate timing with policy push windows to differentiate tuning needs from attacks.',
+      troubleshootingWorkflow: '1. Identify which IntrrusionPolicy and SignatureID are generating the spike\n2. Determine if the spike is from a single source or distributed\n3. Check if a policy update was recently deployed\n4. Assess whether events are true positives or environmental noise\n5. Evaluate Firepower appliance resource utilization\n6. Tune or suppress noisy signatures if confirmed false positive',
+      dashboardDependency: 'Intrusion Event Volume dashboard, Signature Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Intrusion events by signature over time',
+          description: 'Visualize event volume per signature to identify spike sources',
+          query: 'dataset="$DATASET" earliest=-12h\n| where SignatureID != ""\n| timestats span=15m count() by SignatureID'
+        },
+        {
+          name: 'Top triggering signatures in last hour',
+          description: 'Find signatures generating the most events recently',
+          query: 'dataset="$DATASET" earliest=-1h\n| where SignatureID != ""\n| summarize EventCount=count() by SignatureID, IntrrusionPolicy\n| order by EventCount desc\n| limit 20'
+        },
+        {
+          name: 'Source IPs triggering the most intrusion events',
+          description: 'Identify sources responsible for the volume spike',
+          query: 'dataset="$DATASET" earliest=-1h\n| where SignatureID != ""\n| summarize Hits=count(), UniqueSignatures=dcount(SignatureID) by SourceIP\n| order by Hits desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-002',
+      name: 'Access Control Rule Action Distribution Shift',
+      objective: 'Detect when the ratio of allow vs block actions changes materially, indicating policy drift, misconfig, or upstream routing changes.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'policy', 'change-detection', 'access-control'],
+      requiredFields: ['timestamp', 'AccessControlRuleName', 'AccessControlRuleAction', 'SourceIP', 'DestinationIP', 'Protocol'],
+      detectionLogic: 'Alert when the block-to-allow ratio for any rule shifts by more than 40% from the 7-day baseline within a 30-minute window. Evaluate per AccessControlRuleName to isolate impacted policies.',
+      operationalValue: 'Action distribution shifts reveal policy changes that may not have been communicated, routing changes sending new traffic through rules, or application behavior changes that now match different policies.',
+      changeMgmtRelevance: 'Direct indicator of policy change impact. If action ratios shift within 60 minutes of a maintenance window, flag as change-related for review.',
+      troubleshootingWorkflow: '1. Identify which AccessControlRuleName shifted\n2. Determine if the shift is toward more blocks or more allows\n3. Check if a policy deployment occurred recently\n4. Review source/destination pairs hitting the rule\n5. Verify no routing changes redirected traffic\n6. Confirm intended behavior with the change owner',
+      dashboardDependency: 'Access Control Policy dashboard, Rule Action Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Action distribution by rule (last 4 hours)',
+          description: 'See allow vs block ratios per access control rule',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by AccessControlRuleName, AccessControlRuleAction\n| order by AccessControlRuleName asc, count_ desc'
+        },
+        {
+          name: 'Action ratio trend over time',
+          description: 'Track how the allow/block ratio changes over time for each rule',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by AccessControlRuleAction, AccessControlRuleName'
+        },
+        {
+          name: 'Rules with unusual block rate in last hour',
+          description: 'Find rules where block percentage deviates from normal',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Blocked=countif(AccessControlRuleAction == "Block") by AccessControlRuleName\n| extend BlockRate=round(Blocked * 100.0 / Total, 1)\n| where Total > 50\n| order by BlockRate desc'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-003',
+      name: 'Interface Utilization Imbalance',
+      objective: 'Detect when traffic distribution across ingress and egress interfaces becomes asymmetric, indicating potential link failures, routing issues, or capacity concerns.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'interface', 'network'],
+      requiredFields: ['timestamp', 'IngressInterface', 'EgressInterface', 'SourceIP', 'DestinationIP', 'Protocol'],
+      detectionLogic: 'Alert when session count per interface drops below 20% of baseline or exceeds 250% of baseline over a 15-minute window. Evaluate IngressInterface and EgressInterface independently.',
+      operationalValue: 'Interface imbalances signal link failures, ECMP path issues, or capacity exhaustion on specific links. Early detection prevents congestion-related packet loss and performance degradation.',
+      changeMgmtRelevance: 'Interface traffic shifts should correlate with planned maintenance or routing changes. Unexpected shifts during non-change windows require immediate investigation.',
+      troubleshootingWorkflow: '1. Identify which interface(s) show abnormal traffic levels\n2. Check if traffic shifted to another interface (failover scenario)\n3. Verify physical interface status on Firepower appliance\n4. Check upstream routing (BGP/OSPF) for path changes\n5. Review ECMP configuration for member health\n6. Verify no cable or optic issues on affected interfaces',
+      dashboardDependency: 'Interface Traffic Distribution dashboard, Device Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Session count by ingress interface over time',
+          description: 'Track how traffic distributes across ingress interfaces',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by IngressInterface'
+        },
+        {
+          name: 'Egress interface distribution',
+          description: 'Compare traffic volumes across egress paths',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count() by EgressInterface\n| order by Sessions desc'
+        },
+        {
+          name: 'Interfaces with sudden traffic drop',
+          description: 'Find interfaces that stopped receiving traffic recently',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize RecentSessions=count() by IngressInterface\n| where RecentSessions < 10\n| order by RecentSessions asc'
+        },
+        {
+          name: 'Ingress-to-egress path mapping',
+          description: 'Understand which ingress traffic maps to which egress path',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Sessions=count() by IngressInterface, EgressInterface\n| order by Sessions desc'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-004',
+      name: 'Protocol Distribution Anomaly',
+      objective: 'Detect unexpected changes in protocol mix that may indicate application failures, misrouted traffic, or infrastructure issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'protocol', 'baseline', 'anomaly'],
+      requiredFields: ['timestamp', 'Protocol', 'SourceIP', 'DestinationIP', 'SourcePort', 'DestinationPort'],
+      detectionLogic: 'Alert when any protocol constitutes more than 20% deviation from its expected baseline share of total traffic. Evaluate over 1-hour windows with day-of-week adjustment.',
+      operationalValue: 'Protocol distribution is normally stable. Sudden shifts indicate application outages (drop in HTTPS), scanning activity (spike in ICMP), or misconfiguration (unexpected UDP floods).',
+      changeMgmtRelevance: 'Application deployments or network changes may legitimately shift protocol mix. Correlate with change windows to validate expected vs unexpected shifts.',
+      troubleshootingWorkflow: '1. Identify which protocol(s) deviated from baseline\n2. Determine if the anomaly is a spike or a drop\n3. For spikes: identify source IPs and destination ports driving the increase\n4. For drops: check if the associated application/service is healthy\n5. Verify no scanning or reconnaissance activity\n6. Check firewall resource utilization for protocol-specific inspection',
+      dashboardDependency: 'Protocol Distribution dashboard, Traffic Composition dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Protocol distribution over time',
+          description: 'Visualize protocol mix changes to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by Protocol'
+        },
+        {
+          name: 'Current protocol breakdown vs baseline',
+          description: 'Compare current hour protocol distribution against expected values',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Sessions=count() by Protocol\n| order by Sessions desc'
+        },
+        {
+          name: 'Top talkers for anomalous protocol',
+          description: 'Identify sources driving unexpected protocol traffic',
+          query: 'dataset="$DATASET" Protocol="$PROTOCOL" earliest=-1h\n| summarize Sessions=count() by SourceIP, DestinationIP, DestinationPort\n| order by Sessions desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-005',
+      name: 'High-Volume Destination Port Concentration',
+      objective: 'Detect when a single destination port receives disproportionate traffic, indicating potential service overload, misconfiguration, or traffic loop.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'port', 'concentration'],
+      requiredFields: ['timestamp', 'DestinationPort', 'DestinationIP', 'SourceIP', 'Protocol', 'AccessControlRuleAction'],
+      detectionLogic: 'Alert when a single destination port accounts for more than 60% of total sessions in a 15-minute window, or when a port exceeds 500% of its baseline volume. Exclude known high-volume ports (443, 80, 53) from percentage-based alerts.',
+      operationalValue: 'Port concentration reveals service abuse, traffic loops, or application failures causing retry storms. Identifies capacity risks before service degradation.',
+      changeMgmtRelevance: 'New application deployments or load balancer changes can redirect traffic to specific ports. Validate against change tickets.',
+      troubleshootingWorkflow: '1. Identify the concentrated destination port and IP\n2. Determine the service running on that port\n3. Check if multiple sources are hitting it (legitimate load) or single source (potential issue)\n4. Verify the destination service health\n5. Check for retry storms or connection pooling failures\n6. Review load balancer or DNS changes that may have shifted traffic',
+      dashboardDependency: 'Port Utilization dashboard, Service Load dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top destination ports by session count',
+          description: 'Identify which ports are receiving the most connections',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count(), UniqueSources=dcount(SourceIP) by DestinationPort, Protocol\n| order by Sessions desc\n| limit 20'
+        },
+        {
+          name: 'Port volume trends over time',
+          description: 'Track session volume per port to spot concentration spikes',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by DestinationPort\n| order by count_ desc'
+        },
+        {
+          name: 'Sources hitting concentrated port',
+          description: 'Find all sources connecting to the high-volume port',
+          query: 'dataset="$DATASET" DestinationPort="$PORT" earliest=-1h\n| summarize Sessions=count() by SourceIP, DestinationIP, AccessControlRuleAction\n| order by Sessions desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-006',
+      name: 'Event Message Pattern Deviation',
+      objective: 'Detect changes in EventMessage type distribution that may indicate sensor misconfiguration, policy errors, or logging pipeline issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'logging', 'sensor'],
+      requiredFields: ['timestamp', 'EventMessage', 'IngressInterface', 'AccessControlRuleName'],
+      detectionLogic: 'Alert when previously common EventMessage patterns disappear or new patterns appear that constitute more than 10% of total volume within a 1-hour window. Use cardinality tracking to detect schema drift.',
+      operationalValue: 'EventMessage pattern changes reveal sensor health issues, policy misconfigurations, or logging pipeline problems. Ensures detection coverage remains intact.',
+      changeMgmtRelevance: 'Policy updates and sensor upgrades change event patterns. Track pattern changes against deployment schedules to validate expected behavior.',
+      troubleshootingWorkflow: '1. Identify which EventMessage patterns changed (new, missing, or volume shift)\n2. Check if a Firepower policy or sensor update was deployed\n3. Verify Cribl pipeline transformations are not altering events\n4. Check sensor health and connectivity\n5. Validate that downstream detections still function correctly\n6. Update baselines if change is confirmed intentional',
+      dashboardDependency: 'Data Quality dashboard, Event Pattern Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'EventMessage type distribution',
+          description: 'Show the breakdown of event message types to detect drift',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by EventMessage\n| order by count_ desc\n| limit 50'
+        },
+        {
+          name: 'New EventMessage patterns in last hour',
+          description: 'Identify event patterns that appeared recently but were not seen in prior baseline',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize RecentCount=count() by EventMessage\n| where RecentCount > 5\n| order by RecentCount desc'
+        },
+        {
+          name: 'EventMessage volume trend',
+          description: 'Track event type volumes over time to spot disappearances',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by EventMessage'
+        }
+      ]
+    },
+    {
+      id: 'cfp-obs-007',
+      name: 'Log Ingestion Pipeline Health',
+      objective: 'Detect when Firepower event logs stop arriving or experience significant volume drops, indicating collection or forwarding failures.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'pipeline', 'ingestion', 'monitoring'],
+      requiredFields: ['timestamp', 'IngressInterface', 'SourceIP', 'Protocol'],
+      detectionLogic: 'Alert when no events are received for 5 minutes from a normally active Firepower sensor, or when total event volume drops below 30% of the expected baseline for the time-of-day window.',
+      operationalValue: 'Pipeline health underpins all other detections. If Firepower logs stop flowing, security and operational visibility is lost. Early detection of ingestion failures ensures coverage continuity.',
+      changeMgmtRelevance: 'Ingestion failures commonly follow Firepower upgrades, eStreamer configuration changes, or Cribl pipeline modifications. Correlate with maintenance windows.',
+      troubleshootingWorkflow: '1. Check last received event timestamp\n2. Verify Firepower eStreamer or syslog connectivity\n3. Check Cribl source metrics for the Firepower input\n4. Verify network path between sensor and collector\n5. Check Firepower management console for sensor health\n6. Review Cribl pipeline for errors or dropped events\n7. Verify disk space and resource availability on sensor',
+      dashboardDependency: 'Ingestion Health dashboard, Source Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track overall ingestion rate to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Events per ingress interface',
+          description: 'Monitor per-interface event flow to detect partial failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize EventCount=count(), LastSeen=max(timestamp) by IngressInterface\n| order by EventCount asc'
+        },
+        {
+          name: 'Ingestion gaps detection',
+          description: 'Find time windows with zero or near-zero events',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m EventCount=count()\n| where EventCount < 5\n| order by _time desc'
+        },
+        {
+          name: 'Protocol diversity check',
+          description: 'Verify all expected protocols are still being logged',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count() by Protocol\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'juniper-srx': [
+    {
+      id: 'jnp-obs-001',
+      name: 'Session Table Capacity Trending',
+      objective: 'Detect when active session counts approach device limits, risking new connection drops and service degradation.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'sessions', 'device-health'],
+      requiredFields: ['timestamp', 'session_id', 'source_address', 'destination_address', 'action', 'bytes_from_client', 'bytes_from_server'],
+      detectionLogic: 'Alert when concurrent active sessions (unique session_id count) exceeds 80% of device capacity baseline, or when session creation rate exceeds 150% of normal for a sustained 10-minute period. Track session_id cardinality as a proxy for session table utilization.',
+      operationalValue: 'SRX devices have finite session table capacity. When exhausted, new connections are dropped silently. Trending detection enables proactive scaling or traffic shaping before outages occur.',
+      changeMgmtRelevance: 'Session spikes after policy changes may indicate overly broad rules matching unexpected traffic. Capacity planning changes should correlate with projected growth.',
+      troubleshootingWorkflow: '1. Check current session_id cardinality against known device limits\n2. Identify top source/destination pairs consuming sessions\n3. Determine if sessions are long-lived (resource exhaustion) or short-lived (high churn)\n4. Check for session table exhaustion symptoms (new connection failures)\n5. Review if policy changes expanded traffic matching\n6. Consider implementing session limits per source or policy',
+      dashboardDependency: 'Device Capacity dashboard, Session Utilization dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active session count over time',
+          description: 'Track session table utilization trending',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m dcount(session_id)'
+        },
+        {
+          name: 'Top session consumers by source',
+          description: 'Identify sources consuming the most sessions',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ActiveSessions=dcount(session_id), TotalBytes=sum(bytes_from_client) by source_address\n| order by ActiveSessions desc\n| limit 20'
+        },
+        {
+          name: 'Session creation rate trend',
+          description: 'Monitor new session creation velocity',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m NewSessions=dcount(session_id) by action'
+        },
+        {
+          name: 'Long-lived sessions consuming resources',
+          description: 'Find sessions that may be holding table entries unnecessarily',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize SessionBytes=sum(bytes_from_client) + sum(bytes_from_server) by session_id, source_address, destination_address\n| where SessionBytes > 1000000\n| order by SessionBytes desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-002',
+      name: 'Zone-to-Zone Connectivity Loss',
+      objective: 'Detect when expected traffic flows between security zones drop to zero or near-zero, indicating routing failures or policy misconfiguration.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'zone', 'connectivity'],
+      requiredFields: ['timestamp', 'zone_src', 'zone_dst', 'action', 'source_address', 'destination_address', 'protocol'],
+      detectionLogic: 'Alert when a zone pair that normally sees >100 sessions per hour drops below 10% of baseline for 15 minutes. Evaluate each zone_src to zone_dst combination independently.',
+      operationalValue: 'Zone connectivity loss is a high-confidence indicator of network outages affecting entire segments. Faster detection than user-reported issues.',
+      changeMgmtRelevance: 'Zone traffic drops within 30 minutes of policy or routing changes should be flagged as potential change-related regressions requiring immediate rollback assessment.',
+      troubleshootingWorkflow: '1. Identify which zone pair(s) lost connectivity\n2. Check if traffic is being denied (policy issue) or not arriving (routing issue)\n3. Verify interface status between zones\n4. Check for recent policy commits on the SRX\n5. Review routing table for missing routes\n6. Determine if the loss is unidirectional or bidirectional',
+      dashboardDependency: 'Zone Traffic Matrix dashboard, Connectivity Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Zone-to-zone traffic matrix',
+          description: 'Overview of sessions between all zone pairs',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count() by zone_src, zone_dst\n| order by Sessions desc'
+        },
+        {
+          name: 'Zone pair traffic trend over time',
+          description: 'Visualize zone connectivity over time to identify drops',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend zone_pair=strcat(zone_src, " → ", zone_dst)\n| timestats span=15m count() by zone_pair'
+        },
+        {
+          name: 'Zone pairs with near-zero traffic in last hour',
+          description: 'Find zone pairs that may have lost connectivity',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Sessions=count() by zone_src, zone_dst\n| where Sessions < 5\n| order by Sessions asc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-003',
+      name: 'Policy Deny Rate Increase',
+      objective: 'Detect when deny actions spike for a specific policy, indicating misconfiguration, application issues, or environmental changes generating unexpected traffic.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'policy', 'deny'],
+      requiredFields: ['timestamp', 'policy_name', 'action', 'source_address', 'destination_address', 'destination_port', 'service_name'],
+      detectionLogic: 'Alert when deny actions for any policy_name exceed 200% of the 7-day baseline within a 15-minute window. Separately track explicit denies vs default-deny to differentiate misconfiguration from new traffic patterns.',
+      operationalValue: 'Deny spikes reveal application failures generating invalid traffic, users hitting incorrect endpoints, or policy errors blocking legitimate flows. Enables rapid triage of connectivity complaints.',
+      changeMgmtRelevance: 'Policy commits that introduce new deny rules or tighten existing ones cause immediate deny spikes. Track deny increases against commit timestamps.',
+      troubleshootingWorkflow: '1. Identify which policy_name is generating increased denies\n2. Determine the source/destination pairs being denied\n3. Check if the traffic was previously allowed by a different policy\n4. Review recent policy commits for changes\n5. Verify if the denied traffic is legitimate (needs policy fix) or malicious\n6. Check application teams for deployment changes',
+      dashboardDependency: 'Policy Action Trends dashboard, Deny Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Deny events by policy over time',
+          description: 'Track deny volume per policy to identify spikes',
+          query: 'dataset="$DATASET" action="deny" earliest=-12h\n| timestats span=15m count() by policy_name'
+        },
+        {
+          name: 'Top denied source-destination pairs',
+          description: 'Identify which traffic flows are being blocked',
+          query: 'dataset="$DATASET" action="deny" earliest=-1h\n| summarize DenyCount=count() by source_address, destination_address, destination_port, policy_name\n| order by DenyCount desc\n| limit 30'
+        },
+        {
+          name: 'Deny rate vs allow rate per policy',
+          description: 'Compare deny-to-allow ratios across policies',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Denied=countif(action == "deny"), Allowed=countif(action == "permit") by policy_name\n| extend DenyRate=round(Denied * 100.0 / Total, 1)\n| where Total > 50\n| order by DenyRate desc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-004',
+      name: 'Bandwidth Utilization Anomaly',
+      objective: 'Detect abnormal bandwidth consumption patterns across the SRX that may indicate capacity exhaustion, traffic loops, or application misbehavior.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'bandwidth', 'capacity'],
+      requiredFields: ['timestamp', 'bytes_from_client', 'bytes_from_server', 'source_address', 'destination_address', 'service_name', 'zone_src', 'zone_dst'],
+      detectionLogic: 'Alert when total bytes (bytes_from_client + bytes_from_server) exceeds 250% of the hourly baseline, or when a single source/destination pair consumes more than 30% of total bandwidth over a 15-minute window.',
+      operationalValue: 'Bandwidth anomalies directly impact user experience and can signal backup jobs gone wrong, data exfiltration, or traffic loops. Proactive detection prevents congestion-related outages.',
+      changeMgmtRelevance: 'Bandwidth changes often follow new application deployments, backup schedule changes, or routing modifications that shift traffic through the SRX.',
+      troubleshootingWorkflow: '1. Identify top bandwidth consumers (source/destination pairs)\n2. Determine which service_name is consuming bandwidth\n3. Check if the consumption is asymmetric (upload vs download)\n4. Verify against known business processes (backups, replication)\n5. Check for traffic loops (same traffic counted multiple times)\n6. Assess impact on other traffic flows through the device',
+      dashboardDependency: 'Bandwidth Utilization dashboard, Top Talkers dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Total bandwidth over time',
+          description: 'Track aggregate throughput to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m TotalBytes=sum(bytes_from_client) + sum(bytes_from_server)'
+        },
+        {
+          name: 'Top bandwidth consumers by source',
+          description: 'Find sources using the most bandwidth',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ClientBytes=sum(bytes_from_client), ServerBytes=sum(bytes_from_server) by source_address, destination_address, service_name\n| extend TotalBytes=ClientBytes + ServerBytes\n| order by TotalBytes desc\n| limit 20'
+        },
+        {
+          name: 'Bandwidth by zone pair',
+          description: 'Identify which zone-to-zone flows consume the most bandwidth',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Bytes=sum(bytes_from_client) + sum(bytes_from_server), Sessions=count() by zone_src, zone_dst\n| order by Bytes desc'
+        },
+        {
+          name: 'Asymmetric traffic detection',
+          description: 'Find flows with highly asymmetric client vs server bytes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ClientBytes=sum(bytes_from_client), ServerBytes=sum(bytes_from_server) by source_address, destination_address\n| extend Ratio=iif(ServerBytes > 0, round(todouble(ClientBytes) / todouble(ServerBytes), 2), 999)\n| where Ratio > 10 or Ratio < 0.1\n| order by ClientBytes + ServerBytes desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-005',
+      name: 'Service Port Availability Degradation',
+      objective: 'Detect when established connections to known services decrease, indicating service outages visible at the firewall layer.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'service', 'connectivity'],
+      requiredFields: ['timestamp', 'service_name', 'destination_address', 'destination_port', 'action', 'source_address', 'protocol'],
+      detectionLogic: 'Alert when permitted sessions to a service_name drop below 40% of baseline while deny or close actions increase. Evaluate per service_name and destination_address combination over 10-minute windows.',
+      operationalValue: 'Firewall session data reveals service outages before application monitors because it captures connection attempts from all clients simultaneously.',
+      changeMgmtRelevance: 'Service availability drops after infrastructure changes indicate misconfiguration. Correlate with deployment schedules and maintenance windows.',
+      troubleshootingWorkflow: '1. Identify which service_name and destination saw the drop\n2. Determine if connections are being denied or simply not attempted\n3. Check if the destination is reachable (permit count vs prior baseline)\n4. Verify DNS resolution for the service\n5. Check load balancer health if applicable\n6. Confirm service is running on the destination host',
+      dashboardDependency: 'Service Availability dashboard, Connection Success Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Sessions per service over time',
+          description: 'Track connection volume to services for availability monitoring',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by service_name, action'
+        },
+        {
+          name: 'Services with declining connections',
+          description: 'Find services that are receiving fewer connections than expected',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Sessions=count(), Permitted=countif(action == "permit") by service_name, destination_address\n| where Sessions > 10\n| order by Permitted asc\n| limit 20'
+        },
+        {
+          name: 'Connection success rate by service',
+          description: 'Calculate the percentage of successful connections per service',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Permitted=countif(action == "permit") by service_name\n| extend SuccessRate=round(Permitted * 100.0 / Total, 1)\n| where Total > 50\n| order by SuccessRate asc'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-006',
+      name: 'Policy Match Distribution Change',
+      objective: 'Detect when traffic begins matching different policies than expected, indicating routing shifts, application changes, or policy ordering issues.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'policy', 'routing'],
+      requiredFields: ['timestamp', 'policy_name', 'source_address', 'destination_address', 'source_port', 'destination_port', 'action'],
+      detectionLogic: 'Alert when a policy_name sees >50% volume change (up or down) compared to the 7-day baseline for the same time window. Also detect when traffic shifts from one policy to another (one decreases as another increases).',
+      operationalValue: 'Policy match shifts indicate routing changes, application behavior changes, or policy ordering problems. Identifies unintended consequences of policy modifications.',
+      changeMgmtRelevance: 'Directly correlates with policy commits. Any policy match distribution change within 60 minutes of a commit should be reviewed for correctness.',
+      troubleshootingWorkflow: '1. Identify which policies gained or lost traffic volume\n2. Determine if traffic shifted between policies (one up, one down)\n3. Check for recent policy commits or reordering\n4. Review source/destination patterns of shifted traffic\n5. Verify policy ordering matches intended precedence\n6. Check if routing changes redirected traffic through different paths',
+      dashboardDependency: 'Policy Match Distribution dashboard, Policy Change Impact dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Sessions per policy over time',
+          description: 'Visualize policy match volume trends',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by policy_name'
+        },
+        {
+          name: 'Policy volume comparison (current vs yesterday)',
+          description: 'Compare current policy match rates against baseline',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize CurrentSessions=count() by policy_name\n| order by CurrentSessions desc'
+        },
+        {
+          name: 'Traffic details for a specific policy',
+          description: 'Drill into which flows are matching a policy of interest',
+          query: 'dataset="$DATASET" policy_name="$POLICY" earliest=-1h\n| summarize Sessions=count() by source_address, destination_address, destination_port, action\n| order by Sessions desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'jnp-obs-007',
+      name: 'Log Collection Continuity',
+      objective: 'Detect when SRX log forwarding stops or becomes intermittent, ensuring continuous operational visibility.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'logging'],
+      requiredFields: ['timestamp', 'source_address', 'session_id', 'policy_name'],
+      detectionLogic: 'Alert when no events are received from a known SRX device for 5 minutes, or when event volume drops below 20% of baseline. Detect gaps using timestamp continuity analysis.',
+      operationalValue: 'Log collection failures make the SRX invisible to all downstream detections and dashboards. Ensures the monitoring system itself is healthy.',
+      changeMgmtRelevance: 'Log forwarding failures follow SRX upgrades, syslog configuration changes, or Cribl pipeline modifications. Track against maintenance schedules.',
+      troubleshootingWorkflow: '1. Confirm which SRX device(s) stopped forwarding\n2. Check syslog/structured-data configuration on the SRX\n3. Verify network connectivity to the log collector\n4. Check Cribl source health metrics\n5. Review SRX commit history for configuration changes\n6. Verify log storage (SRX may stop forwarding when disk is full)',
+      dashboardDependency: 'Ingestion Health dashboard, Device Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track overall log ingestion rate',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Last seen timestamp check',
+          description: 'Identify if events have stopped arriving',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(timestamp), Events=count()\n| order by LastSeen asc'
+        },
+        {
+          name: 'Event continuity gaps',
+          description: 'Detect time windows with missing or sparse data',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m EventCount=count()\n| where EventCount < 3\n| order by _time desc'
+        },
+        {
+          name: 'Policy coverage verification',
+          description: 'Ensure events from all expected policies are still arriving',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count() by policy_name\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'zeek-logs': [
+    {
+      id: 'zek-obs-001',
+      name: 'Connection State Distribution Anomaly',
+      objective: 'Detect shifts in connection state distribution that indicate network health issues, scanning activity, or application failures.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'connection-state', 'network-health'],
+      requiredFields: ['ts', 'conn_state', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'proto', 'duration'],
+      detectionLogic: 'Alert when rejected (REJ), reset (RSTO/RSTR), or incomplete (S0/S1) connection states exceed 200% of baseline percentage. S0 state increases indicate unreachable hosts; REJ increases indicate service denials. Evaluate over 10-minute windows.',
+      operationalValue: 'Connection state distribution is a direct indicator of network and service health. Increases in abnormal states often precede user-reported outages by minutes.',
+      changeMgmtRelevance: 'Service deployments, firewall changes, and DNS updates commonly cause connection state shifts. Correlate state changes with maintenance windows.',
+      troubleshootingWorkflow: '1. Identify which connection state(s) increased abnormally\n2. S0 increase: destination hosts may be unreachable\n3. REJ increase: service may be refusing connections (at capacity or misconfigured)\n4. RSTO/RSTR increase: established connections being terminated abnormally\n5. Identify affected destinations and services\n6. Check if changes correlate with deployments or maintenance',
+      dashboardDependency: 'Connection State Health dashboard, Network Overview dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connection state distribution over time',
+          description: 'Track connection state percentages to detect shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by conn_state'
+        },
+        {
+          name: 'Abnormal connection states in last hour',
+          description: 'Find hosts experiencing high rates of failed connections',
+          query: 'dataset="$DATASET" earliest=-1h\n| where conn_state in ("S0", "REJ", "RSTO", "RSTR")\n| summarize FailedConns=count() by id_resp_h, id_resp_p, conn_state\n| order by FailedConns desc\n| limit 30'
+        },
+        {
+          name: 'Connection state ratio analysis',
+          description: 'Calculate healthy vs unhealthy connection percentages',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Normal=countif(conn_state in ("SF", "S1")), Abnormal=countif(conn_state in ("S0", "REJ", "RSTO", "RSTR")) by id_resp_h\n| extend AbnormalPct=round(Abnormal * 100.0 / Total, 1)\n| where Total > 20 and AbnormalPct > 30\n| order by AbnormalPct desc'
+        },
+        {
+          name: 'S0 connections by destination (unreachable hosts)',
+          description: 'Find hosts that are not responding to connection attempts',
+          query: 'dataset="$DATASET" conn_state="S0" earliest=-1h\n| summarize Attempts=count(), UniqueSources=dcount(id_orig_h) by id_resp_h, id_resp_p\n| order by Attempts desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-002',
+      name: 'Service Availability Degradation',
+      objective: 'Detect when monitored services experience reduced successful connections, indicating service outages or capacity issues.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'service', 'outage-detection'],
+      requiredFields: ['ts', 'service', 'id_resp_h', 'id_resp_p', 'conn_state', 'id_orig_h', 'proto'],
+      detectionLogic: 'Alert when successful connection count (conn_state SF or S1) for a service drops below 40% of baseline while total connection attempts remain stable or increase. Evaluate per service and responder combination over 10-minute windows.',
+      operationalValue: 'Zeek provides a network-level view of service health that complements application monitoring. Detects issues invisible to app-layer monitors such as TLS handshake failures or load balancer misconfigurations.',
+      changeMgmtRelevance: 'Service degradation following deployments indicates failed rollouts. Network-level detection provides an independent validation layer for deployment health.',
+      troubleshootingWorkflow: '1. Identify affected service and responder IPs\n2. Determine if connections are failing (S0/REJ) or being reset (RSTO/RSTR)\n3. Check if the issue affects all clients or specific sources\n4. Verify DNS resolution for the service\n5. Check load balancer member health\n6. Correlate with application-layer monitoring for root cause',
+      dashboardDependency: 'Service Health dashboard, Connection Success Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Successful connections per service over time',
+          description: 'Track service availability via connection success',
+          query: 'dataset="$DATASET" earliest=-12h\n| where conn_state in ("SF", "S1")\n| timestats span=10m count() by service'
+        },
+        {
+          name: 'Service connection success rate',
+          description: 'Calculate success vs failure ratios per service',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Successful=countif(conn_state in ("SF", "S1")) by service, id_resp_h\n| extend SuccessRate=round(Successful * 100.0 / Total, 1)\n| where Total > 20\n| order by SuccessRate asc'
+        },
+        {
+          name: 'Services with declining connections',
+          description: 'Find services experiencing fewer successful connections',
+          query: 'dataset="$DATASET" earliest=-1h\n| where service != ""\n| summarize Sessions=count(), FailedPct=round(countif(conn_state in ("S0", "REJ", "RSTO")) * 100.0 / count(), 1) by service, id_resp_h, id_resp_p\n| where FailedPct > 25 and Sessions > 10\n| order by FailedPct desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-003',
+      name: 'Connection Duration Anomaly',
+      objective: 'Detect abnormal connection durations that indicate application performance issues, hung connections, or timeout misconfigurations.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'duration', 'latency'],
+      requiredFields: ['ts', 'duration', 'service', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'orig_bytes', 'resp_bytes'],
+      detectionLogic: 'Alert when average connection duration for a service exceeds 300% of baseline, or when P95 duration exceeds 10x normal. Also detect when duration drops to near-zero (connections being immediately terminated). Evaluate per service over 15-minute windows.',
+      operationalValue: 'Connection duration changes reveal application performance degradation, resource contention, or infrastructure issues. Longer durations mean slower responses; shorter durations may mean failures.',
+      changeMgmtRelevance: 'Duration changes after deployments indicate performance regressions. Database migrations, API changes, and infrastructure scaling commonly affect connection durations.',
+      troubleshootingWorkflow: '1. Identify which service(s) show duration anomalies\n2. Determine if durations increased (slowness) or decreased (failures)\n3. Check bytes transferred — low bytes + high duration = waiting/timeout\n4. Identify affected source/destination pairs\n5. Correlate with application performance monitoring\n6. Check for resource exhaustion on the destination (CPU, memory, connections)',
+      dashboardDependency: 'Connection Performance dashboard, Service Latency dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average connection duration by service over time',
+          description: 'Track how connection durations change to detect performance issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where duration > 0\n| timestats span=15m avg(duration) by service'
+        },
+        {
+          name: 'Services with abnormal durations in last hour',
+          description: 'Find services with unusually long or short connections',
+          query: 'dataset="$DATASET" earliest=-1h\n| where duration > 0\n| summarize AvgDuration=avg(duration), MaxDuration=max(duration), Sessions=count() by service, id_resp_h\n| where Sessions > 10\n| order by AvgDuration desc\n| limit 20'
+        },
+        {
+          name: 'Duration vs bytes analysis',
+          description: 'Identify connections with high duration but low data transfer (hung connections)',
+          query: 'dataset="$DATASET" earliest=-1h\n| where duration > 30\n| summarize AvgDuration=avg(duration), AvgBytes=avg(orig_bytes) + avg(resp_bytes) by service, id_resp_h\n| extend BytesPerSec=iif(AvgDuration > 0, round(AvgBytes / AvgDuration, 0), 0)\n| where BytesPerSec < 100\n| order by AvgDuration desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-004',
+      name: 'Missed Bytes and Data Loss Detection',
+      objective: 'Detect when Zeek reports missed bytes, indicating sensor capacity issues, packet loss, or network tap problems.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'sensor-health', 'packet-loss'],
+      requiredFields: ['ts', 'missed_bytes', 'uid', 'id_orig_h', 'id_resp_h', 'proto', 'service'],
+      detectionLogic: 'Alert when missed_bytes > 0 for more than 5% of connections in a 10-minute window, or when total missed_bytes exceeds 1GB in any 5-minute period. Track both the percentage of affected connections and absolute missed volume.',
+      operationalValue: 'Missed bytes mean Zeek did not see all traffic — detections, analytics, and forensics become unreliable. This is a critical data quality indicator for the entire Zeek deployment.',
+      changeMgmtRelevance: 'Missed bytes increases after network changes may indicate tap/span port misconfiguration, bandwidth exceeding sensor capacity, or asymmetric routing introduced by changes.',
+      troubleshootingWorkflow: '1. Quantify the scope — what percentage of connections have missed bytes?\n2. Check if missed bytes correlate with high-bandwidth flows\n3. Verify sensor NIC utilization and drop counters\n4. Check network tap or span port configuration\n5. Verify no asymmetric routing (Zeek seeing only one direction)\n6. Check Zeek worker load balancing and resource utilization',
+      dashboardDependency: 'Sensor Health dashboard, Data Quality dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Missed bytes volume over time',
+          description: 'Track total missed bytes to detect sensor capacity issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where missed_bytes > 0\n| timestats span=10m sum(missed_bytes), count()'
+        },
+        {
+          name: 'Connections with highest missed bytes',
+          description: 'Identify which flows are experiencing data loss',
+          query: 'dataset="$DATASET" earliest=-1h\n| where missed_bytes > 0\n| summarize TotalMissed=sum(missed_bytes), Connections=count() by id_orig_h, id_resp_h, service\n| order by TotalMissed desc\n| limit 20'
+        },
+        {
+          name: 'Missed bytes percentage trend',
+          description: 'Track what percentage of connections have missing data',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend has_missed=iif(missed_bytes > 0, 1, 0)\n| timestats span=15m Total=count(), WithMissed=sum(has_missed)\n| extend MissedPct=round(WithMissed * 100.0 / Total, 2)'
+        },
+        {
+          name: 'Protocol breakdown of missed bytes',
+          description: 'Determine which protocols are most affected by packet loss',
+          query: 'dataset="$DATASET" earliest=-1h\n| where missed_bytes > 0\n| summarize MissedBytes=sum(missed_bytes), Connections=count() by proto, service\n| order by MissedBytes desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-005',
+      name: 'Traffic Volume Baseline Deviation',
+      objective: 'Detect unexpected changes in overall traffic volume that may indicate infrastructure failures, routing changes, or capacity exhaustion.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'volume', 'baseline'],
+      requiredFields: ['ts', 'orig_bytes', 'resp_bytes', 'id_orig_h', 'id_resp_h', 'proto', 'service'],
+      detectionLogic: 'Alert when total bytes (orig_bytes + resp_bytes) deviates more than 50% from the day-of-week adjusted hourly baseline. Track both increases (capacity risk) and decreases (potential outage). Evaluate over 30-minute windows.',
+      operationalValue: 'Traffic volume is a fundamental health indicator. Sudden drops indicate outages; sustained increases indicate capacity pressure. Baseline deviation detection catches both scenarios.',
+      changeMgmtRelevance: 'Traffic shifts commonly follow routing changes, service migrations, or capacity additions. Validate volume changes against planned activities.',
+      troubleshootingWorkflow: '1. Determine if volume increased or decreased\n2. For decreases: identify which services or hosts stopped generating traffic\n3. For increases: identify top consumers driving the surge\n4. Check routing tables for path changes\n5. Verify Zeek sensor is healthy (not a monitoring gap)\n6. Correlate with infrastructure events (link failures, failovers)',
+      dashboardDependency: 'Traffic Volume Overview dashboard, Capacity Trending dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Total bytes over time',
+          description: 'Track aggregate traffic volume to detect deviations',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m TotalBytes=sum(orig_bytes) + sum(resp_bytes), Connections=count()'
+        },
+        {
+          name: 'Top traffic generators by volume',
+          description: 'Identify hosts responsible for volume changes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Bytes=sum(orig_bytes) + sum(resp_bytes), Sessions=count() by id_orig_h\n| order by Bytes desc\n| limit 20'
+        },
+        {
+          name: 'Volume by protocol and service',
+          description: 'Break down traffic volume by type to isolate changes',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Bytes=sum(orig_bytes) + sum(resp_bytes), Sessions=count() by proto, service\n| order by Bytes desc'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-006',
+      name: 'Connection History Pattern Anomaly',
+      objective: 'Detect abnormal connection history patterns that reveal protocol-level issues, middlebox interference, or application misbehavior.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'protocol', 'history'],
+      requiredFields: ['ts', 'history', 'id_orig_h', 'id_resp_h', 'id_resp_p', 'service', 'conn_state', 'duration'],
+      detectionLogic: 'Alert when unusual history patterns (repeated SYN without ACK, excessive retransmissions indicated by uppercase letters, or truncated handshakes) exceed 10% of connections to a service in a 15-minute window. Track history field pattern distribution as a baseline.',
+      operationalValue: 'Connection history reveals protocol-level issues invisible to simple success/failure metrics. Detects middlebox interference, MTU issues, and TCP stack problems.',
+      changeMgmtRelevance: 'Network infrastructure changes (firewalls, load balancers, WAN optimizers) commonly introduce protocol anomalies visible in Zeek history patterns.',
+      troubleshootingWorkflow: '1. Identify the predominant abnormal history pattern\n2. Repeated S without response: destination unreachable or filtering\n3. Excessive uppercase (retransmissions): packet loss or congestion\n4. Truncated handshake: middlebox interference or TCP stack issue\n5. Check affected destination hosts and services\n6. Verify MTU path between source and destination\n7. Check for new network devices in the path',
+      dashboardDependency: 'Protocol Health dashboard, Connection Pattern Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'History pattern distribution',
+          description: 'See the distribution of connection history patterns',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by history\n| order by count_ desc\n| limit 30'
+        },
+        {
+          name: 'Abnormal history patterns by destination',
+          description: 'Find destinations experiencing protocol-level issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| where history !in ("ShADadfF", "ShADadFf", "ShADfF")\n| summarize AbnormalConns=count() by id_resp_h, id_resp_p, history\n| order by AbnormalConns desc\n| limit 20'
+        },
+        {
+          name: 'History anomaly trend over time',
+          description: 'Track whether protocol anomalies are increasing',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend is_abnormal=iif(history !in ("ShADadfF", "ShADadFf", "ShADfF"), 1, 0)\n| timestats span=15m Total=count(), Abnormal=sum(is_abnormal)'
+        }
+      ]
+    },
+    {
+      id: 'zek-obs-007',
+      name: 'Zeek Log Ingestion Continuity',
+      objective: 'Detect when Zeek log ingestion stops or becomes inconsistent, ensuring continuous network visibility.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'ingestion'],
+      requiredFields: ['ts', 'uid', 'proto', 'id_orig_h'],
+      detectionLogic: 'Alert when no connection logs are received for 3 minutes from a normally active Zeek deployment, or when event volume drops below 25% of expected baseline. Use uid cardinality as an additional continuity indicator.',
+      operationalValue: 'Zeek log continuity is the foundation for all network-based detections. Any gap in ingestion means blind spots in security and operational monitoring.',
+      changeMgmtRelevance: 'Zeek ingestion failures follow sensor upgrades, cluster rebalancing, log rotation issues, or Cribl pipeline changes. Track against maintenance schedules.',
+      troubleshootingWorkflow: '1. Check last received event timestamp\n2. Verify Zeek cluster manager and worker status\n3. Check log rotation — are files being rotated but not forwarded?\n4. Verify Cribl source connectivity and health\n5. Check disk space on Zeek sensor\n6. Review Zeek reporter.log for errors\n7. Verify network tap is still passing traffic',
+      dashboardDependency: 'Ingestion Health dashboard, Sensor Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track Zeek log ingestion rate for continuity',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'UID cardinality over time',
+          description: 'Track unique connection IDs as a proxy for sensor activity',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=10m dcount(uid)'
+        },
+        {
+          name: 'Protocol diversity check',
+          description: 'Verify all expected protocols are still being captured',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count() by proto\n| order by count_ desc'
+        },
+        {
+          name: 'Ingestion gaps detection',
+          description: 'Find time windows where events stopped arriving',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=3m EventCount=count()\n| where EventCount < 5\n| order by _time desc'
+        }
+      ]
+    }
+  ],
+  'suricata-ids': [
+    {
+      id: 'sur-obs-001',
+      name: 'Alert Volume Saturation',
+      objective: 'Detect when alert volume reaches levels that overwhelm analyst capacity or indicate sensor performance issues, risking missed detections.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'alert-volume', 'sensor-health'],
+      requiredFields: ['timestamp', 'alert_signature', 'alert_signature_id', 'alert_severity', 'src_ip', 'dest_ip', 'flow_id'],
+      detectionLogic: 'Alert when total alert volume exceeds 300% of the 7-day hourly baseline, or when a single alert_signature_id generates more than 1000 alerts in 5 minutes. Track both total volume and per-signature concentration.',
+      operationalValue: 'Alert saturation degrades SOC effectiveness — analysts cannot review alerts faster than they arrive, causing queue buildup and missed critical detections buried in noise.',
+      changeMgmtRelevance: 'Rule updates, signature deployments, or network changes that expose new traffic to the sensor commonly cause alert storms. Correlate volume spikes with rule deployment times.',
+      troubleshootingWorkflow: '1. Identify which signature(s) are generating the volume spike\n2. Determine if the spike is from a single source or distributed\n3. Check alert_severity distribution — are critical alerts buried in noise?\n4. Assess if the triggering traffic is new or previously unseen by the sensor\n5. Evaluate signature for tuning (suppress, threshold, or disable)\n6. Check sensor resource utilization (CPU, memory, packet drops)',
+      dashboardDependency: 'Alert Volume Trends dashboard, Signature Performance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Alert volume over time',
+          description: 'Track total alert generation rate to detect saturation',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by alert_severity'
+        },
+        {
+          name: 'Top alerting signatures in last hour',
+          description: 'Find signatures generating the most noise',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AlertCount=count(), UniqueSources=dcount(src_ip) by alert_signature, alert_signature_id, alert_severity\n| order by AlertCount desc\n| limit 20'
+        },
+        {
+          name: 'Alert concentration by source',
+          description: 'Identify sources triggering the most alerts',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Alerts=count(), UniqueSignatures=dcount(alert_signature_id) by src_ip\n| order by Alerts desc\n| limit 30'
+        },
+        {
+          name: 'Signature volume spike detection',
+          description: 'Find signatures that surged in the last hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize RecentAlerts=count() by alert_signature_id, alert_signature\n| where RecentAlerts > 100\n| order by RecentAlerts desc'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-002',
+      name: 'Alert Severity Distribution Shift',
+      objective: 'Detect when the distribution of alert severities changes materially, indicating either increased threat activity or sensor/rule misconfiguration.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'severity', 'threat-posture'],
+      requiredFields: ['timestamp', 'alert_severity', 'alert_category', 'alert_signature', 'src_ip', 'dest_ip'],
+      detectionLogic: 'Alert when critical or high severity alerts exceed 150% of baseline percentage of total alerts, or when the ratio of high:medium:low shifts by more than 30% from the 7-day norm. Evaluate over 30-minute windows.',
+      operationalValue: 'Severity distribution is normally stable. Shifts toward higher severity indicate increased threat activity or new attack campaigns. Shifts toward lower severity may indicate sensor misconfiguration suppressing important alerts.',
+      changeMgmtRelevance: 'Rule updates that change signature severity levels or add new rules directly impact severity distribution. Validate against rule deployment schedules.',
+      troubleshootingWorkflow: '1. Identify which severity levels shifted and in which direction\n2. For increases in high/critical: identify contributing signatures and categories\n3. Check if new rules were recently deployed\n4. Determine if the shift represents real threats or noise\n5. Review alert_category breakdown for emerging attack patterns\n6. Validate signature severity assignments are correct',
+      dashboardDependency: 'Severity Distribution dashboard, Threat Posture dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Severity distribution over time',
+          description: 'Track severity ratio changes to detect posture shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by alert_severity'
+        },
+        {
+          name: 'Category breakdown by severity',
+          description: 'Understand what attack categories are driving severity shifts',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by alert_severity, alert_category\n| order by alert_severity asc, count_ desc'
+        },
+        {
+          name: 'High severity alert sources in last hour',
+          description: 'Find sources generating elevated severity alerts',
+          query: 'dataset="$DATASET" alert_severity in ("1", "2") earliest=-1h\n| summarize CriticalAlerts=count(), Categories=dcount(alert_category) by src_ip, dest_ip\n| order by CriticalAlerts desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-003',
+      name: 'Interface Traffic Distribution Imbalance',
+      objective: 'Detect when monitored interfaces show uneven traffic distribution, indicating possible tap failure, span port issues, or asymmetric routing.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'interface', 'sensor-coverage'],
+      requiredFields: ['timestamp', 'in_iface', 'src_ip', 'dest_ip', 'proto', 'flow_id'],
+      detectionLogic: 'Alert when any monitored in_iface shows volume below 30% of its baseline, or when a new interface appears with significant volume. Also detect when all traffic concentrates on a single interface while others go silent.',
+      operationalValue: 'Interface imbalance means uneven sensor coverage — traffic on silent interfaces is not being inspected. Detects tap failures and span port misconfigurations that create blind spots.',
+      changeMgmtRelevance: 'Network infrastructure changes (switch upgrades, tap replacements, span port reconfigurations) commonly cause interface distribution changes. Validate against maintenance windows.',
+      troubleshootingWorkflow: '1. Identify which interface(s) show abnormal traffic levels\n2. Check if the interface physically has traffic (switch port counters)\n3. Verify tap or span port configuration\n4. Check for VLAN or trunk changes on the span source\n5. Verify Suricata AF_PACKET or netmap configuration\n6. Check for interface errors or drops at the OS level',
+      dashboardDependency: 'Sensor Coverage dashboard, Interface Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic volume by interface over time',
+          description: 'Monitor per-interface coverage to detect drops',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by in_iface'
+        },
+        {
+          name: 'Interface distribution current hour',
+          description: 'Current traffic share per interface',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), UniqueFlows=dcount(flow_id) by in_iface\n| order by Events desc'
+        },
+        {
+          name: 'Interface with lowest traffic in last hour',
+          description: 'Find interfaces that may have lost traffic',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count() by in_iface\n| order by Events asc'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-004',
+      name: 'Flow Processing Throughput Degradation',
+      objective: 'Detect when Suricata flow processing slows down, indicated by increasing flow_id gaps or reduced event throughput, signaling sensor overload.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'throughput', 'sensor-capacity'],
+      requiredFields: ['timestamp', 'flow_id', 'src_ip', 'dest_ip', 'proto', 'in_iface', 'alert_signature_id'],
+      detectionLogic: 'Alert when events-per-minute drops below 50% of baseline while network traffic is still flowing, or when flow_id gaps suggest missed flows. Correlate throughput drops with alert generation to distinguish overload from quiet periods.',
+      operationalValue: 'Throughput degradation means the sensor is dropping flows and potentially missing threats. Early detection enables load shedding, scaling, or traffic redirection before complete sensor failure.',
+      changeMgmtRelevance: 'Rule additions increase processing overhead. Correlate throughput drops with ruleset updates to identify rules causing performance issues.',
+      troubleshootingWorkflow: '1. Check Suricata stats for kernel drops and capture loss\n2. Monitor CPU utilization per Suricata thread\n3. Identify if specific traffic types cause more processing load\n4. Check if recent rule updates increased signature count\n5. Evaluate flow table size and memory utilization\n6. Consider enabling hardware offload or adding sensor capacity',
+      dashboardDependency: 'Sensor Performance dashboard, Throughput Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event throughput over time',
+          description: 'Track events per minute to detect processing slowdowns',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Flow ID cardinality trend',
+          description: 'Monitor unique flow processing rate as a capacity indicator',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=10m dcount(flow_id)'
+        },
+        {
+          name: 'Events per interface per minute',
+          description: 'Check if specific interfaces are seeing throughput drops',
+          query: 'dataset="$DATASET" earliest=-2h\n| timestats span=5m count() by in_iface'
+        },
+        {
+          name: 'Alert generation vs total flow processing',
+          description: 'Compare alert events against total flow volume to detect overload',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=10m TotalEvents=count(), AlertEvents=countif(alert_signature_id != "")'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-005',
+      name: 'Alert Category Coverage Gap',
+      objective: 'Detect when expected alert categories stop generating events, indicating potential rule failures, suppression issues, or traffic changes.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'coverage', 'rules'],
+      requiredFields: ['timestamp', 'alert_category', 'alert_signature_id', 'alert_signature', 'src_ip', 'dest_ip'],
+      detectionLogic: 'Alert when an alert_category that normally generates events goes silent for more than 2 hours during business hours. Track category cardinality and compare against known baseline of expected categories.',
+      operationalValue: 'Coverage gaps mean entire attack categories are unmonitored. A silent category could indicate disabled rules, suppressed alerts, or traffic no longer reaching the sensor.',
+      changeMgmtRelevance: 'Rule management operations (enable/disable rules, threshold changes, suppress operations) directly cause category coverage changes. Validate against rule management activity.',
+      troubleshootingWorkflow: '1. Identify which alert_category went silent\n2. Check if the rules in that category are still enabled\n3. Verify the traffic those rules inspect is still reaching the sensor\n4. Check for suppress or threshold configurations that may be too aggressive\n5. Verify ruleset compilation succeeded without errors\n6. Test with traffic replay to confirm rules still trigger',
+      dashboardDependency: 'Rule Coverage dashboard, Category Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Alert categories active in last 24 hours',
+          description: 'Baseline which categories are normally generating alerts',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize AlertCount=count(), LastSeen=max(timestamp) by alert_category\n| order by AlertCount desc'
+        },
+        {
+          name: 'Category activity trend over time',
+          description: 'Track which categories are generating alerts over time',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=2h count() by alert_category'
+        },
+        {
+          name: 'Signatures per category in last hour',
+          description: 'Check which specific signatures are active within each category',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Alerts=count(), UniqueSignatures=dcount(alert_signature_id) by alert_category\n| order by Alerts desc'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-006',
+      name: 'Protocol Distribution Shift',
+      objective: 'Detect unexpected changes in the protocol mix seen by Suricata, indicating routing changes, new services, or evasion attempts.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'protocol', 'traffic-mix'],
+      requiredFields: ['timestamp', 'proto', 'src_ip', 'dest_ip', 'src_port', 'dest_port', 'flow_id'],
+      detectionLogic: 'Alert when any protocol deviates more than 25% from its expected share of total traffic. Also detect when new protocols appear that were not seen in the baseline period. Evaluate over 1-hour windows with day-of-week adjustment.',
+      operationalValue: 'Protocol mix stability indicates consistent network behavior. Shifts reveal new services, routing changes, or attack traffic using unusual protocols to evade detection.',
+      changeMgmtRelevance: 'New application deployments or network architecture changes legitimately shift protocol distribution. Correlate with change records to validate.',
+      troubleshootingWorkflow: '1. Identify which protocol(s) changed in volume share\n2. For increases: identify source IPs and destination ports driving the growth\n3. For decreases: check if associated services are still functioning\n4. Verify no routing changes redirected traffic\n5. Check if the protocol change correlates with new alert categories\n6. Validate against known application deployments',
+      dashboardDependency: 'Protocol Distribution dashboard, Traffic Composition dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Protocol distribution over time',
+          description: 'Track protocol mix changes for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by proto'
+        },
+        {
+          name: 'Current protocol breakdown',
+          description: 'Compare current protocol ratios against expected values',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize FlowCount=count(), UniqueFlows=dcount(flow_id) by proto\n| order by FlowCount desc'
+        },
+        {
+          name: 'Top talkers per protocol',
+          description: 'Identify sources driving protocol volume changes',
+          query: 'dataset="$DATASET" proto="$PROTO" earliest=-1h\n| summarize Flows=count() by src_ip, dest_ip, dest_port\n| order by Flows desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'sur-obs-007',
+      name: 'Suricata Event Ingestion Health',
+      objective: 'Detect when Suricata event logs stop arriving or materially decrease, ensuring continuous IDS coverage.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'ingestion'],
+      requiredFields: ['timestamp', 'src_ip', 'proto', 'in_iface'],
+      detectionLogic: 'Alert when no events are received for 5 minutes from a normally active Suricata sensor, or when total event volume drops below 25% of expected baseline. Monitor per in_iface for partial failure detection.',
+      operationalValue: 'If Suricata events stop flowing, all IDS-based detections go blind. Pipeline health is the most fundamental observability requirement.',
+      changeMgmtRelevance: 'Ingestion failures follow Suricata upgrades, EVE log configuration changes, or Cribl pipeline modifications. Correlate with maintenance activities.',
+      troubleshootingWorkflow: '1. Check last received event timestamp per interface\n2. Verify Suricata process is running (systemctl status)\n3. Check EVE log file growth on the sensor\n4. Verify log shipping agent connectivity\n5. Check Cribl source health for Suricata input\n6. Verify disk space on sensor and collector\n7. Review Suricata stats.log for errors or drops',
+      dashboardDependency: 'Ingestion Health dashboard, Sensor Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track Suricata event ingestion rate',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Events per interface',
+          description: 'Monitor per-interface ingestion for partial failures',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize EventCount=count(), LastSeen=max(timestamp) by in_iface\n| order by EventCount asc'
+        },
+        {
+          name: 'Ingestion gaps detection',
+          description: 'Find time windows with missing or sparse events',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m EventCount=count()\n| where EventCount < 5\n| order by _time desc'
+        },
+        {
+          name: 'Protocol diversity verification',
+          description: 'Ensure all expected protocols are still generating events',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count() by proto\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'zscaler-zpa': [
+    {
+      id: 'zpa-obs-001',
+      name: 'Connector Health Degradation',
+      objective: 'Detect when ZPA connectors experience connection failures or reduced throughput, indicating infrastructure issues affecting private application access.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'connector', 'zero-trust'],
+      requiredFields: ['LogTimestamp', 'Connector', 'ConnectionStatus', 'Application', 'User', 'ServerIP'],
+      detectionLogic: 'Alert when a Connector shows ConnectionStatus failures exceeding 20% of total connections over a 10-minute window, or when a previously active Connector stops processing any connections. Track per-Connector success rates against baseline.',
+      operationalValue: 'ZPA connectors are the bridge to private applications. Connector failures immediately impact user access to business-critical applications. Early detection prevents widespread access outages.',
+      changeMgmtRelevance: 'Connector health issues follow infrastructure changes (VM migrations, network changes, certificate rotations). Correlate failures with maintenance windows.',
+      troubleshootingWorkflow: '1. Identify which Connector(s) are experiencing failures\n2. Check ConnectionStatus distribution for the affected connector\n3. Determine which Applications are impacted\n4. Verify connector VM health (CPU, memory, network)\n5. Check certificate validity on the connector\n6. Verify network path between connector and private applications\n7. Check ZPA admin portal for connector status',
+      dashboardDependency: 'Connector Health dashboard, Application Access dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connection status by connector over time',
+          description: 'Track connector health via connection success rates',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by Connector, ConnectionStatus'
+        },
+        {
+          name: 'Connectors with high failure rates',
+          description: 'Find connectors experiencing connection issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Failed=countif(ConnectionStatus != "Open") by Connector\n| extend FailRate=round(Failed * 100.0 / Total, 1)\n| where Total > 10\n| order by FailRate desc'
+        },
+        {
+          name: 'Applications affected by connector failures',
+          description: 'Identify which apps are impacted by unhealthy connectors',
+          query: 'dataset="$DATASET" ConnectionStatus != "Open" earliest=-1h\n| summarize Failures=count(), AffectedUsers=dcount(User) by Connector, Application\n| order by Failures desc'
+        },
+        {
+          name: 'Connector activity trend (last active check)',
+          description: 'Detect connectors that may have gone offline',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize LastSeen=max(LogTimestamp), TotalConnections=count() by Connector\n| order by LastSeen asc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-002',
+      name: 'Application Access Latency Increase',
+      objective: 'Detect when users experience increased connection times to private applications, indicating infrastructure performance degradation.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'user-experience'],
+      requiredFields: ['LogTimestamp', 'Application', 'AppGroup', 'User', 'Connector', 'ConnectionStatus', 'ClientLatitude', 'ClientLongitude'],
+      detectionLogic: 'Alert when connection failure rates for an Application increase by more than 50% compared to baseline, or when users in specific geographic regions (based on ClientLatitude/ClientLongitude clustering) experience disproportionate failures. Evaluate per Application and AppGroup over 15-minute windows.',
+      operationalValue: 'User experience degradation detected early enables proactive connector scaling, failover activation, or routing optimization before users raise tickets.',
+      changeMgmtRelevance: 'Performance changes after connector deployments, network changes, or application updates indicate configuration issues requiring investigation.',
+      troubleshootingWorkflow: '1. Identify affected Application(s) and AppGroup(s)\n2. Determine if the issue is connector-specific or application-wide\n3. Check geographic distribution — is it region-specific?\n4. Verify connector resource utilization\n5. Check network path quality between connector and application\n6. Review application server health and capacity',
+      dashboardDependency: 'Application Performance dashboard, User Experience dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connection status per application over time',
+          description: 'Track application access health trends',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by Application, ConnectionStatus'
+        },
+        {
+          name: 'Applications with elevated failure rates',
+          description: 'Find applications experiencing access issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Failures=countif(ConnectionStatus != "Open") by Application, AppGroup\n| extend FailPct=round(Failures * 100.0 / Total, 1)\n| where Total > 5\n| order by FailPct desc'
+        },
+        {
+          name: 'Geographic distribution of failures',
+          description: 'Identify if access issues are region-specific',
+          query: 'dataset="$DATASET" ConnectionStatus != "Open" earliest=-2h\n| summarize Failures=count(), UniqueUsers=dcount(User) by ClientLatitude, ClientLongitude, Application\n| order by Failures desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-003',
+      name: 'Policy Enforcement Anomaly',
+      objective: 'Detect when ZPA policy enforcement patterns change unexpectedly, indicating policy misconfiguration or unauthorized access attempts.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'policy', 'enforcement'],
+      requiredFields: ['LogTimestamp', 'Policy', 'User', 'Application', 'ConnectionStatus', 'AppGroup'],
+      detectionLogic: 'Alert when a Policy shows more than 40% volume change (up or down) compared to its 7-day baseline, or when users begin matching different policies than historically expected. Evaluate per Policy over 30-minute windows.',
+      operationalValue: 'Policy match changes reveal configuration drift, unauthorized policy modifications, or user role changes that impact access control. Ensures zero-trust enforcement remains consistent.',
+      changeMgmtRelevance: 'Policy modifications in ZPA admin portal directly change enforcement patterns. All policy changes should correlate with approved change requests.',
+      troubleshootingWorkflow: '1. Identify which Policy(ies) changed in volume\n2. Determine if users shifted from one policy to another\n3. Check ZPA admin portal audit log for recent policy changes\n4. Verify user group membership changes in IdP\n5. Check if Application assignments changed\n6. Validate that the new enforcement pattern is intentional',
+      dashboardDependency: 'Policy Enforcement dashboard, Access Control Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Policy match volume over time',
+          description: 'Track which policies are being matched and at what rate',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by Policy'
+        },
+        {
+          name: 'Policy enforcement distribution current vs baseline',
+          description: 'Compare current policy match rates against expected values',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Connections=count(), UniqueUsers=dcount(User), UniqueApps=dcount(Application) by Policy\n| order by Connections desc'
+        },
+        {
+          name: 'Users matching unexpected policies',
+          description: 'Find users whose policy matching changed recently',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Policies=dcount(Policy), Connections=count() by User, Application\n| where Policies > 1\n| order by Policies desc\n| limit 20'
+        },
+        {
+          name: 'Policy connection status breakdown',
+          description: 'See success vs failure rates per policy',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Successful=countif(ConnectionStatus == "Open") by Policy\n| extend SuccessRate=round(Successful * 100.0 / Total, 1)\n| order by SuccessRate asc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-004',
+      name: 'User Access Pattern Deviation',
+      objective: 'Detect when individual users or user groups show abnormal access patterns that may indicate account issues, role changes, or workflow disruptions.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'user-behavior', 'access-patterns'],
+      requiredFields: ['LogTimestamp', 'User', 'Application', 'AppGroup', 'ConnectionStatus', 'ClientIP'],
+      detectionLogic: 'Alert when a user accesses significantly more or fewer applications than their baseline (>200% increase or <30% of normal), or when multiple users in the same AppGroup simultaneously show access pattern changes. Evaluate over 1-hour windows.',
+      operationalValue: 'Access pattern deviations reveal broken workflows, application outages experienced by specific user groups, or onboarding/offboarding issues affecting productivity.',
+      changeMgmtRelevance: 'User access changes follow IdP group modifications, ZPA segment changes, or application decommissioning. Validate against change schedules.',
+      troubleshootingWorkflow: '1. Identify affected user(s) and their normal access pattern\n2. Determine if access increased (new apps) or decreased (lost access)\n3. Check IdP for group membership changes\n4. Verify ZPA segment and application assignments\n5. Check if the user endpoint has connectivity issues\n6. Review recent onboarding/offboarding activities',
+      dashboardDependency: 'User Access Patterns dashboard, AppGroup Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Applications accessed per user over time',
+          description: 'Track user access breadth to detect pattern changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h dcount(Application) by User'
+        },
+        {
+          name: 'Users with unusual access volume',
+          description: 'Find users with abnormally high or low connection counts',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Connections=count(), UniqueApps=dcount(Application) by User\n| order by Connections desc\n| limit 30'
+        },
+        {
+          name: 'AppGroup access trends',
+          description: 'Monitor access patterns by application group',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Connections=count(), UniqueUsers=dcount(User), FailRate=round(countif(ConnectionStatus != "Open") * 100.0 / count(), 1) by AppGroup\n| order by Connections desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-005',
+      name: 'Double Encryption Configuration Drift',
+      objective: 'Detect when DoubleEncryption settings change across the ZPA deployment, indicating policy drift or misconfiguration that may weaken security posture.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'encryption', 'compliance'],
+      requiredFields: ['LogTimestamp', 'DoubleEncryption', 'Application', 'Connector', 'Policy', 'User'],
+      detectionLogic: 'Alert when the ratio of DoubleEncryption-enabled vs disabled connections changes by more than 15% from baseline, or when specific Applications that previously required DoubleEncryption begin showing non-encrypted connections.',
+      operationalValue: 'DoubleEncryption is a security control. Drift in encryption settings can expose sensitive application traffic and create compliance violations.',
+      changeMgmtRelevance: 'Encryption configuration changes should only occur through approved policy modifications. Any drift outside of change windows indicates potential misconfiguration.',
+      troubleshootingWorkflow: '1. Identify which Applications or Connectors show encryption changes\n2. Check if DoubleEncryption was intentionally modified\n3. Review ZPA policy changes in admin portal\n4. Verify connector configuration for encryption settings\n5. Check if new connectors or applications were added without encryption\n6. Validate compliance requirements for affected applications',
+      dashboardDependency: 'Encryption Compliance dashboard, Security Posture dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Double encryption distribution over time',
+          description: 'Track encryption status changes across the deployment',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by DoubleEncryption'
+        },
+        {
+          name: 'Applications with encryption status changes',
+          description: 'Find applications whose encryption settings may have drifted',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Encrypted=countif(DoubleEncryption == "true") by Application\n| extend EncryptedPct=round(Encrypted * 100.0 / Total, 1)\n| where Total > 5\n| order by EncryptedPct asc'
+        },
+        {
+          name: 'Connectors with mixed encryption status',
+          description: 'Identify connectors serving both encrypted and non-encrypted connections',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize EncryptionValues=dcount(DoubleEncryption), Connections=count() by Connector, Application\n| where EncryptionValues > 1\n| order by Connections desc'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-006',
+      name: 'Geographic Access Anomaly',
+      objective: 'Detect when user connections originate from unexpected geographic locations, indicating potential VPN issues, travel patterns, or credential misuse.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'geographic', 'access-control'],
+      requiredFields: ['LogTimestamp', 'User', 'ClientLatitude', 'ClientLongitude', 'ClientIP', 'Application', 'ConnectionStatus'],
+      detectionLogic: 'Alert when a user connects from a latitude/longitude pair more than 500km from their baseline location, or when connections from new geographic regions increase by more than 200% within a 1-hour window. Track per-user geographic baselines.',
+      operationalValue: 'Geographic anomalies reveal credential sharing, impossible travel scenarios, or infrastructure issues forcing users through unexpected paths. Enables proactive validation of unusual access.',
+      changeMgmtRelevance: 'Office relocations, VPN infrastructure changes, or remote work policy updates legitimately change geographic patterns. Validate against known business events.',
+      troubleshootingWorkflow: '1. Identify users connecting from unexpected locations\n2. Determine if the location change is legitimate (travel, remote work)\n3. Check if multiple users show the same geographic shift (infrastructure issue)\n4. Verify ClientIP against known corporate egress points\n5. Check VPN or proxy infrastructure changes that may affect geo-coding\n6. Contact user for verification if credentials compromise is suspected',
+      dashboardDependency: 'Geographic Access Map dashboard, User Location dashboard',
+      criblSearchQueries: [
+        {
+          name: 'User access locations over time',
+          description: 'Track geographic distribution of user connections',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Connections=count(), UniqueApps=dcount(Application) by User, ClientLatitude, ClientLongitude\n| order by Connections desc\n| limit 50'
+        },
+        {
+          name: 'Connections from new locations in last hour',
+          description: 'Identify connections from previously unseen geographic points',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Connections=count(), Users=dcount(User) by ClientLatitude, ClientLongitude\n| order by Connections desc'
+        },
+        {
+          name: 'Users with multiple access locations today',
+          description: 'Find users connecting from different geographic points',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize UniqueLocations=dcount(strcat(ClientLatitude, ",", ClientLongitude)), Connections=count() by User\n| where UniqueLocations > 2\n| order by UniqueLocations desc\n| limit 20'
+        },
+        {
+          name: 'Connection success by geography',
+          description: 'Check if geographic regions correlate with connection failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Failures=countif(ConnectionStatus != "Open") by ClientLatitude, ClientLongitude\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 5\n| order by FailRate desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'zpa-obs-007',
+      name: 'ZPA Event Ingestion Continuity',
+      objective: 'Detect when ZPA log ingestion stops or becomes inconsistent, ensuring continuous visibility into private application access.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'ingestion'],
+      requiredFields: ['LogTimestamp', 'User', 'Application', 'Connector'],
+      detectionLogic: 'Alert when no ZPA events are received for 10 minutes during business hours, or when event volume drops below 30% of the expected baseline. Track per-Connector event flow for partial failure detection.',
+      operationalValue: 'ZPA log continuity is essential for access monitoring, compliance reporting, and troubleshooting user access issues. Gaps mean blind spots in zero-trust visibility.',
+      changeMgmtRelevance: 'Ingestion failures follow ZPA connector upgrades, log streaming configuration changes, or Cribl pipeline modifications.',
+      troubleshootingWorkflow: '1. Check last received event timestamp\n2. Verify ZPA Log Streaming Service (LSS) configuration\n3. Check connector log forwarding status\n4. Verify Cribl source health for ZPA input\n5. Check ZPA admin portal for system health alerts\n6. Verify network connectivity between ZPA cloud and log collector\n7. Check for API rate limiting or authentication issues',
+      dashboardDependency: 'Ingestion Health dashboard, ZPA Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track ZPA log ingestion rate for continuity monitoring',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Events per connector',
+          description: 'Monitor per-connector event flow for partial failures',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Events=count(), LastSeen=max(LogTimestamp) by Connector\n| order by Events asc'
+        },
+        {
+          name: 'Ingestion gaps detection',
+          description: 'Find time periods with missing or sparse events',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m EventCount=count()\n| where EventCount < 3\n| order by _time desc'
+        },
+        {
+          name: 'User and application diversity check',
+          description: 'Verify breadth of data is still flowing',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize UniqueUsers=dcount(User), UniqueApps=dcount(Application), UniqueConnectors=dcount(Connector)'
+        }
+      ]
+    }
+  ],
+  'citrix-netscaler': [
+    {
+      id: 'ctx-obs-001',
+      name: 'Virtual Server Response Time Degradation',
+      objective: 'Detect when backend server response times exceed acceptable thresholds, indicating application performance issues or backend overload.',
+      severity: 'Critical',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'vserver'],
+      requiredFields: ['timestamp', 'vserverName', 'serverIP', 'serverResponseTime', 'httpStatusCode', 'httpURL'],
+      detectionLogic: 'Alert when average serverResponseTime exceeds 3x the 7-day rolling baseline for a given vserverName, evaluated in 5-minute windows. Critical if sustained for 3+ consecutive windows.',
+      operationalValue: 'Slow response times directly impact end-user experience and can cascade to timeouts and service failures. Early detection enables proactive remediation before SLA breach.',
+      changeMgmtRelevance: 'Response time increases often follow application deployments, backend scaling changes, or load balancer configuration updates. Correlate with change windows to identify regression.',
+      troubleshootingWorkflow: '1. Identify which vserverName and backend serverIP are affected\n2. Check if the issue is isolated to specific httpURL paths\n3. Review httpStatusCode distribution for 5xx errors\n4. Verify backend server health and resource utilization\n5. Check if traffic volume increased (capacity issue vs performance bug)\n6. Review recent configuration changes to the virtual server',
+      dashboardDependency: 'Virtual Server Performance dashboard, Backend Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average response time by virtual server (last 4 hours)',
+          description: 'Track response time trends across all virtual servers',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m AvgResponse=avg(serverResponseTime), P95Response=percentile(serverResponseTime, 95) by vserverName'
+        },
+        {
+          name: 'Slow backend servers (response time > 2s)',
+          description: 'Identify backend servers contributing to latency',
+          query: 'dataset="$DATASET" earliest=-1h\n| where serverResponseTime > 2000\n| summarize SlowRequests=count(), AvgResponse=avg(serverResponseTime), MaxResponse=max(serverResponseTime) by serverIP, vserverName\n| order by AvgResponse desc'
+        },
+        {
+          name: 'Response time by URL path',
+          description: 'Find specific endpoints causing performance degradation',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgResponse=avg(serverResponseTime), RequestCount=count() by httpURL, vserverName\n| where AvgResponse > 1000 and RequestCount > 10\n| order by AvgResponse desc\n| limit 30'
+        },
+        {
+          name: 'Response time distribution histogram',
+          description: 'Understand the spread of response times to identify outliers vs systemic issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| extend bucket=case(serverResponseTime < 100, "0-100ms", serverResponseTime < 500, "100-500ms", serverResponseTime < 1000, "500ms-1s", serverResponseTime < 3000, "1-3s", "3s+")\n| summarize count() by bucket, vserverName\n| order by vserverName asc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-002',
+      name: 'HTTP 5xx Error Rate Spike',
+      objective: 'Detect increases in server-side error responses that indicate application or infrastructure failures behind the NetScaler.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'http', 'availability'],
+      requiredFields: ['timestamp', 'httpStatusCode', 'vserverName', 'serverIP', 'httpURL', 'httpMethod'],
+      detectionLogic: 'Alert when the ratio of 5xx responses to total responses exceeds 5% for any vserverName in a 10-minute window, or when 5xx count increases >300% compared to same-hour baseline from prior 7 days.',
+      operationalValue: '5xx errors indicate server-side failures that directly impact users. Rapid detection enables faster incident response and reduces mean time to recovery.',
+      changeMgmtRelevance: 'Error spikes following deployments signal failed releases requiring immediate rollback. Track error rate as a deployment gate metric.',
+      troubleshootingWorkflow: '1. Identify which vserverName and serverIP are returning errors\n2. Check httpStatusCode breakdown (500 vs 502 vs 503 vs 504)\n3. 502/504 suggests backend connectivity; 500/503 suggests app issues\n4. Check if errors are isolated to specific httpURL paths\n5. Verify backend server health and connection counts\n6. Review recent deployments or configuration changes',
+      dashboardDependency: 'Error Rate dashboard, Virtual Server Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by virtual server (last 6 hours)',
+          description: 'Timechart of error rates per virtual server',
+          query: 'dataset="$DATASET" earliest=-6h\n| extend is_error=iif(httpStatusCode >= 500, 1, 0)\n| timestats span=5m Total=count(), Errors=sum(is_error) by vserverName'
+        },
+        {
+          name: '5xx errors by status code and backend',
+          description: 'Break down error types to distinguish connectivity from application failures',
+          query: 'dataset="$DATASET" earliest=-1h\n| where httpStatusCode >= 500\n| summarize ErrorCount=count() by httpStatusCode, serverIP, vserverName\n| order by ErrorCount desc'
+        },
+        {
+          name: 'Error-producing URL paths',
+          description: 'Identify specific endpoints generating the most errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| where httpStatusCode >= 500\n| summarize Errors=count() by httpURL, httpMethod, httpStatusCode, vserverName\n| order by Errors desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-003',
+      name: 'Bandwidth Utilization Anomaly',
+      objective: 'Detect unusual spikes or drops in data transfer through virtual servers indicating capacity issues, DDoS, or service outages.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'bandwidth', 'throughput'],
+      requiredFields: ['timestamp', 'vserverName', 'totalBytesRecvd', 'totalBytesSent', 'clientIP', 'serverIP'],
+      detectionLogic: 'Alert when total bytes (received + sent) for a vserverName exceeds 3x the rolling 7-day hourly average, or drops below 20% of expected baseline for more than 10 minutes.',
+      operationalValue: 'Bandwidth anomalies indicate capacity saturation, potential DDoS, data exfiltration, or service outages. Early detection prevents SLA violations and enables capacity planning.',
+      changeMgmtRelevance: 'Traffic pattern changes after deployments may indicate misconfigured compression, caching failures, or unintended data duplication.',
+      troubleshootingWorkflow: '1. Determine if the anomaly is a spike or a drop\n2. For spikes: identify top clientIP contributors and request patterns\n3. For drops: verify backend health and DNS resolution\n4. Check if compression or caching policies changed\n5. Review connection limits and rate limiting configuration\n6. Compare against capacity thresholds for the virtual server',
+      dashboardDependency: 'Bandwidth Utilization dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Bandwidth by virtual server over time',
+          description: 'Timechart of bytes in and out per virtual server',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m TotalRecvd=sum(totalBytesRecvd), TotalSent=sum(totalBytesSent) by vserverName'
+        },
+        {
+          name: 'Top bandwidth consumers by client IP',
+          description: 'Identify clients driving the most traffic',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize BytesRecvd=sum(totalBytesRecvd), BytesSent=sum(totalBytesSent), Requests=count() by clientIP, vserverName\n| extend TotalBytes=BytesRecvd + BytesSent\n| order by TotalBytes desc\n| limit 20'
+        },
+        {
+          name: 'Bandwidth drop detection',
+          description: 'Find virtual servers with significantly reduced traffic compared to expected',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize TotalBytes=sum(totalBytesRecvd) + sum(totalBytesSent), Requests=count() by vserverName\n| where Requests < 10\n| order by TotalBytes asc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-004',
+      name: 'Backend Server Health Degradation',
+      objective: 'Monitor backend server availability by tracking response codes and response times per server to detect failing backends before they cause outages.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'backend', 'health-check'],
+      requiredFields: ['timestamp', 'serverIP', 'httpStatusCode', 'serverResponseTime', 'vserverName', 'destinationPort'],
+      detectionLogic: 'Alert when a backend serverIP returns >50% error responses (4xx/5xx) or average serverResponseTime exceeds 5 seconds over a 5-minute window. Critical if multiple backends behind the same vserverName degrade simultaneously.',
+      operationalValue: 'Identifies failing backend servers before the load balancer marks them down, enabling proactive intervention and preventing cascading failures to remaining healthy backends.',
+      changeMgmtRelevance: 'Backend health changes often correlate with application deployments, certificate rotations, or infrastructure maintenance windows.',
+      troubleshootingWorkflow: '1. Identify which serverIP and destinationPort are affected\n2. Check if the server is returning errors or just slow\n3. Verify the load balancer health check status\n4. Check if other backends in the same service group are healthy\n5. Review server-side logs and resource utilization\n6. Determine if a deployment or config change occurred',
+      dashboardDependency: 'Backend Server Health dashboard, Service Group Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Backend health summary',
+          description: 'Per-server error rate and response time overview',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Errors=countif(httpStatusCode >= 500), AvgResponse=avg(serverResponseTime) by serverIP, vserverName, destinationPort\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Backend response time trend',
+          description: 'Track response time per backend server over time',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m AvgResponse=avg(serverResponseTime), P99Response=percentile(serverResponseTime, 99) by serverIP'
+        },
+        {
+          name: 'Backends with increasing error rates',
+          description: 'Identify servers trending toward failure',
+          query: 'dataset="$DATASET" earliest=-2h\n| extend is_error=iif(httpStatusCode >= 500, 1, 0)\n| timestats span=10m ErrorRate=avg(is_error) by serverIP, vserverName\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Server response distribution',
+          description: 'Compare response time distribution across backends',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize P50=percentile(serverResponseTime, 50), P90=percentile(serverResponseTime, 90), P99=percentile(serverResponseTime, 99), Count=count() by serverIP, vserverName\n| order by P99 desc'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-005',
+      name: 'SSL Profile Configuration Drift',
+      objective: 'Detect when SSL/TLS profile assignments change unexpectedly across virtual servers, which could indicate unauthorized modifications or misconfigurations.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'ssl', 'configuration'],
+      requiredFields: ['timestamp', 'vserverName', 'profileName', 'clientIP', 'httpURL'],
+      detectionLogic: 'Alert when a new profileName appears for a vserverName that has not used that profile in the prior 30 days, or when a previously consistent profile assignment changes.',
+      operationalValue: 'SSL profile misconfigurations cause outages, certificate errors, and security vulnerabilities. Detecting drift early prevents service disruption and compliance issues.',
+      changeMgmtRelevance: 'Profile changes should only occur during approved change windows. Unexpected profile changes indicate unauthorized modifications or automation errors.',
+      troubleshootingWorkflow: '1. Identify which vserverName has a new or changed profileName\n2. Determine when the change occurred\n3. Verify if this was an approved change\n4. Check if clients are experiencing SSL errors\n5. Review certificate validity and cipher suite compatibility\n6. Validate that the profile matches security requirements',
+      dashboardDependency: 'Configuration Change dashboard, SSL Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Profile assignments by virtual server',
+          description: 'Current profile-to-vserver mapping',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize LastSeen=max(timestamp), RequestCount=count() by vserverName, profileName\n| order by vserverName asc'
+        },
+        {
+          name: 'New profile appearances in last 24 hours',
+          description: 'Detect profile changes by finding new combinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstSeen=min(timestamp), Count=count() by vserverName, profileName\n| order by FirstSeen desc\n| limit 20'
+        },
+        {
+          name: 'Profile usage over time',
+          description: 'Track which profiles are active over time to spot transitions',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by vserverName, profileName'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-006',
+      name: 'Client Connection Source Shift',
+      objective: 'Detect significant changes in the distribution of client IPs accessing virtual servers, indicating potential traffic rerouting, DNS changes, or unusual access patterns.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'traffic-pattern', 'baseline', 'anomaly'],
+      requiredFields: ['timestamp', 'clientIP', 'vserverName', 'httpMethod', 'totalBytesRecvd', 'sourcePort'],
+      detectionLogic: 'Alert when >30% of traffic to a vserverName originates from client IPs not seen in the prior 7-day baseline, or when the top-10 client distribution shifts by >50% within 1 hour.',
+      operationalValue: 'Client distribution shifts can indicate DNS changes routing new populations, CDN failovers, bot traffic, or upstream proxy changes that affect capacity planning.',
+      changeMgmtRelevance: 'DNS cutovers, CDN configuration changes, and proxy changes all cause client distribution shifts. Correlate with planned migrations.',
+      troubleshootingWorkflow: '1. Identify which vserverName has the distribution shift\n2. Determine if new clientIPs are legitimate or suspicious\n3. Check DNS records for recent changes\n4. Verify CDN or proxy configurations\n5. Assess capacity impact of new traffic sources\n6. Review geographic distribution of new clients',
+      dashboardDependency: 'Client Distribution dashboard, Traffic Source Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top client IPs by virtual server (last hour)',
+          description: 'Current client distribution to compare against baseline',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), BytesRecvd=sum(totalBytesRecvd) by clientIP, vserverName\n| order by Requests desc\n| limit 30'
+        },
+        {
+          name: 'Unique client count trend',
+          description: 'Track the number of distinct clients over time per virtual server',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h UniqueClients=dcount(clientIP) by vserverName'
+        },
+        {
+          name: 'New clients in last hour vs baseline',
+          description: 'Find client IPs that appeared recently but were not seen in prior period',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), FirstSeen=min(timestamp) by clientIP, vserverName\n| order by FirstSeen desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'ctx-obs-007',
+      name: 'NetScaler Log Ingestion Gap',
+      objective: 'Detect when NetScaler log volume drops significantly or stops entirely, indicating logging infrastructure failures or collection issues.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'logging', 'pipeline'],
+      requiredFields: ['timestamp', 'nsip', 'vserverName', 'httpMethod'],
+      detectionLogic: 'Alert when total event volume from a specific nsip drops below 10% of its 7-day hourly average for 2+ consecutive 15-minute windows, or reaches zero for 5+ minutes during business hours.',
+      operationalValue: 'Log gaps mean blind spots. If NetScaler logs stop flowing, all other detections become unreliable. This is a meta-detection ensuring the observability pipeline itself is healthy.',
+      changeMgmtRelevance: 'Log volume changes may follow syslog configuration updates, Cribl pipeline modifications, or network changes affecting log transport.',
+      troubleshootingWorkflow: '1. Identify which nsip stopped sending logs\n2. Verify the NetScaler appliance is reachable and operational\n3. Check syslog/SNMP configuration on the appliance\n4. Verify network connectivity between NetScaler and log collector\n5. Check Cribl source and pipeline health for this input\n6. Verify disk space and buffer health on collection infrastructure',
+      dashboardDependency: 'Pipeline Health dashboard, Data Ingestion Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by appliance over time',
+          description: 'Track log volume per NetScaler appliance to spot drops',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by nsip'
+        },
+        {
+          name: 'Appliances with zero events in last 30 minutes',
+          description: 'Find NetScaler appliances that have stopped sending logs',
+          query: 'dataset="$DATASET" earliest=-30m\n| summarize EventCount=count() by nsip\n| order by EventCount asc'
+        },
+        {
+          name: 'Log volume comparison (current vs 24h ago)',
+          description: 'Compare current ingestion rate against yesterday to find degradation',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize CurrentCount=count() by nsip, vserverName\n| order by CurrentCount asc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'darktrace-ndr': [
+    {
+      id: 'dtk-obs-001',
+      name: 'Model Breach Alert Volume Spike',
+      objective: 'Detect when the number of Darktrace model breaches spikes abnormally, indicating either a real widespread incident or sensor/tuning issues requiring attention.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'alert-volume', 'model-breach', 'tuning'],
+      requiredFields: ['timestamp', 'model_name', 'score', 'category', 'breach_id', 'device_label'],
+      detectionLogic: 'Alert when total model breach count exceeds 3x the 7-day rolling hourly average for more than 15 minutes. Differentiate between broad increase (many models) vs concentrated (single model firing repeatedly).',
+      operationalValue: 'Alert storms degrade SOC effectiveness. Distinguishing genuine widespread incidents from noisy models enables proper triage and maintains analyst productivity.',
+      changeMgmtRelevance: 'Model breach spikes often follow network changes that introduce new traffic patterns, causing previously tuned models to fire. Also occurs after Darktrace model updates.',
+      troubleshootingWorkflow: '1. Determine if the spike is across many models or concentrated in one\n2. For single-model spikes: check if the model was recently updated\n3. For broad spikes: check for network changes or new device onboarding\n4. Review the score distribution — are these low-confidence or high?\n5. Check if the spike correlates with a known change window\n6. Verify Darktrace appliance health and data feed status',
+      dashboardDependency: 'Alert Volume Trends dashboard, Model Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Model breach volume over time',
+          description: 'Timechart of total breaches to visualize spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m BreachCount=count(), UniqueModels=dcount(model_name) by category'
+        },
+        {
+          name: 'Top firing models in last hour',
+          description: 'Identify which models are contributing most to alert volume',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Breaches=count(), AvgScore=avg(score), UniqueDevices=dcount(device_label) by model_name, category\n| order by Breaches desc\n| limit 20'
+        },
+        {
+          name: 'Breach rate comparison (current vs baseline)',
+          description: 'Compare current breach rate against prior period',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=30m Total=count() by model_name\n| order by Total desc'
+        },
+        {
+          name: 'Score distribution during spike',
+          description: 'Check if spike consists of low or high confidence alerts',
+          query: 'dataset="$DATASET" earliest=-1h\n| extend score_bucket=case(score < 0.3, "Low", score < 0.6, "Medium", score < 0.8, "High", "Critical")\n| summarize count() by score_bucket, category\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-002',
+      name: 'Device Coverage Gap Detection',
+      objective: 'Identify when previously monitored devices stop generating network activity visible to Darktrace, indicating potential sensor blind spots or device failures.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'coverage', 'device-monitoring', 'blind-spot'],
+      requiredFields: ['timestamp', 'device_label', 'source_ip', 'subnet', 'category'],
+      detectionLogic: 'Alert when a device_label that has been consistently active (daily activity for 14+ days) shows zero network events for more than 2 hours during business hours. Exclude weekends for user endpoints.',
+      operationalValue: 'Coverage gaps mean security blind spots. If Darktrace cannot see a device, threats on that device go undetected. Critical for maintaining defense-in-depth posture.',
+      changeMgmtRelevance: 'Device disappearances often follow VLAN changes, firewall rule modifications, or SPAN/TAP port reconfigurations that break traffic mirroring.',
+      troubleshootingWorkflow: '1. Identify which device_label and subnet lost visibility\n2. Verify the device is still operational (ping, SNMP, agent)\n3. Check if the device moved to a different subnet\n4. Verify SPAN/TAP port configuration and health\n5. Check if a VLAN or routing change affected traffic mirroring\n6. Review Darktrace probe health for the relevant subnet',
+      dashboardDependency: 'Device Coverage dashboard, Subnet Visibility dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active devices by subnet (last 24 hours)',
+          description: 'Count unique active devices per subnet to identify coverage changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize UniqueDevices=dcount(device_label), Events=count() by subnet\n| order by UniqueDevices desc'
+        },
+        {
+          name: 'Device activity timeline',
+          description: 'Track when devices were last seen generating traffic',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize LastSeen=max(timestamp), EventCount=count() by device_label, source_ip, subnet\n| order by LastSeen asc\n| limit 30'
+        },
+        {
+          name: 'Devices with declining activity',
+          description: 'Find devices whose event volume is trending down',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=1h DeviceCount=dcount(device_label) by subnet'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-003',
+      name: 'High-Score Model Breach Cluster',
+      objective: 'Detect when multiple high-severity model breaches fire against the same device or subnet in a short window, indicating a potentially significant operational or security event.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'correlation', 'high-severity', 'clustering'],
+      requiredFields: ['timestamp', 'device_label', 'model_name', 'score', 'category', 'subnet', 'breach_id'],
+      detectionLogic: 'Alert when 3+ model breaches with score > 0.7 fire against the same device_label within a 30-minute window, or when 5+ high-score breaches occur across devices in the same subnet within 15 minutes.',
+      operationalValue: 'Clustered high-score breaches indicate significant events requiring immediate attention. Single breaches may be noise; clusters demand investigation.',
+      changeMgmtRelevance: 'Clusters often occur when network changes expose new traffic patterns to Darktrace models simultaneously, creating correlated alerts.',
+      troubleshootingWorkflow: '1. Identify the affected device(s) and subnet\n2. Review the model names — are they related or diverse?\n3. Check the category distribution (compromise vs compliance vs anomaly)\n4. Correlate timing with known change windows or incidents\n5. Review the device communication patterns for the time window\n6. Determine if this represents a real incident or model sensitivity issue',
+      dashboardDependency: 'Breach Correlation dashboard, High Severity Events dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High-score breaches by device (last 4 hours)',
+          description: 'Find devices with multiple high-confidence breaches',
+          query: 'dataset="$DATASET" earliest=-4h\n| where score > 0.7\n| summarize BreachCount=count(), Models=dcount(model_name), AvgScore=avg(score) by device_label, subnet\n| where BreachCount >= 3\n| order by BreachCount desc'
+        },
+        {
+          name: 'Breach timeline for a specific device',
+          description: 'See the sequence of model breaches for investigation',
+          query: 'dataset="$DATASET" earliest=-2h\n| where score > 0.7\n| summarize count() by device_label, model_name, category, score\n| order by score desc'
+        },
+        {
+          name: 'Subnet-level breach clustering',
+          description: 'Detect coordinated alerts across a subnet',
+          query: 'dataset="$DATASET" earliest=-1h\n| where score > 0.7\n| summarize Breaches=count(), Devices=dcount(device_label), Models=dcount(model_name) by subnet\n| where Breaches >= 5\n| order by Breaches desc'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-004',
+      name: 'Model Detection Category Imbalance',
+      objective: 'Monitor the distribution of detection categories to identify when Darktrace is disproportionately flagging one category, indicating potential tuning needs or environmental changes.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'tuning', 'category-balance', 'model-health'],
+      requiredFields: ['timestamp', 'category', 'model_name', 'score', 'device_label'],
+      detectionLogic: 'Alert when any single category accounts for >60% of all breaches over a 24-hour window when it historically accounts for <30%, or when a previously active category drops to near zero.',
+      operationalValue: 'Category imbalance suggests either environmental changes creating noise in one area, or sensor issues causing blind spots in another. Both require tuning attention.',
+      changeMgmtRelevance: 'New application deployments, protocol changes, or network architecture updates can cause specific detection categories to spike while others become irrelevant.',
+      troubleshootingWorkflow: '1. Identify which category is dominating or missing\n2. Check if this correlates with new devices or subnets\n3. Review the top models in the dominant category\n4. Determine if the shift is environmental or a model/tuning issue\n5. Check Darktrace model update history\n6. Assess whether detection gaps exist in underrepresented categories',
+      dashboardDependency: 'Detection Category Trends dashboard, Model Tuning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Category distribution (last 7 days)',
+          description: 'Track the proportion of each detection category over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d count() by category'
+        },
+        {
+          name: 'Category percentage breakdown (current)',
+          description: 'Current distribution of detection categories',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count() by category\n| order by Total desc'
+        },
+        {
+          name: 'Models driving category imbalance',
+          description: 'Identify specific models causing over-representation',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Breaches=count(), UniqueDevices=dcount(device_label) by model_name, category\n| order by Breaches desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-005',
+      name: 'Subnet Monitoring Volume Change',
+      objective: 'Detect significant changes in event volume per subnet that may indicate network topology changes, SPAN misconfigurations, or capacity issues affecting detection coverage.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'subnet', 'coverage-monitoring'],
+      requiredFields: ['timestamp', 'subnet', 'source_ip', 'destination_ip', 'device_label'],
+      detectionLogic: 'Alert when event volume for a subnet changes by more than 50% (up or down) compared to the same day-of-week hourly baseline. Evaluate in 1-hour windows.',
+      operationalValue: 'Subnet volume changes affect detection accuracy. Too little traffic means blind spots; too much may indicate flooding or new high-volume devices overwhelming analysis.',
+      changeMgmtRelevance: 'Network topology changes, VLAN reconfigurations, and new device deployments directly affect per-subnet traffic visibility.',
+      troubleshootingWorkflow: '1. Identify which subnet(s) have volume changes\n2. For increases: check for new devices or traffic generators\n3. For decreases: verify SPAN/TAP health and routing\n4. Check if devices migrated between subnets\n5. Verify Darktrace probe capacity is not being exceeded\n6. Review recent network change requests',
+      dashboardDependency: 'Subnet Traffic Volume dashboard, Network Topology Changes dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by subnet over time',
+          description: 'Track traffic volume trends per subnet',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by subnet'
+        },
+        {
+          name: 'Subnet volume comparison (today vs last week)',
+          description: 'Compare current subnet volumes against baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize TodayEvents=count(), UniqueDevices=dcount(device_label), UniqueSrcIPs=dcount(source_ip) by subnet\n| order by TodayEvents desc'
+        },
+        {
+          name: 'New devices per subnet (last 24 hours)',
+          description: 'Identify recently appeared devices that may explain volume changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstSeen=min(timestamp), Events=count() by device_label, subnet, source_ip\n| order by FirstSeen desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-006',
+      name: 'Darktrace Event Ingestion Latency',
+      objective: 'Monitor for delays between event generation and ingestion into the analytics pipeline, ensuring detections operate on timely data.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'pipeline-health'],
+      requiredFields: ['timestamp', 'breach_id', 'model_name', 'score', 'device_label'],
+      detectionLogic: 'Alert when the gap between event timestamp and ingestion time exceeds 5 minutes for >10% of events in a 15-minute window, or when the average lag exceeds 10 minutes.',
+      operationalValue: 'Delayed data means delayed detections. If Darktrace events arrive late, security responses are delayed and time-sensitive correlations become unreliable.',
+      changeMgmtRelevance: 'Ingestion latency increases often follow pipeline changes, Cribl route modifications, or Darktrace API configuration updates.',
+      troubleshootingWorkflow: '1. Measure current ingestion lag across all events\n2. Check if lag is uniform or concentrated on specific models/devices\n3. Verify Darktrace API response times\n4. Check Cribl pipeline processing latency\n5. Review queue depths in the collection infrastructure\n6. Verify network connectivity between Darktrace and collectors',
+      dashboardDependency: 'Pipeline Latency dashboard, Data Freshness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event freshness check',
+          description: 'Verify events are arriving in near real-time',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LatestEvent=max(timestamp), EventCount=count() by model_name\n| order by LatestEvent asc\n| limit 20'
+        },
+        {
+          name: 'Event volume by time bucket',
+          description: 'Check for gaps in event flow indicating latency or loss',
+          query: 'dataset="$DATASET" earliest=-6h\n| timestats span=5m count() by model_name'
+        },
+        {
+          name: 'Events per minute trend',
+          description: 'Monitor throughput to detect slowdowns',
+          query: 'dataset="$DATASET" earliest=-2h\n| timestats span=1m TotalEvents=count(), UniqueBreaches=dcount(breach_id)'
+        }
+      ]
+    },
+    {
+      id: 'dtk-obs-007',
+      name: 'Darktrace Log Feed Health',
+      objective: 'Ensure continuous data flow from Darktrace into the observability pipeline by monitoring for volume drops, format changes, or complete feed outages.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'feed-health', 'pipeline'],
+      requiredFields: ['timestamp', 'model_name', 'model_uuid', 'breach_id', 'category'],
+      detectionLogic: 'Alert when total event volume drops below 20% of the 7-day hourly baseline for 3+ consecutive 15-minute windows. Also alert on schema changes (new or missing fields) or parsing failures.',
+      operationalValue: 'Feed health is foundational — all other Darktrace detections depend on reliable data flow. This meta-detection ensures the pipeline itself is functioning correctly.',
+      changeMgmtRelevance: 'Feed disruptions often follow Darktrace firmware updates, API credential rotations, or Cribl pipeline modifications.',
+      troubleshootingWorkflow: '1. Verify current event volume vs expected baseline\n2. Check Darktrace appliance health and API status\n3. Verify API credentials have not expired\n4. Check Cribl source configuration and connectivity\n5. Review for parsing errors or schema changes\n6. Verify network connectivity and firewall rules between systems',
+      dashboardDependency: 'Data Feed Health dashboard, Pipeline Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Total event volume over time',
+          description: 'Track overall Darktrace event ingestion rate',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count()'
+        },
+        {
+          name: 'Event volume by model UUID',
+          description: 'Check if specific model feeds have stopped',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Events=count(), LastSeen=max(timestamp) by model_uuid, model_name\n| order by LastSeen asc\n| limit 20'
+        },
+        {
+          name: 'Feed gap detection',
+          description: 'Find time periods with zero or near-zero events',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m EventCount=count()\n| where EventCount < 5\n| order by timestamp desc'
+        }
+      ]
+    }
+  ],
+  'aws-cloudtrail': [
+    {
+      id: 'ctr-obs-001',
+      name: 'API Error Rate Surge',
+      objective: 'Detect when AWS API error rates spike across services, indicating service degradation, permission issues, or misconfigurations affecting operational reliability.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'api-errors', 'aws-health', 'service-degradation'],
+      requiredFields: ['eventTime', 'eventName', 'eventSource', 'errorCode', 'errorMessage', 'userIdentity_arn', 'awsRegion'],
+      detectionLogic: 'Alert when API error count exceeds 5x the rolling 7-day hourly baseline for any eventSource, or when error rate exceeds 30% of total calls for any service. Critical if multiple services affected simultaneously.',
+      operationalValue: 'API errors indicate service issues, quota limits, or permission problems. Early detection prevents cascading failures and enables rapid response before end-user impact.',
+      changeMgmtRelevance: 'Error spikes following infrastructure-as-code deployments (Terraform, CloudFormation) indicate failed or partially applied changes requiring rollback.',
+      troubleshootingWorkflow: '1. Identify which eventSource and errorCode are spiking\n2. Determine if errors are AccessDenied (permission) or throttling (capacity)\n3. Check if a specific userIdentity_arn is generating all errors\n4. Review recent IAM policy or service configuration changes\n5. Check AWS Service Health Dashboard for regional issues\n6. Verify if errors correlate with a deployment or change window',
+      dashboardDependency: 'AWS API Health dashboard, Error Rate Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error count by service and error code (last 4 hours)',
+          description: 'Break down API errors by AWS service and error type',
+          query: 'dataset="$DATASET" earliest=-4h\n| where errorCode != ""\n| summarize ErrorCount=count() by eventSource, errorCode, errorMessage\n| order by ErrorCount desc\n| limit 30'
+        },
+        {
+          name: 'Error rate trend by service',
+          description: 'Track error rates over time per AWS service',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend is_error=iif(errorCode != "", 1, 0)\n| timestats span=15m Total=count(), Errors=sum(is_error) by eventSource'
+        },
+        {
+          name: 'Top error-generating identities',
+          description: 'Find which IAM principals are causing the most API errors',
+          query: 'dataset="$DATASET" earliest=-2h\n| where errorCode != ""\n| summarize ErrorCount=count(), UniqueErrors=dcount(errorCode) by userIdentity_arn, eventSource\n| order by ErrorCount desc\n| limit 20'
+        },
+        {
+          name: 'Error distribution by region',
+          description: 'Check if errors are regionalized indicating a regional issue',
+          query: 'dataset="$DATASET" earliest=-2h\n| where errorCode != ""\n| summarize ErrorCount=count() by awsRegion, eventSource, errorCode\n| order by ErrorCount desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-002',
+      name: 'IAM Policy Change Without Change Window',
+      objective: 'Detect IAM policy modifications outside of approved change windows that could affect service availability or break application permissions.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'iam', 'policy'],
+      requiredFields: ['eventTime', 'eventName', 'eventSource', 'userIdentity_arn', 'userIdentity_userName', 'requestParameters', 'sourceIPAddress'],
+      detectionLogic: 'Alert on IAM policy-modifying events (PutUserPolicy, PutRolePolicy, AttachRolePolicy, DetachRolePolicy, CreatePolicy, DeletePolicy) occurring outside of defined maintenance windows or from unexpected principals.',
+      operationalValue: 'IAM changes can immediately break application access to AWS services, causing outages. Detecting out-of-window changes enables rapid response before widespread impact.',
+      changeMgmtRelevance: 'All IAM changes should go through change management. Unplanned modifications indicate either emergency fixes (document post-hoc) or unauthorized changes.',
+      troubleshootingWorkflow: '1. Identify the eventName and what policy was changed\n2. Determine who made the change (userIdentity_arn)\n3. Check if this was an approved change request\n4. Review the requestParameters for what was modified\n5. Check if any applications lost access after the change\n6. Determine blast radius — what resources are affected',
+      dashboardDependency: 'IAM Change Audit dashboard, Change Management Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'IAM policy changes (last 24 hours)',
+          description: 'All IAM policy modifications for audit review',
+          query: 'dataset="$DATASET" eventSource=="iam.amazonaws.com" earliest=-24h\n| where eventName in ("PutUserPolicy", "PutRolePolicy", "AttachRolePolicy", "DetachRolePolicy", "CreatePolicy", "DeletePolicy", "CreatePolicyVersion")\n| summarize count() by eventName, userIdentity_arn, userIdentity_userName\n| order by count_ desc'
+        },
+        {
+          name: 'IAM change timeline',
+          description: 'Chronological view of all IAM modifications',
+          query: 'dataset="$DATASET" eventSource=="iam.amazonaws.com" earliest=-24h\n| where eventName in ("PutUserPolicy", "PutRolePolicy", "AttachRolePolicy", "DetachRolePolicy", "CreatePolicy", "DeletePolicy")\n| project eventTime, eventName, userIdentity_arn, sourceIPAddress, awsRegion\n| order by eventTime desc'
+        },
+        {
+          name: 'IAM changes by principal and source IP',
+          description: 'Identify who is making changes and from where',
+          query: 'dataset="$DATASET" eventSource=="iam.amazonaws.com" earliest=-7d\n| where eventName in ("PutUserPolicy", "PutRolePolicy", "AttachRolePolicy", "DetachRolePolicy")\n| summarize Changes=count(), LastChange=max(eventTime) by userIdentity_arn, sourceIPAddress\n| order by Changes desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-003',
+      name: 'Service Quota Throttling Detection',
+      objective: 'Identify when AWS services are throttling API requests, indicating approaching or exceeded service quotas that affect application performance.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'throttling', 'capacity', 'service-limits'],
+      requiredFields: ['eventTime', 'eventSource', 'eventName', 'errorCode', 'userIdentity_arn', 'awsRegion', 'recipientAccountId'],
+      detectionLogic: 'Alert when errorCode contains "Throttling", "ThrottlingException", "TooManyRequestsException", or "RequestLimitExceeded". Critical if throttling events exceed 100 per 5-minute window for any single service.',
+      operationalValue: 'Throttling directly impacts application performance and availability. Detecting quota pressure early enables proactive limit increases before user-facing degradation.',
+      changeMgmtRelevance: 'Throttling often follows deployments that increase API call volume, auto-scaling events, or batch processing jobs that exceed planned capacity.',
+      troubleshootingWorkflow: '1. Identify which eventSource is being throttled\n2. Check which eventName (API action) is hitting limits\n3. Determine the calling identity and whether calls can be reduced\n4. Request quota increase if legitimate growth\n5. Implement exponential backoff if not already present\n6. Check if a deployment increased call volume unexpectedly',
+      dashboardDependency: 'Service Quota dashboard, API Throttling Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Throttling events by service (last 12 hours)',
+          description: 'Identify which services are hitting rate limits',
+          query: 'dataset="$DATASET" earliest=-12h\n| where errorCode in ("Throttling", "ThrottlingException", "TooManyRequestsException", "RequestLimitExceeded")\n| summarize ThrottleCount=count() by eventSource, eventName, awsRegion\n| order by ThrottleCount desc'
+        },
+        {
+          name: 'Throttling trend over time',
+          description: 'Track throttling frequency to identify patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| where errorCode in ("Throttling", "ThrottlingException", "TooManyRequestsException", "RequestLimitExceeded")\n| timestats span=15m count() by eventSource'
+        },
+        {
+          name: 'Throttled principals',
+          description: 'Find which identities are being throttled most',
+          query: 'dataset="$DATASET" earliest=-4h\n| where errorCode in ("Throttling", "ThrottlingException", "TooManyRequestsException", "RequestLimitExceeded")\n| summarize ThrottleCount=count(), UniqueAPIs=dcount(eventName) by userIdentity_arn, eventSource\n| order by ThrottleCount desc'
+        },
+        {
+          name: 'Throttle rate per account and region',
+          description: 'Identify accounts and regions approaching limits',
+          query: 'dataset="$DATASET" earliest=-6h\n| where errorCode in ("Throttling", "ThrottlingException", "TooManyRequestsException", "RequestLimitExceeded")\n| summarize ThrottleCount=count() by recipientAccountId, awsRegion, eventSource\n| order by ThrottleCount desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-004',
+      name: 'Infrastructure Resource Lifecycle Events',
+      objective: 'Track creation, modification, and deletion of critical infrastructure resources to maintain operational awareness and detect unplanned changes.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'infrastructure', 'resource-lifecycle'],
+      requiredFields: ['eventTime', 'eventName', 'eventSource', 'userIdentity_arn', 'requestParameters', 'responseElements', 'awsRegion'],
+      detectionLogic: 'Track and alert on resource lifecycle events: RunInstances, TerminateInstances, CreateDBInstance, DeleteDBInstance, CreateFunction, DeleteFunction, CreateStack, DeleteStack. Alert when deletions occur outside maintenance windows or from unusual principals.',
+      operationalValue: 'Unexpected resource changes cause outages. Tracking infrastructure lifecycle provides operational awareness and enables rapid identification of unplanned modifications.',
+      changeMgmtRelevance: 'All infrastructure changes should be tracked against change requests. This detection provides the audit trail for change management compliance.',
+      troubleshootingWorkflow: '1. Identify what resource was created, modified, or deleted\n2. Determine who performed the action\n3. Check if this correlates with an approved change request\n4. For deletions: verify no dependent services are affected\n5. Review requestParameters for configuration details\n6. Check responseElements for resource identifiers',
+      dashboardDependency: 'Infrastructure Changes dashboard, Resource Inventory dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Resource lifecycle events (last 24 hours)',
+          description: 'Track all significant resource changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventName in ("RunInstances", "TerminateInstances", "CreateDBInstance", "DeleteDBInstance", "CreateFunction", "DeleteFunction", "CreateStack", "DeleteStack", "CreateBucket", "DeleteBucket")\n| summarize count() by eventName, eventSource, userIdentity_arn, awsRegion\n| order by count_ desc'
+        },
+        {
+          name: 'Resource deletions timeline',
+          description: 'Chronological view of resource deletions for audit',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventName startswith "Delete" or eventName startswith "Terminate"\n| project eventTime, eventName, eventSource, userIdentity_arn, awsRegion\n| order by eventTime desc'
+        },
+        {
+          name: 'Changes by principal and service',
+          description: 'Who is making the most infrastructure changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where eventName startswith "Create" or eventName startswith "Delete" or eventName startswith "Terminate" or eventName startswith "Modify"\n| summarize Changes=count(), Creates=countif(eventName startswith "Create"), Deletes=countif(eventName startswith "Delete") by userIdentity_arn, eventSource\n| order by Changes desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-005',
+      name: 'Cross-Region Activity Anomaly',
+      objective: 'Detect unexpected API activity in AWS regions not typically used by the organization, indicating potential misconfiguration, drift, or unauthorized resource deployment.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'anomaly', 'region', 'governance'],
+      requiredFields: ['eventTime', 'awsRegion', 'eventSource', 'eventName', 'userIdentity_arn', 'sourceIPAddress'],
+      detectionLogic: 'Alert when API calls occur in regions outside the organization approved list, or when activity in a previously unused region exceeds 10 events per hour. Exclude read-only global service calls.',
+      operationalValue: 'Unexpected regional activity indicates governance violations, resource sprawl, or potential account compromise. Maintaining region discipline reduces attack surface and cost.',
+      changeMgmtRelevance: 'New region usage should align with documented expansion plans. Unexpected regional activity may indicate Terraform misconfigurations or copy-paste deployment errors.',
+      troubleshootingWorkflow: '1. Identify which region has unexpected activity\n2. Determine what services and actions are being called\n3. Check if the calling principal is authorized for multi-region\n4. Verify if this is a legitimate expansion or misconfiguration\n5. Review if resources were actually created in the new region\n6. Check SCPs and region-deny policies',
+      dashboardDependency: 'Regional Activity Map dashboard, Governance Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Activity by region (last 7 days)',
+          description: 'Map of API activity across all regions',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize EventCount=count(), UniqueAPIs=dcount(eventName), UniqueUsers=dcount(userIdentity_arn) by awsRegion\n| order by EventCount desc'
+        },
+        {
+          name: 'Unusual region activity (last 24 hours)',
+          description: 'Find activity in regions with historically low usage',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Events=count(), UniqueActions=dcount(eventName) by awsRegion, eventSource, userIdentity_arn\n| where Events < 50\n| order by awsRegion asc'
+        },
+        {
+          name: 'Write actions in non-primary regions',
+          description: 'Identify resource-creating actions in unexpected regions',
+          query: 'dataset="$DATASET" earliest=-24h\n| where eventName startswith "Create" or eventName startswith "Put" or eventName startswith "Run"\n| summarize Creates=count() by awsRegion, eventName, userIdentity_arn\n| order by awsRegion asc, Creates desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-006',
+      name: 'Assumed Role Session Volume Anomaly',
+      objective: 'Monitor the volume of AssumeRole calls to detect automation runaway, credential issues, or unexpected cross-account access patterns.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'iam', 'assume-role', 'automation'],
+      requiredFields: ['eventTime', 'eventName', 'eventSource', 'userIdentity_arn', 'userIdentity_accessKeyId', 'awsRegion', 'errorCode'],
+      detectionLogic: 'Alert when AssumeRole call volume for a specific userIdentity_arn exceeds 3x its 7-day baseline in a 15-minute window, or when AssumeRole failures exceed 20% of attempts.',
+      operationalValue: 'Excessive role assumption can indicate automation loops, credential refresh storms, or misconfigured services that degrade performance and exhaust STS quotas.',
+      changeMgmtRelevance: 'Role assumption spikes often follow deployment of new automation, Lambda functions, or cross-account integrations that create unexpected credential volume.',
+      troubleshootingWorkflow: '1. Identify which identity is generating excessive AssumeRole calls\n2. Check if calls are succeeding or failing (errorCode)\n3. Determine if this is a known automation or unexpected\n4. Check for credential refresh loops (short-lived tokens expiring too fast)\n5. Review Lambda execution patterns if applicable\n6. Verify cross-account trust policy configuration',
+      dashboardDependency: 'IAM Activity dashboard, STS Usage Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'AssumeRole volume by identity (last 12 hours)',
+          description: 'Track role assumption frequency per principal',
+          query: 'dataset="$DATASET" eventName=="AssumeRole" earliest=-12h\n| summarize Calls=count(), Failures=countif(errorCode != "") by userIdentity_arn\n| order by Calls desc\n| limit 20'
+        },
+        {
+          name: 'AssumeRole trend over time',
+          description: 'Visualize role assumption patterns to spot spikes',
+          query: 'dataset="$DATASET" eventName=="AssumeRole" earliest=-24h\n| timestats span=15m Total=count(), Failed=countif(errorCode != "")'
+        },
+        {
+          name: 'Failed AssumeRole attempts',
+          description: 'Identify role assumption failures indicating permission or config issues',
+          query: 'dataset="$DATASET" eventName=="AssumeRole" earliest=-4h\n| where errorCode != ""\n| summarize FailCount=count() by userIdentity_arn, errorCode, errorMessage, awsRegion\n| order by FailCount desc'
+        }
+      ]
+    },
+    {
+      id: 'ctr-obs-007',
+      name: 'CloudTrail Logging Continuity',
+      objective: 'Ensure CloudTrail events are continuously flowing into the analytics pipeline without gaps, maintaining audit completeness and detection reliability.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'audit', 'pipeline-health'],
+      requiredFields: ['eventTime', 'eventSource', 'awsRegion', 'recipientAccountId', 'userAgent'],
+      detectionLogic: 'Alert when CloudTrail event volume drops below 30% of the hourly baseline for any account/region combination, or when zero events are received for 10+ minutes from a previously active account.',
+      operationalValue: 'CloudTrail gaps mean audit and detection blind spots. This meta-detection ensures the foundation of AWS security and operational monitoring is intact.',
+      changeMgmtRelevance: 'Logging gaps often follow trail configuration changes, S3 bucket policy modifications, or Cribl pipeline updates affecting CloudTrail ingestion.',
+      troubleshootingWorkflow: '1. Identify which account and region has the gap\n2. Verify CloudTrail trail status in the AWS console\n3. Check S3 bucket delivery status and permissions\n4. Verify SNS/SQS notification chain is functioning\n5. Check Cribl source health for CloudTrail inputs\n6. Review recent trail or bucket policy changes',
+      dashboardDependency: 'Audit Completeness dashboard, Pipeline Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by account and region',
+          description: 'Track CloudTrail ingestion rate per account',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by recipientAccountId, awsRegion'
+        },
+        {
+          name: 'Event volume drop detection',
+          description: 'Find time periods with unusually low event counts',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m EventCount=count() by recipientAccountId\n| where EventCount < 10\n| order by timestamp desc'
+        },
+        {
+          name: 'Service distribution check',
+          description: 'Verify all expected AWS services are generating events',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Events=count(), LastSeen=max(eventTime) by eventSource\n| order by LastSeen asc\n| limit 30'
+        },
+        {
+          name: 'UserAgent distribution for pipeline health',
+          description: 'Monitor event sources to detect collection changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by userAgent\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'aws-cloudwatch': [
+    {
+      id: 'cwl-obs-001',
+      name: 'Log Group Ingestion Failure',
+      objective: 'Detect when critical log groups stop receiving new log events, indicating application failures, logging infrastructure issues, or permission problems.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'log-ingestion', 'availability', 'pipeline'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'owner'],
+      detectionLogic: 'Alert when a logGroup that has been consistently active (hourly events for 7+ days) shows zero new events for 15+ minutes during expected active hours. Critical if multiple log groups from the same owner go silent simultaneously.',
+      operationalValue: 'Log group silence means either the application stopped working or logging broke. Either case requires immediate investigation to restore observability.',
+      changeMgmtRelevance: 'Log ingestion failures often follow IAM role changes, CloudWatch agent updates, application deployments, or VPC endpoint modifications.',
+      troubleshootingWorkflow: '1. Identify which logGroup(s) stopped receiving events\n2. Check if the application is still running (ECS tasks, Lambda invocations)\n3. Verify CloudWatch Logs agent health on EC2/containers\n4. Check IAM permissions for the logging role\n5. Verify VPC endpoints if in a private subnet\n6. Review recent application or infrastructure deployments',
+      dashboardDependency: 'Log Ingestion Health dashboard, Application Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Log volume by log group (last 12 hours)',
+          description: 'Track event volume per log group to identify gaps',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by logGroup'
+        },
+        {
+          name: 'Log groups with zero events in last 30 minutes',
+          description: 'Find log groups that may have stopped receiving data',
+          query: 'dataset="$DATASET" earliest=-30m\n| summarize EventCount=count(), LastEvent=max(timestamp) by logGroup, owner\n| order by EventCount asc'
+        },
+        {
+          name: 'Log stream activity by log group',
+          description: 'Check if specific streams within a group are silent',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), Streams=dcount(logStream) by logGroup\n| order by Events asc\n| limit 20'
+        },
+        {
+          name: 'Owner-level ingestion summary',
+          description: 'Aggregate view by account owner to spot broad failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize TotalEvents=count(), ActiveGroups=dcount(logGroup), ActiveStreams=dcount(logStream) by owner\n| order by TotalEvents asc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-002',
+      name: 'Application Error Log Spike',
+      objective: 'Detect surges in error-level log messages that indicate application instability, failed deployments, or infrastructure issues affecting service health.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'application-health', 'log-analysis'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message', 'owner'],
+      detectionLogic: 'Alert when log messages matching error patterns (ERROR, Exception, FATAL, CRITICAL, Traceback) exceed 3x the 7-day rolling baseline for a logGroup in any 10-minute window.',
+      operationalValue: 'Error spikes are the earliest indicator of application issues. Detecting them in logs often precedes metric-based alerts by minutes, enabling faster response.',
+      changeMgmtRelevance: 'Error spikes immediately following deployments indicate failed releases. Use as a deployment gate to trigger automatic rollback decisions.',
+      troubleshootingWorkflow: '1. Identify which logGroup and logStream are generating errors\n2. Review error messages for common patterns\n3. Check if errors started at a specific time (deployment correlation)\n4. Identify if errors are from a single instance or widespread\n5. Review the application deployment history\n6. Check upstream dependencies for failures',
+      dashboardDependency: 'Application Error Trends dashboard, Deployment Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error messages by log group (last 2 hours)',
+          description: 'Count error-level log entries per application',
+          query: 'dataset="$DATASET" earliest=-2h\n| where message matches regex "(?i)(ERROR|Exception|FATAL|CRITICAL|Traceback)"\n| summarize ErrorCount=count() by logGroup\n| order by ErrorCount desc'
+        },
+        {
+          name: 'Error rate trend over time',
+          description: 'Track error frequency to identify spike onset',
+          query: 'dataset="$DATASET" earliest=-12h\n| where message matches regex "(?i)(ERROR|Exception|FATAL)"\n| timestats span=5m count() by logGroup'
+        },
+        {
+          name: 'Error message samples',
+          description: 'Review actual error messages for pattern identification',
+          query: 'dataset="$DATASET" earliest=-1h\n| where message matches regex "(?i)(ERROR|Exception|FATAL|CRITICAL)"\n| project timestamp, logGroup, logStream, message\n| order by timestamp desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-003',
+      name: 'Log Stream Proliferation',
+      objective: 'Detect unusual increases in the number of active log streams per log group, which can indicate runaway container creation, scaling issues, or logging misconfigurations.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'log-streams', 'scaling'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'owner', 'message'],
+      detectionLogic: 'Alert when the number of unique logStream values for a logGroup exceeds 3x the 7-day daily maximum in any 1-hour window. Also alert on >100 new streams appearing in 15 minutes.',
+      operationalValue: 'Stream proliferation indicates scaling issues (containers spawning/dying rapidly), logging misconfigurations, or cost runaway. Each stream has API call overhead.',
+      changeMgmtRelevance: 'Stream proliferation often follows ECS/EKS scaling configuration changes, new auto-scaling policies, or deployment strategies that create too many tasks.',
+      troubleshootingWorkflow: '1. Identify which logGroup has stream proliferation\n2. Determine if streams represent containers, instances, or functions\n3. Check auto-scaling activity and task churn\n4. Review if containers are crashing and restarting rapidly\n5. Check CloudWatch Logs quotas and API throttling\n6. Verify log retention policies are cleaning up old streams',
+      dashboardDependency: 'Log Infrastructure dashboard, Scaling Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unique stream count by log group (last 24 hours)',
+          description: 'Track stream proliferation trends',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h UniqueStreams=dcount(logStream) by logGroup'
+        },
+        {
+          name: 'Log groups with most active streams',
+          description: 'Find groups with unusually high stream counts',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize StreamCount=dcount(logStream), Events=count() by logGroup, owner\n| order by StreamCount desc\n| limit 20'
+        },
+        {
+          name: 'New streams appearing per hour',
+          description: 'Detect rapid stream creation indicating churn',
+          query: 'dataset="$DATASET" earliest=-6h\n| summarize FirstSeen=min(timestamp) by logStream, logGroup\n| timestats span=1h NewStreams=count() by logGroup'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-004',
+      name: 'Subscription Filter Processing Lag',
+      objective: 'Monitor subscription filter health to ensure log data is being delivered to downstream consumers (Lambda, Kinesis, Elasticsearch) without significant delay.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'subscription-filter', 'delivery'],
+      requiredFields: ['timestamp', 'logGroup', 'subscriptionFilters', 'message', 'id'],
+      detectionLogic: 'Alert when events with subscriptionFilters show delivery gaps exceeding 5 minutes, or when the ratio of filtered to total events changes significantly from baseline for a given logGroup.',
+      operationalValue: 'Subscription filter lag means downstream systems (SIEM, analytics, alerting) are operating on stale data. This directly impacts detection timeliness and dashboard accuracy.',
+      changeMgmtRelevance: 'Filter lag often follows Lambda throttling, Kinesis scaling issues, or filter pattern changes that match more/fewer events than expected.',
+      troubleshootingWorkflow: '1. Identify which subscriptionFilters are lagging\n2. Check the destination (Lambda, Kinesis) for errors or throttling\n3. Verify the filter pattern is not matching too broadly\n4. Check CloudWatch Logs quota for subscription delivery\n5. Review destination capacity and scaling configuration\n6. Verify IAM permissions for cross-account delivery',
+      dashboardDependency: 'Log Delivery Health dashboard, Subscription Filter Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Events by subscription filter (last 6 hours)',
+          description: 'Track filtered event volume over time',
+          query: 'dataset="$DATASET" earliest=-6h\n| where subscriptionFilters != ""\n| timestats span=10m count() by subscriptionFilters, logGroup'
+        },
+        {
+          name: 'Subscription filter coverage',
+          description: 'Compare filtered vs total events per log group',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend has_filter=iif(subscriptionFilters != "", 1, 0)\n| summarize Total=count(), Filtered=sum(has_filter) by logGroup\n| extend FilterPct=round(Filtered * 100.0 / Total, 1)\n| order by Total desc'
+        },
+        {
+          name: 'Filter delivery gaps',
+          description: 'Find time windows where filtered events stopped flowing',
+          query: 'dataset="$DATASET" earliest=-12h\n| where subscriptionFilters != ""\n| timestats span=5m FilteredEvents=count() by logGroup, subscriptionFilters\n| where FilteredEvents < 2\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-005',
+      name: 'Log Message Pattern Anomaly',
+      objective: 'Detect when the composition of log messages changes significantly, indicating application behavior changes, new error patterns, or logging code modifications.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pattern-analysis', 'anomaly'],
+      requiredFields: ['timestamp', 'logGroup', 'logStream', 'message'],
+      detectionLogic: 'Alert when message length distribution, keyword frequency, or log level ratios shift by >40% compared to the 7-day baseline for a logGroup. Also detect new message patterns not seen in prior 30 days.',
+      operationalValue: 'Log pattern changes often precede outages or indicate silent failures. They reveal application behavior changes that may not trigger traditional threshold-based alerts.',
+      changeMgmtRelevance: 'Pattern shifts following deployments indicate code changes affecting logging output. Useful for validating deployment success and identifying unintended behavior changes.',
+      troubleshootingWorkflow: '1. Identify which logGroup has the pattern shift\n2. Compare current message samples against recent baseline\n3. Check for new log levels, error codes, or message formats\n4. Correlate with deployment timestamps\n5. Verify if the change is expected (new feature logging)\n6. Check if existing parsing/alerting rules still match',
+      dashboardDependency: 'Log Pattern Analysis dashboard, Data Quality Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Message length distribution by log group',
+          description: 'Detect changes in message verbosity indicating behavior shifts',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend msg_len=strlen(message)\n| summarize AvgLen=avg(msg_len), MaxLen=max(msg_len), Count=count() by logGroup\n| order by AvgLen desc'
+        },
+        {
+          name: 'Log level distribution over time',
+          description: 'Track the ratio of INFO/WARN/ERROR messages',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend log_level=case(message matches regex "(?i)ERROR", "ERROR", message matches regex "(?i)WARN", "WARN", message matches regex "(?i)DEBUG", "DEBUG", "INFO")\n| timestats span=1h count() by log_level, logGroup'
+        },
+        {
+          name: 'New message patterns (last hour)',
+          description: 'Find log messages with patterns not seen recently',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize SampleMessage=any(message), Count=count() by logGroup, logStream\n| order by Count desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-006',
+      name: 'Multi-Account Log Consolidation Gap',
+      objective: 'Monitor cross-account log delivery to ensure all expected AWS accounts are forwarding logs to the central observability platform.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'multi-account', 'consolidation', 'completeness'],
+      requiredFields: ['timestamp', 'logGroup', 'owner', 'logStream', 'subscriptionFilters'],
+      detectionLogic: 'Alert when an owner (account ID) that typically sends >100 events per hour drops below 10% of baseline for 30+ minutes. Track expected accounts and flag when any go silent.',
+      operationalValue: 'In multi-account architectures, a single account losing log delivery creates a critical visibility gap. Detecting this ensures complete coverage across the organization.',
+      changeMgmtRelevance: 'Account-level log gaps often follow organizational changes, SCP modifications, or cross-account IAM trust policy updates.',
+      troubleshootingWorkflow: '1. Identify which owner/account has stopped delivering logs\n2. Verify the cross-account IAM role and trust policy\n3. Check subscription filter configuration in the source account\n4. Verify destination permissions in the central account\n5. Check for SCP changes blocking CloudWatch Logs actions\n6. Review VPC endpoint and network path to the destination',
+      dashboardDependency: 'Multi-Account Coverage dashboard, Organization Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by owner account',
+          description: 'Track log delivery from each AWS account',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by owner'
+        },
+        {
+          name: 'Accounts with low delivery (last hour)',
+          description: 'Find accounts delivering fewer logs than expected',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), LogGroups=dcount(logGroup), Streams=dcount(logStream) by owner\n| order by Events asc'
+        },
+        {
+          name: 'Account delivery health comparison',
+          description: 'Compare current delivery against baseline per account',
+          query: 'dataset="$DATASET" earliest=-6h\n| summarize TotalEvents=count(), ActiveGroups=dcount(logGroup) by owner\n| order by TotalEvents desc'
+        }
+      ]
+    },
+    {
+      id: 'cwl-obs-007',
+      name: 'CloudWatch Logs Pipeline Throughput',
+      objective: 'Monitor the overall throughput of CloudWatch Logs into the analytics pipeline to ensure data volume remains within expected bounds and processing capacity.',
+      severity: 'Low',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'throughput', 'pipeline-health'],
+      requiredFields: ['timestamp', 'logGroup', 'id', 'message', 'owner'],
+      detectionLogic: 'Alert when total event throughput exceeds 150% of capacity planning baseline or drops below 50% of expected minimum. Track events per second and message size trends.',
+      operationalValue: 'Throughput monitoring ensures the pipeline can handle current load and provides early warning of capacity issues before data loss or processing delays occur.',
+      changeMgmtRelevance: 'Throughput changes follow new application onboarding, log verbosity changes, or infrastructure scaling that increases total log volume.',
+      troubleshootingWorkflow: '1. Determine if throughput change is a spike or sustained growth\n2. Identify which logGroup or owner contributes most to the change\n3. Check for new applications or services generating logs\n4. Verify pipeline processing capacity (Cribl Workers)\n5. Review queue depths and backpressure indicators\n6. Plan capacity expansion if sustained growth',
+      dashboardDependency: 'Pipeline Throughput dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Overall throughput trend',
+          description: 'Track total event volume over time for capacity planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h TotalEvents=count(), UniqueGroups=dcount(logGroup)'
+        },
+        {
+          name: 'Top volume contributors',
+          description: 'Identify log groups driving the most throughput',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Events=count(), AvgMsgSize=avg(strlen(message)) by logGroup, owner\n| extend EstimatedBytes=Events * AvgMsgSize\n| order by EstimatedBytes desc\n| limit 20'
+        },
+        {
+          name: 'Throughput by minute (last 2 hours)',
+          description: 'Fine-grained view of throughput for spike detection',
+          query: 'dataset="$DATASET" earliest=-2h\n| timestats span=1m EventsPerMin=count() by owner'
+        }
+      ]
+    }
+  ],
+  'aws-cloudwatch-metrics': [
+    {
+      id: 'cwm-obs-001',
+      name: 'Critical Metric Collection Gap',
+      objective: 'Detect when expected CloudWatch metrics stop being reported, indicating infrastructure monitoring failures or resource health issues.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'metric-collection', 'monitoring-health', 'gap-detection'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Dimensions', 'AccountId', 'Region'],
+      detectionLogic: 'Alert when a MetricName/Namespace combination that has reported consistently (every Period interval for 7+ days) shows no data points for 3+ consecutive expected intervals. Critical if multiple metrics from the same Namespace go silent.',
+      operationalValue: 'Metric gaps mean monitoring blind spots. If metrics stop flowing, threshold-based alarms and autoscaling policies stop working, potentially causing undetected outages.',
+      changeMgmtRelevance: 'Metric collection gaps often follow agent configuration changes, IAM permission modifications, or infrastructure decommissioning without updating monitoring.',
+      troubleshootingWorkflow: '1. Identify which Namespace and MetricName stopped reporting\n2. Check if the underlying resource still exists\n3. Verify CloudWatch agent health on the source\n4. Check IAM permissions for PutMetricData\n5. Verify custom metric publishing code is running\n6. Review recent infrastructure changes affecting the source',
+      dashboardDependency: 'Metric Collection Health dashboard, Infrastructure Monitoring Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Metric reporting frequency by namespace (last 24 hours)',
+          description: 'Track which namespaces are actively reporting metrics',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h UniqueMetrics=dcount(MetricName) by Namespace'
+        },
+        {
+          name: 'Metrics with no recent data points',
+          description: 'Find metrics that have stopped reporting',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(Timestamp), DataPoints=count() by Namespace, MetricName, Region\n| order by LastSeen asc\n| limit 30'
+        },
+        {
+          name: 'Namespace health summary',
+          description: 'Overview of metric reporting completeness per namespace',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize MetricCount=dcount(MetricName), DataPoints=count(), Regions=dcount(Region) by Namespace, AccountId\n| order by DataPoints asc'
+        },
+        {
+          name: 'Gap detection by time window',
+          description: 'Identify time periods with missing metric data',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by Namespace, MetricName\n| where count_ < 1\n| order by Timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-002',
+      name: 'CPU and Memory Utilization Threshold Breach',
+      objective: 'Detect when compute resources approach or exceed capacity limits, enabling proactive scaling before performance degradation affects end users.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'compute', 'resource-utilization'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Value', 'Dimensions', 'Unit', 'StatisticType'],
+      detectionLogic: 'Alert when CPUUtilization or MemoryUtilization metrics exceed 85% sustained for 10+ minutes, or when the trend shows consistent increase of >5% per hour indicating approaching capacity limits.',
+      operationalValue: 'Proactive capacity detection prevents performance degradation and outages. Catching resource saturation before 100% enables graceful scaling rather than emergency response.',
+      changeMgmtRelevance: 'Utilization increases after deployments may indicate resource-hungry code changes, memory leaks, or insufficient capacity planning for new features.',
+      troubleshootingWorkflow: '1. Identify which resource (Dimensions) is at high utilization\n2. Determine if the increase is sudden (spike) or gradual (growth)\n3. Check if auto-scaling policies exist and are responding\n4. Review recent deployments that may have increased resource needs\n5. Check for resource leaks (steadily climbing without recovery)\n6. Plan immediate scaling action if approaching critical levels',
+      dashboardDependency: 'Resource Utilization dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High CPU utilization instances (last 4 hours)',
+          description: 'Find resources with sustained high CPU usage',
+          query: 'dataset="$DATASET" MetricName=="CPUUtilization" earliest=-4h\n| where Value > 80\n| summarize AvgCPU=avg(Value), MaxCPU=max(Value), DataPoints=count() by Dimensions, Namespace\n| where AvgCPU > 85\n| order by AvgCPU desc'
+        },
+        {
+          name: 'Utilization trend over time',
+          description: 'Track CPU and memory trends to identify growing resource pressure',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName in ("CPUUtilization", "MemoryUtilization")\n| timestats span=15m AvgValue=avg(Value), MaxValue=max(Value) by MetricName, Dimensions'
+        },
+        {
+          name: 'Resources approaching capacity',
+          description: 'Identify resources trending toward saturation',
+          query: 'dataset="$DATASET" earliest=-2h\n| where MetricName in ("CPUUtilization", "MemoryUtilization") and Value > 70\n| summarize AvgUtil=avg(Value), MaxUtil=max(Value), Trend=max(Value) - min(Value) by Dimensions, MetricName, Namespace\n| where Trend > 10\n| order by AvgUtil desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-003',
+      name: 'Network Latency and Error Rate Degradation',
+      objective: 'Monitor network-related metrics (latency, packet loss, errors) to detect connectivity issues affecting application performance and availability.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'network', 'latency'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Value', 'Unit', 'Dimensions', 'Region'],
+      detectionLogic: 'Alert when latency metrics (Latency, TargetResponseTime, Duration) exceed 2x their 7-day P95 baseline, or when error metrics (HTTPCode_ELB_5XX, UnHealthyHostCount) increase beyond zero/baseline.',
+      operationalValue: 'Network performance degradation directly impacts user experience. Early detection of latency increases or error rates enables rapid remediation before SLA breach.',
+      changeMgmtRelevance: 'Latency increases after infrastructure changes indicate routing issues, security group modifications, or backend deployment problems.',
+      troubleshootingWorkflow: '1. Identify which Dimensions (load balancer, target group) are affected\n2. Determine if latency increase is from network or backend processing\n3. Check target health status (UnHealthyHostCount)\n4. Review security group and NACL changes\n5. Check cross-AZ traffic patterns\n6. Verify DNS resolution and routing configuration',
+      dashboardDependency: 'Network Performance dashboard, Load Balancer Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Latency metrics over time',
+          description: 'Track latency-related metrics to identify degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| where MetricName in ("Latency", "TargetResponseTime", "Duration", "IntegrationLatency")\n| timestats span=5m AvgLatency=avg(Value), P95Latency=percentile(Value, 95) by MetricName, Dimensions'
+        },
+        {
+          name: 'Error rate metrics (last 4 hours)',
+          description: 'Monitor HTTP error codes and unhealthy hosts',
+          query: 'dataset="$DATASET" earliest=-4h\n| where MetricName in ("HTTPCode_ELB_5XX", "HTTPCode_Target_5XX", "UnHealthyHostCount", "RequestCount")\n| timestats span=5m Total=sum(Value) by MetricName, Dimensions'
+        },
+        {
+          name: 'High latency resources',
+          description: 'Find resources with currently elevated latency',
+          query: 'dataset="$DATASET" earliest=-1h\n| where MetricName in ("Latency", "TargetResponseTime", "Duration") and Value > 1\n| summarize AvgLatency=avg(Value), MaxLatency=max(Value) by Dimensions, MetricName, Region\n| order by AvgLatency desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-004',
+      name: 'Storage Capacity Approaching Limits',
+      objective: 'Monitor disk, volume, and database storage utilization to prevent capacity-related outages by alerting before resources run out of space.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'storage', 'disk-space'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Value', 'Unit', 'Dimensions', 'AccountId'],
+      detectionLogic: 'Alert when storage metrics (FreeStorageSpace, VolumeRemainingSize, DiskSpaceUtilization) indicate less than 15% remaining capacity, or when consumption rate projects exhaustion within 7 days.',
+      operationalValue: 'Storage exhaustion causes immediate service failure (database crashes, application errors). Predictive alerting enables capacity additions before impact.',
+      changeMgmtRelevance: 'Rapid storage consumption after deployments indicates logging verbosity changes, data retention issues, or unintended data growth from new features.',
+      troubleshootingWorkflow: '1. Identify which resource and volume is approaching capacity\n2. Determine the growth rate (sudden vs gradual)\n3. Check for unexpected data growth (log explosion, temp files)\n4. Review data retention and cleanup policies\n5. Plan capacity expansion (resize volume, add storage)\n6. Implement immediate mitigation if exhaustion is imminent',
+      dashboardDependency: 'Storage Capacity dashboard, Capacity Forecasting dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Storage utilization by resource',
+          description: 'Current storage consumption across all monitored resources',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName in ("FreeStorageSpace", "VolumeRemainingSize", "DiskSpaceUtilization", "FreeableMemory")\n| summarize LatestValue=avg(Value), MinValue=min(Value) by Dimensions, MetricName, Namespace\n| order by MinValue asc'
+        },
+        {
+          name: 'Storage trend (last 7 days)',
+          description: 'Track storage consumption rate for capacity forecasting',
+          query: 'dataset="$DATASET" earliest=-7d\n| where MetricName in ("FreeStorageSpace", "VolumeRemainingSize", "DiskSpaceUtilization")\n| timestats span=6h AvgValue=avg(Value), MinValue=min(Value) by Dimensions, MetricName'
+        },
+        {
+          name: 'Resources with critical storage levels',
+          description: 'Find resources approaching exhaustion',
+          query: 'dataset="$DATASET" earliest=-1h\n| where MetricName in ("FreeStorageSpace", "VolumeRemainingSize") and Value < 5000000000\n| summarize CurrentFree=avg(Value) by Dimensions, MetricName, Namespace, AccountId\n| order by CurrentFree asc'
+        },
+        {
+          name: 'Storage consumption rate calculation',
+          description: 'Calculate daily consumption rate for forecasting',
+          query: 'dataset="$DATASET" earliest=-7d\n| where MetricName in ("FreeStorageSpace", "VolumeRemainingSize")\n| summarize EarliestValue=max(Value), LatestValue=min(Value), DataPoints=count() by Dimensions, MetricName\n| extend DailyConsumption=round((EarliestValue - LatestValue) / 7, 0)\n| where DailyConsumption > 0\n| order by DailyConsumption desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-005',
+      name: 'Auto-Scaling Activity and Effectiveness',
+      objective: 'Monitor auto-scaling metrics to ensure scaling policies are responding appropriately to demand changes and not oscillating or failing.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'auto-scaling', 'elasticity', 'cost-efficiency'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Value', 'Dimensions', 'Period', 'StatisticType'],
+      detectionLogic: 'Alert when scaling metrics (GroupDesiredCapacity, GroupInServiceInstances, GroupPendingInstances) show rapid oscillation (3+ scale-up/down cycles in 1 hour), or when GroupPendingInstances remains >0 for more than 10 minutes indicating scaling failures.',
+      operationalValue: 'Scaling oscillation wastes resources and indicates poorly tuned policies. Failed scaling leaves applications under-provisioned during demand spikes.',
+      changeMgmtRelevance: 'Scaling issues often follow changes to scaling policies, cooldown periods, instance types, or AMI configurations that affect launch success.',
+      troubleshootingWorkflow: '1. Check scaling activity history and trigger metrics\n2. Determine if scaling is oscillating (thrashing)\n3. Review cooldown periods and scaling step sizes\n4. Check for launch failures (instance type availability, AMI issues)\n5. Verify target tracking metrics are accurate\n6. Review recent scaling policy or launch configuration changes',
+      dashboardDependency: 'Auto-Scaling Health dashboard, Cost Optimization dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Scaling group capacity over time',
+          description: 'Track desired vs actual capacity to spot scaling lag',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName in ("GroupDesiredCapacity", "GroupInServiceInstances", "GroupPendingInstances", "GroupTerminatingInstances")\n| timestats span=5m AvgValue=avg(Value) by MetricName, Dimensions'
+        },
+        {
+          name: 'Scaling activity frequency',
+          description: 'Detect oscillation by tracking capacity changes',
+          query: 'dataset="$DATASET" earliest=-12h\n| where MetricName == "GroupDesiredCapacity"\n| timestats span=15m DesiredCapacity=avg(Value) by Dimensions\n| order by Timestamp desc'
+        },
+        {
+          name: 'Pending instances (scaling failures)',
+          description: 'Find instances stuck in pending state indicating launch failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where MetricName == "GroupPendingInstances" and Value > 0\n| summarize MaxPending=max(Value), AvgPending=avg(Value), Duration=count() by Dimensions\n| where Duration > 5\n| order by MaxPending desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-006',
+      name: 'Cross-Region Metric Disparity',
+      objective: 'Detect when the same service behaves significantly differently across regions, indicating regional issues, configuration drift, or uneven load distribution.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'multi-region', 'consistency', 'drift-detection'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Value', 'Region', 'Dimensions', 'AccountId'],
+      detectionLogic: 'Alert when the same MetricName/Namespace combination shows >50% variance between regions that should be balanced, or when one region deviates significantly from the cross-region average.',
+      operationalValue: 'Regional disparity indicates configuration drift, routing issues, or regional service degradation that may affect failover readiness and user experience.',
+      changeMgmtRelevance: 'Regional disparities often emerge after deployments that only update one region, or infrastructure changes that affect regional traffic distribution.',
+      troubleshootingWorkflow: '1. Identify which metric and regions show disparity\n2. Determine if the issue is higher-than-expected or lower-than-expected\n3. Check DNS routing weights and health checks\n4. Verify deployments are consistent across regions\n5. Review auto-scaling configuration per region\n6. Check for regional AWS service issues',
+      dashboardDependency: 'Multi-Region Comparison dashboard, Regional Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Metric values by region',
+          description: 'Compare the same metric across all active regions',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgValue=avg(Value), MaxValue=max(Value), DataPoints=count() by MetricName, Namespace, Region\n| order by MetricName asc, Region asc'
+        },
+        {
+          name: 'Regional divergence over time',
+          description: 'Track when regions started deviating from each other',
+          query: 'dataset="$DATASET" earliest=-24h\n| where MetricName in ("CPUUtilization", "RequestCount", "Latency")\n| timestats span=1h AvgValue=avg(Value) by Region, MetricName'
+        },
+        {
+          name: 'Region-to-region variance',
+          description: 'Calculate variance between regions for key metrics',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize AvgValue=avg(Value) by MetricName, Namespace, Region, AccountId\n| order by MetricName asc, AvgValue desc'
+        }
+      ]
+    },
+    {
+      id: 'cwm-obs-007',
+      name: 'CloudWatch Metrics Pipeline Health',
+      objective: 'Monitor the health of CloudWatch metrics ingestion into the analytics pipeline to ensure metric data is complete, timely, and properly formatted.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline-health', 'completeness'],
+      requiredFields: ['Timestamp', 'Namespace', 'MetricName', 'Period', 'AccountId', 'Region'],
+      detectionLogic: 'Alert when total metric data point volume drops below 30% of the 7-day hourly baseline, or when expected Namespace/Region combinations stop appearing for 2+ consecutive collection periods.',
+      operationalValue: 'Metric pipeline health is the foundation of all metric-based alerting and dashboards. Gaps in metric collection mean silent failures in downstream monitoring.',
+      changeMgmtRelevance: 'Pipeline disruptions often follow Cribl route changes, CloudWatch API credential rotations, or metric stream configuration modifications.',
+      troubleshootingWorkflow: '1. Verify overall data point ingestion rate\n2. Check which Namespace or Region is affected\n3. Verify CloudWatch API connectivity and credentials\n4. Check Cribl source configuration for metric inputs\n5. Review metric stream or API polling configuration\n6. Verify IAM permissions for GetMetricData/ListMetrics',
+      dashboardDependency: 'Metric Pipeline Health dashboard, Data Completeness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Data point volume over time',
+          description: 'Track overall metric ingestion rate',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h DataPoints=count(), UniqueMetrics=dcount(MetricName), UniqueNamespaces=dcount(Namespace)'
+        },
+        {
+          name: 'Namespace coverage check',
+          description: 'Verify all expected namespaces are reporting metrics',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize LastSeen=max(Timestamp), DataPoints=count(), Metrics=dcount(MetricName) by Namespace, Region, AccountId\n| order by LastSeen asc'
+        },
+        {
+          name: 'Collection period consistency',
+          description: 'Verify metrics are arriving at expected intervals',
+          query: 'dataset="$DATASET" earliest=-6h\n| summarize DataPoints=count() by Period, Namespace\n| order by Namespace asc, Period asc'
+        },
+        {
+          name: 'Metric completeness by account',
+          description: 'Ensure all accounts are delivering metric data',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=1h count() by AccountId, Region\n| order by count_ asc'
+        }
+      ]
+    }
+  ],
+
+  'squid-proxy': [
+    {
+      id: 'sqd-obs-001',
+      name: 'Proxy Service Availability Drop',
+      objective: 'Detect when the Squid proxy stops processing requests or log volume drops significantly, indicating service failure or upstream connectivity loss.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'proxy', 'service-health'],
+      requiredFields: ['timestamp', 'client_ip', 'result_code', 'request_method', 'url'],
+      detectionLogic: 'Alert when total request volume drops below 20% of the rolling 7-day baseline for the same time-of-day window. Evaluate on 5-minute intervals. Also alert if no events are received for 3 consecutive minutes from a previously active proxy.',
+      operationalValue: 'Proxy availability directly impacts all users relying on web access. A silent proxy failure means users cannot reach external resources and helpdesk tickets spike.',
+      changeMgmtRelevance: 'Proxy outages often follow configuration changes, ACL updates, or upstream network changes. Correlate with change windows for rapid root cause identification.',
+      troubleshootingWorkflow: '1. Confirm log ingestion is functioning (check Cribl source metrics)\n2. Verify Squid service status on the proxy host\n3. Check if upstream DNS or default gateway is reachable\n4. Review recent configuration changes to squid.conf\n5. Check disk space — Squid stops if cache disk is full\n6. Verify no network ACL changes blocking proxy traffic',
+      dashboardDependency: 'Proxy Service Health dashboard, Log Ingestion Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request volume over time',
+          description: 'Track total proxy requests to identify drops in service activity',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by request_method'
+        },
+        {
+          name: 'Unique clients per interval',
+          description: 'Monitor active client count to detect service disruption scope',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=10m dcount(client_ip) as UniqueClients'
+        },
+        {
+          name: 'Last event timestamp check',
+          description: 'Identify if log flow has stopped entirely',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(timestamp), TotalRequests=count()\n| extend MinutesSinceLastEvent=datetime_diff("minute", now(), todatetime(LastSeen))'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-002',
+      name: 'Elevated HTTP Error Rate',
+      objective: 'Detect when HTTP error responses (4xx/5xx) exceed normal thresholds, indicating upstream service failures or misconfigurations.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'http', 'upstream'],
+      requiredFields: ['timestamp', 'result_code', 'url', 'client_ip', 'request_method'],
+      detectionLogic: 'Alert when the percentage of 5xx responses exceeds 10% of total requests over a 10-minute window, or when 4xx responses exceed 30%. Use separate thresholds for client errors vs server errors. Compare against 24-hour baseline.',
+      operationalValue: 'High error rates indicate upstream service degradation, DNS failures, or proxy misconfiguration affecting user productivity. Early detection enables proactive communication.',
+      changeMgmtRelevance: 'Error rate spikes after ACL or upstream changes indicate misconfiguration. Use timing correlation to identify which change introduced the regression.',
+      troubleshootingWorkflow: '1. Identify which result_codes are elevated (502, 503, 504 vs 403, 407)\n2. Determine if errors are concentrated on specific URLs or domains\n3. For 5xx: check upstream server health and DNS resolution\n4. For 407: check authentication backend connectivity\n5. For 403: review recent ACL changes\n6. Check if specific client_ips are disproportionately affected',
+      dashboardDependency: 'HTTP Error Rate dashboard, Upstream Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by result code over time',
+          description: 'Track HTTP error codes to identify spikes and patterns',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend error_class=iif(toint(result_code) >= 500, "5xx", iif(toint(result_code) >= 400, "4xx", "OK"))\n| timestats span=10m count() by error_class'
+        },
+        {
+          name: 'Top URLs generating errors',
+          description: 'Find which destinations are producing the most errors',
+          query: 'dataset="$DATASET" earliest=-2h\n| where toint(result_code) >= 400\n| summarize ErrorCount=count() by url, result_code\n| order by ErrorCount desc\n| limit 30'
+        },
+        {
+          name: 'Error rate percentage by client',
+          description: 'Identify clients experiencing disproportionate errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Errors=countif(toint(result_code) >= 400) by client_ip\n| extend ErrorPct=round(Errors * 100.0 / Total, 1)\n| where Total > 20 and ErrorPct > 25\n| order by ErrorPct desc'
+        },
+        {
+          name: 'Server error breakdown (5xx detail)',
+          description: 'Detailed view of upstream failures by code and destination',
+          query: 'dataset="$DATASET" earliest=-4h\n| where toint(result_code) >= 500\n| summarize Count=count() by result_code, url, request_method\n| order by Count desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-003',
+      name: 'Proxy Response Latency Degradation',
+      objective: 'Detect when proxy response times increase significantly, indicating upstream performance issues, DNS delays, or proxy resource exhaustion.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'proxy'],
+      requiredFields: ['timestamp', 'elapsed', 'url', 'client_ip', 'result_code', 'hierarchy_code'],
+      detectionLogic: 'Alert when average elapsed time exceeds 5000ms over a 10-minute window or P95 exceeds 15000ms. Compare against 7-day rolling baseline. Separate cache-hit latency from cache-miss latency using hierarchy_code.',
+      operationalValue: 'Latency degradation impacts every user behind the proxy. Early detection enables proactive mitigation before user complaints escalate.',
+      changeMgmtRelevance: 'Latency spikes after proxy configuration changes (cache settings, ACLs, peer configurations) indicate misconfiguration requiring tuning or rollback.',
+      troubleshootingWorkflow: '1. Determine scope — all URLs or specific domains?\n2. Check hierarchy_code — are requests going DIRECT vs through parent proxy?\n3. Check DNS resolution times on the proxy host\n4. Review proxy resource utilization (CPU, memory, file descriptors)\n5. Check if cache hit ratio dropped (more origin fetches = higher latency)\n6. Verify upstream connectivity and bandwidth',
+      dashboardDependency: 'Proxy Latency dashboard, Cache Performance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average and P95 latency over time',
+          description: 'Track proxy response times to detect degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m avg(elapsed) as AvgLatency, percentile(elapsed, 95) as P95Latency'
+        },
+        {
+          name: 'Latency by hierarchy code (cache vs direct)',
+          description: 'Compare latency for cached vs non-cached requests',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgElapsed=avg(elapsed), MaxElapsed=max(elapsed), Requests=count() by hierarchy_code\n| order by AvgElapsed desc'
+        },
+        {
+          name: 'Slowest URLs in the last hour',
+          description: 'Identify specific destinations causing latency issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgElapsed=avg(elapsed), MaxElapsed=max(elapsed), Requests=count() by url\n| where Requests > 5\n| order by AvgElapsed desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-004',
+      name: 'Cache Hit Ratio Decline',
+      objective: 'Detect when the proxy cache effectiveness drops, indicating cache invalidation issues, configuration changes, or shifts in traffic patterns.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'cache', 'efficiency'],
+      requiredFields: ['timestamp', 'result_code', 'hierarchy_code', 'bytes', 'url', 'content_type'],
+      detectionLogic: 'Alert when cache hit ratio drops below 30% over a 30-minute window (baseline typically 50-70%). Evaluate by comparing DIRECT/ORIGINAL_DST hierarchy codes against total requests. Also alert on sudden shifts in hierarchy_code distribution.',
+      operationalValue: 'Cache ratio decline means more origin traffic, higher bandwidth costs, and increased latency for users. Detecting this early prevents bandwidth saturation and cost overruns.',
+      changeMgmtRelevance: 'Cache ratio drops after cache configuration changes, TTL adjustments, or cache purge operations. Expected during maintenance windows but unexpected otherwise.',
+      troubleshootingWorkflow: '1. Compare current hierarchy_code distribution against baseline\n2. Check if new uncacheable content types appeared\n3. Review cache_peer and cache_dir configurations for changes\n4. Check disk space on cache volumes\n5. Verify cache_mem and maximum_object_size settings\n6. Determine if traffic pattern shifted (new URLs not in cache)',
+      dashboardDependency: 'Cache Efficiency dashboard, Bandwidth Utilization dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Cache hit ratio over time',
+          description: 'Track cache effectiveness to detect drops in efficiency',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend is_cache_hit=iif(hierarchy_code has "HIT" or hierarchy_code has "MEM", 1, 0)\n| timestats span=30m Total=count(), CacheHits=sum(is_cache_hit)\n| extend HitRatio=round(CacheHits * 100.0 / Total, 1)'
+        },
+        {
+          name: 'Hierarchy code distribution',
+          description: 'See how requests are being served — cache vs origin',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count(), TotalBytes=sum(bytes) by hierarchy_code\n| order by Requests desc'
+        },
+        {
+          name: 'Top bandwidth-consuming cache misses',
+          description: 'Find which URLs are generating the most origin traffic',
+          query: 'dataset="$DATASET" earliest=-2h\n| where hierarchy_code has "DIRECT" or hierarchy_code has "ORIGINAL"\n| summarize Requests=count(), Bytes=sum(bytes) by url, content_type\n| order by Bytes desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-005',
+      name: 'Bandwidth Consumption Spike',
+      objective: 'Detect abnormal increases in proxy bandwidth usage that may indicate abuse, large downloads, or capacity risks.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'bandwidth', 'resource-management'],
+      requiredFields: ['timestamp', 'bytes', 'client_ip', 'url', 'content_type', 'user'],
+      detectionLogic: 'Alert when total bytes transferred exceeds 200% of the rolling 7-day baseline for the same time window. Also alert when a single client_ip or user consumes more than 20% of total bandwidth in a 15-minute window.',
+      operationalValue: 'Bandwidth spikes can saturate upstream links, degrade performance for all users, and generate unexpected costs. Early detection enables rate limiting or traffic management.',
+      changeMgmtRelevance: 'Bandwidth increases after allowing new content types, removing URL restrictions, or enabling new user groups require capacity planning adjustments.',
+      troubleshootingWorkflow: '1. Identify top consumers by client_ip and user\n2. Determine what content_types are driving the bandwidth\n3. Check if specific URLs are being bulk-downloaded\n4. Verify if this correlates with a new policy allowing previously blocked content\n5. Check if upstream link utilization is approaching capacity\n6. Consider rate limiting or traffic shaping for top consumers',
+      dashboardDependency: 'Bandwidth Utilization dashboard, Top Consumers dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Bandwidth by client over time',
+          description: 'Track bandwidth consumption per client to find heavy users',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m sum(bytes) as TotalBytes by client_ip'
+        },
+        {
+          name: 'Top bandwidth consumers (last hour)',
+          description: 'Identify users and clients consuming the most bandwidth',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize TotalBytes=sum(bytes), Requests=count() by user, client_ip\n| extend MB=round(TotalBytes / 1048576.0, 2)\n| order by TotalBytes desc\n| limit 20'
+        },
+        {
+          name: 'Bandwidth by content type',
+          description: 'Determine what types of content are driving bandwidth consumption',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize TotalBytes=sum(bytes), Requests=count() by content_type\n| extend MB=round(TotalBytes / 1048576.0, 2)\n| order by TotalBytes desc'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-006',
+      name: 'Client Connection Concentration',
+      objective: 'Detect when a disproportionate number of requests originate from a single client, indicating potential misconfiguration, automation, or abuse.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'client-behavior', 'anomaly'],
+      requiredFields: ['timestamp', 'client_ip', 'request_method', 'url', 'user', 'bytes'],
+      detectionLogic: 'Alert when any single client_ip generates more than 5x the average request volume across all clients in a 15-minute window. Also flag when fewer than 3 unique clients are generating 80% of total traffic.',
+      operationalValue: 'Connection concentration can indicate broken applications hammering the proxy, credential stuffing, or misconfigured automation. Identifying outliers protects shared infrastructure.',
+      changeMgmtRelevance: 'New application deployments or automation scripts may generate unexpected proxy load. Correlate concentration changes with deployment schedules.',
+      troubleshootingWorkflow: '1. Identify the concentrated client_ip and associated user\n2. Determine the URL pattern — is it the same URL repeatedly?\n3. Check request_method — GET flood vs POST abuse\n4. Verify if this is a known automation or monitoring system\n5. Check if the client is generating errors (broken retry loops)\n6. Contact application owner or apply rate limiting if abusive',
+      dashboardDependency: 'Client Activity dashboard, Anomaly Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request count by client (top talkers)',
+          description: 'Find clients generating disproportionate request volumes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), UniqueURLs=dcount(url), TotalBytes=sum(bytes) by client_ip, user\n| order by Requests desc\n| limit 20'
+        },
+        {
+          name: 'Client concentration ratio',
+          description: 'Calculate what percentage of traffic comes from top clients',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count() by client_ip\n| order by Requests desc\n| limit 10'
+        },
+        {
+          name: 'Request patterns for a specific heavy client',
+          description: 'Drill into a specific client to understand their request behavior',
+          query: 'dataset="$DATASET" client_ip="$CLIENT_IP" earliest=-2h\n| summarize Requests=count(), Bytes=sum(bytes) by url, request_method, result_code\n| order by Requests desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'sqd-obs-007',
+      name: 'Request Method Distribution Shift',
+      objective: 'Detect unexpected changes in HTTP method distribution that may indicate application behavior changes, attacks, or misconfigurations.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'http-methods', 'behavioral'],
+      requiredFields: ['timestamp', 'request_method', 'url', 'client_ip', 'result_code', 'bytes'],
+      detectionLogic: 'Alert when the proportion of CONNECT, POST, or PUT requests changes by more than 50% compared to the 7-day baseline. Also alert on any appearance of unusual methods (DELETE, PATCH, OPTIONS) at volume exceeding 1% of total traffic.',
+      operationalValue: 'Method distribution shifts indicate changes in application behavior, new services being deployed, or potential abuse. CONNECT spikes may indicate tunneling or VPN bypass attempts.',
+      changeMgmtRelevance: 'New application deployments often change method distribution (e.g., new API services increase POST volume). Expected shifts should be documented in change records.',
+      troubleshootingWorkflow: '1. Identify which method(s) shifted and the magnitude\n2. Correlate with source clients — is the shift from known apps?\n3. For CONNECT increases: check destination ports and URLs\n4. For POST increases: identify which URLs are receiving posts\n5. Verify application deployment schedule for expected changes\n6. Check if method shifts correlate with error rate changes',
+      dashboardDependency: 'Traffic Analysis dashboard, Method Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request method distribution over time',
+          description: 'Track method proportions to identify shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by request_method'
+        },
+        {
+          name: 'Current method breakdown with byte volume',
+          description: 'Snapshot of method distribution with associated bandwidth',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count(), TotalBytes=sum(bytes), UniqueClients=dcount(client_ip) by request_method\n| order by Requests desc'
+        },
+        {
+          name: 'CONNECT method destinations',
+          description: 'Audit CONNECT requests to identify tunnel destinations',
+          query: 'dataset="$DATASET" request_method="CONNECT" earliest=-4h\n| summarize Requests=count(), UniqueClients=dcount(client_ip) by url\n| order by Requests desc\n| limit 30'
+        },
+        {
+          name: 'Unusual methods detail',
+          description: 'Identify sources of uncommon HTTP methods',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_method !in ("GET", "POST", "CONNECT")\n| summarize Requests=count() by request_method, client_ip, url\n| order by Requests desc'
+        }
+      ]
+    }
+  ],
+  'aws-waf-logs': [
+    {
+      id: 'aww-obs-001',
+      name: 'WAF Rule Group Processing Failure',
+      objective: 'Detect when WAF rule groups stop evaluating traffic or log volume drops unexpectedly, indicating service disruption or misconfiguration.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'waf', 'rule-processing'],
+      requiredFields: ['timestamp', 'action', 'ruleGroupList', 'webaclId', 'httpRequest_clientIp'],
+      detectionLogic: 'Alert when total WAF evaluation events drop below 30% of the rolling 7-day baseline for the same time-of-day window. Also alert when a previously active webaclId stops producing logs for more than 5 minutes.',
+      operationalValue: 'WAF processing failures leave applications unprotected and can indicate ACL detachment, service issues, or logging failures. Immediate attention required to restore protection.',
+      changeMgmtRelevance: 'WAF rule group changes, ACL reassignments, or CloudFormation updates can inadvertently disable protection. Correlate with deployment windows.',
+      troubleshootingWorkflow: '1. Check if the WebACL is still attached to the resource (ALB/CloudFront)\n2. Verify WAF logging configuration is active\n3. Check CloudWatch WAF metrics for the WebACL\n4. Review recent CloudFormation/Terraform changes\n5. Verify the Kinesis Firehose delivery stream is healthy\n6. Check if traffic is reaching the protected resource at all',
+      dashboardDependency: 'WAF Health dashboard, Log Ingestion Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'WAF evaluation volume by WebACL over time',
+          description: 'Track request processing per WebACL to detect drops',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by webaclId'
+        },
+        {
+          name: 'Last seen event per WebACL',
+          description: 'Identify WebACLs that may have stopped processing',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(timestamp), Events=count() by webaclId\n| order by LastSeen asc'
+        },
+        {
+          name: 'Rule group evaluation activity',
+          description: 'Verify rule groups are actively evaluating traffic',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Evaluations=count() by ruleGroupList, webaclId\n| order by Evaluations desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-002',
+      name: 'Elevated WAF Block Rate',
+      objective: 'Detect when the proportion of blocked requests exceeds normal thresholds, indicating either an attack or an overly aggressive rule deployment.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'waf', 'blocking'],
+      requiredFields: ['timestamp', 'action', 'terminatingRuleId', 'httpRequest_clientIp', 'httpRequest_uri', 'webaclId'],
+      detectionLogic: 'Alert when BLOCK actions exceed 25% of total requests over a 10-minute window, or when block rate increases by more than 200% compared to the 24-hour baseline. Differentiate between distributed blocking (many sources) and concentrated blocking (few sources).',
+      operationalValue: 'High block rates can indicate legitimate traffic being incorrectly blocked (false positives from new rules) or active attacks requiring additional mitigation. Both scenarios require investigation.',
+      changeMgmtRelevance: 'Block rate spikes after rule deployments often indicate overly broad rules blocking legitimate traffic. Critical for post-deployment validation.',
+      troubleshootingWorkflow: '1. Determine if block rate increase is distributed or from specific IPs\n2. Identify which terminatingRuleId is generating the most blocks\n3. Check if the rule was recently deployed or modified\n4. Sample blocked requests to determine if they are legitimate traffic\n5. If false positive: add exceptions or roll back the rule\n6. If attack: verify rate limiting and consider IP blocklist updates',
+      dashboardDependency: 'WAF Action Summary dashboard, Rule Effectiveness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Block rate over time',
+          description: 'Track the proportion of blocked vs allowed requests',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m count() by action'
+        },
+        {
+          name: 'Top blocking rules',
+          description: 'Identify which rules are generating the most blocks',
+          query: 'dataset="$DATASET" action="BLOCK" earliest=-4h\n| summarize BlockCount=count(), UniqueIPs=dcount(httpRequest_clientIp) by terminatingRuleId\n| order by BlockCount desc'
+        },
+        {
+          name: 'Blocked request URI patterns',
+          description: 'Understand what legitimate or malicious patterns are being blocked',
+          query: 'dataset="$DATASET" action="BLOCK" earliest=-2h\n| summarize Count=count() by httpRequest_uri, terminatingRuleId\n| order by Count desc\n| limit 30'
+        },
+        {
+          name: 'Block concentration by source IP',
+          description: 'Determine if blocks are concentrated on few IPs or distributed',
+          query: 'dataset="$DATASET" action="BLOCK" earliest=-1h\n| summarize Blocks=count(), UniqueURIs=dcount(httpRequest_uri) by httpRequest_clientIp\n| order by Blocks desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-003',
+      name: 'Geographic Traffic Distribution Shift',
+      objective: 'Detect unexpected changes in geographic origin of traffic that may indicate routing changes, CDN issues, or new traffic sources requiring capacity planning.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'geographic', 'traffic-patterns'],
+      requiredFields: ['timestamp', 'httpRequest_country', 'httpRequest_clientIp', 'action', 'httpRequest_uri', 'webaclId'],
+      detectionLogic: 'Alert when a country previously representing less than 1% of traffic suddenly appears in the top 5, or when a country normally in the top 5 drops by more than 50%. Evaluate on 1-hour windows compared to 7-day baseline.',
+      operationalValue: 'Geographic shifts indicate routing changes, CDN failovers, new market launches, or potential geo-targeted attacks. Understanding traffic origin is critical for capacity planning and latency optimization.',
+      changeMgmtRelevance: 'Geographic changes after DNS or CDN configuration updates confirm expected routing behavior. Unexpected shifts indicate misconfiguration.',
+      troubleshootingWorkflow: '1. Identify which countries show significant volume changes\n2. Check if CloudFront or ALB routing rules were modified\n3. Verify DNS changes that might redirect traffic\n4. Determine if new countries are generating legitimate traffic\n5. Check if geo-blocking rules were modified\n6. Review if capacity in affected regions is sufficient',
+      dashboardDependency: 'Geographic Traffic dashboard, Traffic Origin Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic by country over time',
+          description: 'Track geographic distribution to identify shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by httpRequest_country'
+        },
+        {
+          name: 'Current country distribution with action breakdown',
+          description: 'See which countries are generating traffic and how its being handled',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count(), Blocked=countif(action == "BLOCK") by httpRequest_country\n| extend BlockRate=round(Blocked * 100.0 / Requests, 1)\n| order by Requests desc\n| limit 20'
+        },
+        {
+          name: 'New countries appearing in traffic',
+          description: 'Identify countries that recently started sending traffic',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize RecentRequests=count(), UniqueIPs=dcount(httpRequest_clientIp) by httpRequest_country\n| order by RecentRequests desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-004',
+      name: 'WAF Request Volume Spike',
+      objective: 'Detect sudden increases in overall request volume that may require auto-scaling, indicate traffic storms, or signal DDoS activity.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'volume', 'scaling'],
+      requiredFields: ['timestamp', 'httpRequest_clientIp', 'httpRequest_uri', 'httpRequest_httpMethod', 'action', 'webaclId'],
+      detectionLogic: 'Alert when request volume exceeds 300% of the rolling 7-day baseline for the same time window in a 5-minute evaluation period. Separately track allowed vs blocked to differentiate organic growth from attacks.',
+      operationalValue: 'Volume spikes stress backend infrastructure. Early detection enables proactive scaling decisions and cost management before performance degrades or services fail.',
+      changeMgmtRelevance: 'Traffic spikes after marketing launches, feature releases, or partner integrations may be expected. Correlate with business calendar events.',
+      troubleshootingWorkflow: '1. Determine if the spike is organic (ALLOW) or attack (BLOCK)\n2. Check if auto-scaling has triggered for backend services\n3. Identify top contributing IPs and request patterns\n4. For organic: verify backend capacity and scale if needed\n5. For attacks: enable rate limiting or activate shield advanced\n6. Monitor error rates on the backend for cascade failures',
+      dashboardDependency: 'Request Volume dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Total request volume over time',
+          description: 'Track overall request throughput to detect volume anomalies',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() as TotalRequests'
+        },
+        {
+          name: 'Request volume by action (allow vs block)',
+          description: 'Separate legitimate traffic growth from attack traffic',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by action'
+        },
+        {
+          name: 'Top request sources during spike',
+          description: 'Identify which clients are driving the volume increase',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), UniqueURIs=dcount(httpRequest_uri) by httpRequest_clientIp, httpRequest_country\n| order by Requests desc\n| limit 20'
+        },
+        {
+          name: 'URI pattern analysis during spike',
+          description: 'Determine if volume is distributed or targeting specific endpoints',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), UniqueIPs=dcount(httpRequest_clientIp) by httpRequest_uri, httpRequest_httpMethod\n| order by Requests desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-005',
+      name: 'Terminating Rule Effectiveness Change',
+      objective: 'Monitor changes in which rules are terminating requests to detect rule ordering issues, shadowed rules, or ineffective protections.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'rule-management', 'effectiveness'],
+      requiredFields: ['timestamp', 'terminatingRuleId', 'action', 'ruleGroupList', 'webaclId', 'httpRequest_uri'],
+      detectionLogic: 'Alert when a rule that previously terminated >100 requests/hour drops to zero terminations, or when a new terminatingRuleId appears that was not active in the prior 7 days. Track rule coverage gaps.',
+      operationalValue: 'Rule effectiveness monitoring ensures WAF protections remain active and properly ordered. Silent rules may indicate they are shadowed by higher-priority rules or that the threat pattern changed.',
+      changeMgmtRelevance: 'Rule ordering changes can inadvertently shadow protective rules. Post-deployment validation should confirm all expected rules remain active.',
+      troubleshootingWorkflow: '1. Identify rules that stopped terminating requests\n2. Check if a higher-priority rule is now matching the same traffic\n3. Verify rule group ordering in the WebACL\n4. Check if the rule condition still matches current traffic patterns\n5. Review if the threat the rule protects against has shifted\n6. Validate that rule exclusions were not accidentally broadened',
+      dashboardDependency: 'Rule Effectiveness dashboard, WAF Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Terminating rule activity over time',
+          description: 'Track which rules are actively terminating requests',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "BLOCK"\n| timestats span=1h count() by terminatingRuleId'
+        },
+        {
+          name: 'Active vs inactive rules comparison',
+          description: 'Find rules that have stopped matching traffic',
+          query: 'dataset="$DATASET" earliest=-1h\n| where action == "BLOCK"\n| summarize Terminations=count(), UniqueIPs=dcount(httpRequest_clientIp) by terminatingRuleId, webaclId\n| order by Terminations desc'
+        },
+        {
+          name: 'Rule termination frequency ranking',
+          description: 'Rank rules by their termination volume to identify priority rules',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action == "BLOCK"\n| summarize Total=count() by terminatingRuleId\n| order by Total desc'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-006',
+      name: 'Request Method Anomaly',
+      objective: 'Detect unusual HTTP method patterns that may indicate API abuse, misconfigured clients, or application-level attacks.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'http-methods', 'api-behavior'],
+      requiredFields: ['timestamp', 'httpRequest_httpMethod', 'httpRequest_uri', 'httpRequest_clientIp', 'action', 'httpRequest_country'],
+      detectionLogic: 'Alert when HTTP methods other than GET and POST exceed 15% of total requests, or when DELETE/PUT/PATCH methods appear at more than 200% of their baseline volume. Evaluate over 15-minute windows.',
+      operationalValue: 'Method distribution changes indicate shifts in API usage patterns, potential abuse of write endpoints, or misconfigured automation. Critical for API-heavy applications.',
+      changeMgmtRelevance: 'API deployments that add new endpoints often change method distribution. Expected changes should be documented; unexpected ones warrant investigation.',
+      troubleshootingWorkflow: '1. Identify which methods showed unusual volume\n2. Correlate with specific URIs — which endpoints are targeted?\n3. Determine if the traffic sources are known clients\n4. Check if new API integrations or deployments occurred\n5. Verify rate limiting is applied to write methods\n6. Review if the methods are generating successful responses or errors',
+      dashboardDependency: 'API Traffic Analysis dashboard, Method Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'HTTP method distribution over time',
+          description: 'Track method proportions to identify pattern changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by httpRequest_httpMethod'
+        },
+        {
+          name: 'Non-standard method sources',
+          description: 'Identify who is sending unusual HTTP methods',
+          query: 'dataset="$DATASET" earliest=-4h\n| where httpRequest_httpMethod !in ("GET", "POST")\n| summarize Requests=count() by httpRequest_httpMethod, httpRequest_clientIp, httpRequest_uri\n| order by Requests desc\n| limit 30'
+        },
+        {
+          name: 'Method breakdown by URI',
+          description: 'Understand which endpoints receive which methods',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count() by httpRequest_httpMethod, httpRequest_uri\n| order by Requests desc\n| limit 40'
+        }
+      ]
+    },
+    {
+      id: 'aww-obs-007',
+      name: 'WAF Log Ingestion Latency',
+      objective: 'Detect delays in WAF log delivery that may indicate Kinesis Firehose issues, logging pipeline problems, or WAF service degradation.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'latency'],
+      requiredFields: ['timestamp', 'webaclId', 'httpRequest_clientIp', 'action', 'httpSourceId'],
+      detectionLogic: 'Alert when the gap between event timestamp and ingestion time exceeds 5 minutes, or when events arrive out of order with more than 10-minute skew. Monitor per httpSourceId to isolate delivery stream issues.',
+      operationalValue: 'Log latency degrades real-time detection capabilities and dashboards. If WAF logs arrive late, security alerts fire late and operational visibility is compromised.',
+      changeMgmtRelevance: 'Log delivery changes after Kinesis Firehose configuration updates, S3 bucket policy changes, or WAF logging reconfiguration.',
+      troubleshootingWorkflow: '1. Check Kinesis Firehose delivery stream metrics\n2. Verify WAF logging configuration is active\n3. Check for S3 delivery errors or throttling\n4. Review CloudWatch metrics for the delivery stream\n5. Check if buffer interval settings were changed\n6. Verify Cribl source is processing without backpressure',
+      dashboardDependency: 'Log Ingestion Health dashboard, Pipeline Latency dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by source over time',
+          description: 'Track log delivery rate per source to detect gaps',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by httpSourceId'
+        },
+        {
+          name: 'Ingestion gap detection',
+          description: 'Identify periods where no events were received',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=1m count() as EventsPerMinute\n| where EventsPerMinute < 1'
+        },
+        {
+          name: 'Events per WebACL per minute',
+          description: 'Monitor per-ACL delivery rate for consistency',
+          query: 'dataset="$DATASET" earliest=-2h\n| timestats span=1m count() by webaclId'
+        },
+        {
+          name: 'Source delivery stream health',
+          description: 'Check delivery consistency across all source streams',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), FirstSeen=min(timestamp), LastSeen=max(timestamp) by httpSourceId\n| order by Events asc'
+        }
+      ]
+    }
+  ],
+  'netskope': [
+    {
+      id: 'net-obs-001',
+      name: 'Cloud Application Availability Degradation',
+      objective: 'Detect when access to critical SaaS applications fails or degrades, indicating service outages, connectivity issues, or policy misconfigurations.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'saas', 'application-access'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'alert_type', 'srcip'],
+      detectionLogic: 'Alert when successful activity count for a critical application drops below 30% of the 7-day baseline, or when alert_type events spike more than 300% for a specific app. Evaluate on 10-minute windows per application.',
+      operationalValue: 'SaaS availability issues impact entire business units. Netskope visibility enables detection before users report, enabling proactive communication and workaround deployment.',
+      changeMgmtRelevance: 'Application access failures after policy changes, steering configuration updates, or certificate renewals indicate misconfiguration requiring immediate rollback.',
+      troubleshootingWorkflow: '1. Identify affected application and scope of users impacted\n2. Check if the issue is Netskope-side (policy/steering) or app-side (outage)\n3. Verify steering configuration — is traffic being correctly routed?\n4. Check for certificate errors or SSL inspection issues\n5. Review status page of the affected SaaS application\n6. Check if policy changes were recently deployed',
+      dashboardDependency: 'Application Availability dashboard, SaaS Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Activity volume per application over time',
+          description: 'Track successful activities per app to detect degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by app'
+        },
+        {
+          name: 'Alert events by application',
+          description: 'Identify applications generating alert conditions',
+          query: 'dataset="$DATASET" earliest=-4h\n| where alert_type != ""\n| summarize AlertCount=count(), UniqueUsers=dcount(user) by app, alert_type\n| order by AlertCount desc'
+        },
+        {
+          name: 'Unique users accessing each app (last hour)',
+          description: 'Detect drops in user count as an availability indicator',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize UniqueUsers=dcount(user), Activities=count() by app\n| order by UniqueUsers desc'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-002',
+      name: 'DLP Policy Violation Spike',
+      objective: 'Detect sudden increases in DLP policy violations that may indicate data exfiltration attempts, misconfigured applications, or policy tuning requirements.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'dlp', 'data-protection'],
+      requiredFields: ['timestamp', 'user', 'app', 'dlp_profile', 'policy', 'activity', 'object'],
+      detectionLogic: 'Alert when DLP violation events exceed 200% of the 7-day baseline for the same time window. Also alert when a single user generates more than 10 DLP violations in a 30-minute window. Separate by dlp_profile for granular thresholds.',
+      operationalValue: 'DLP spikes may indicate legitimate workflow changes needing policy tuning, or active data loss events requiring intervention. Either way, immediate triage is required.',
+      changeMgmtRelevance: 'DLP spikes after policy updates may indicate overly broad detection rules. After application changes, new data flows may trigger existing policies.',
+      troubleshootingWorkflow: '1. Identify which dlp_profile and policy are triggering\n2. Determine if violations are from a single user or distributed\n3. Check the activity type — upload, download, share, post\n4. Review the object/file names for patterns\n5. Determine if this is a false positive (policy tuning needed)\n6. If real exfiltration: escalate to security team immediately',
+      dashboardDependency: 'DLP Violations dashboard, Data Protection Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'DLP violations over time by profile',
+          description: 'Track violation trends to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where dlp_profile != ""\n| timestats span=30m count() by dlp_profile'
+        },
+        {
+          name: 'Top users triggering DLP violations',
+          description: 'Identify users generating the most policy violations',
+          query: 'dataset="$DATASET" earliest=-4h\n| where dlp_profile != ""\n| summarize Violations=count(), UniqueApps=dcount(app) by user, dlp_profile\n| order by Violations desc\n| limit 20'
+        },
+        {
+          name: 'DLP violations by application and activity',
+          description: 'Understand which apps and actions trigger DLP',
+          query: 'dataset="$DATASET" earliest=-4h\n| where dlp_profile != ""\n| summarize Violations=count() by app, activity, dlp_profile, policy\n| order by Violations desc\n| limit 30'
+        },
+        {
+          name: 'Objects triggering DLP',
+          description: 'Review specific files and objects causing violations',
+          query: 'dataset="$DATASET" earliest=-2h\n| where dlp_profile != ""\n| summarize Count=count() by object, user, app, activity\n| order by Count desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-003',
+      name: 'User Activity Volume Anomaly',
+      objective: 'Detect when individual users generate abnormally high activity volumes, indicating potential compromised accounts, automation issues, or shadow IT usage.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'user-behavior', 'anomaly'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'srcip', 'bytes', 'object'],
+      detectionLogic: 'Alert when a user generates more than 5x their personal 30-day average activity volume in a 1-hour window, or when any user exceeds 500 activities in 15 minutes. Separate download-heavy activity from normal browsing.',
+      operationalValue: 'Abnormal user volumes can indicate compromised credentials being used for bulk data access, broken automation scripts, or unsanctioned tooling. Early detection limits blast radius.',
+      changeMgmtRelevance: 'New tool deployments or workflow changes can legitimately increase user activity. Correlate with known deployments and IT service requests.',
+      troubleshootingWorkflow: '1. Identify the user and their activity pattern\n2. Determine which applications are involved\n3. Check activity types — is it bulk download, upload, or access?\n4. Verify the source IP matches the users normal locations\n5. Check if the user is running automation or scripting\n6. Contact user or manager to verify legitimacy',
+      dashboardDependency: 'User Activity dashboard, Anomaly Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top active users (last hour)',
+          description: 'Find users with the highest activity volumes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Activities=count(), UniqueApps=dcount(app), UniqueObjects=dcount(object) by user\n| order by Activities desc\n| limit 20'
+        },
+        {
+          name: 'User activity over time (top users)',
+          description: 'Track activity patterns for heavy users to identify spikes',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Activities=count() by user\n| order by Activities desc\n| limit 5'
+        },
+        {
+          name: 'Activity breakdown for a specific user',
+          description: 'Drill into what a high-volume user is doing',
+          query: 'dataset="$DATASET" user="$USER" earliest=-4h\n| summarize Count=count() by app, activity, object\n| order by Count desc\n| limit 30'
+        },
+        {
+          name: 'Source IP analysis for anomalous users',
+          description: 'Check if abnormal activity comes from unusual locations',
+          query: 'dataset="$DATASET" user="$USER" earliest=-4h\n| summarize Activities=count(), UniqueApps=dcount(app) by srcip\n| order by Activities desc'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-004',
+      name: 'Policy Enforcement Consistency',
+      objective: 'Monitor that security policies are consistently enforcing across users and applications, detecting gaps in policy coverage or enforcement failures.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'policy', 'coverage'],
+      requiredFields: ['timestamp', 'policy', 'app', 'user', 'activity', 'category', 'site'],
+      detectionLogic: 'Alert when a policy that normally generates 50+ enforcement events per hour drops to zero for 2 consecutive hours. Also alert when application categories that should be policy-controlled show zero policy associations.',
+      operationalValue: 'Policy enforcement gaps leave the organization unprotected. Detecting when policies stop firing ensures continuous security posture and compliance maintenance.',
+      changeMgmtRelevance: 'Policy enforcement drops after Netskope configuration changes, steering updates, or tenant modifications indicate incomplete deployment or configuration errors.',
+      troubleshootingWorkflow: '1. Identify which policy stopped enforcing\n2. Check if the policy is still active in Netskope admin console\n3. Verify steering configuration — is traffic being inspected?\n4. Check if application categorization changed (app reclassified)\n5. Verify user group membership for policy scope\n6. Check for certificate or bypass issues preventing inspection',
+      dashboardDependency: 'Policy Coverage dashboard, Enforcement Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Policy enforcement volume over time',
+          description: 'Track policy activity to detect enforcement gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| where policy != ""\n| timestats span=1h count() by policy'
+        },
+        {
+          name: 'Applications without policy enforcement',
+          description: 'Find applications being accessed without policy evaluation',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), WithPolicy=countif(policy != "") by app, category\n| extend PolicyCoverage=round(WithPolicy * 100.0 / Total, 1)\n| where PolicyCoverage < 50 and Total > 10\n| order by PolicyCoverage asc'
+        },
+        {
+          name: 'Category coverage analysis',
+          description: 'Verify all expected categories have policy enforcement',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Activities=count(), UniqueUsers=dcount(user), PoliciesApplied=dcount(policy) by category\n| order by Activities desc'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-005',
+      name: 'Application Category Traffic Shift',
+      objective: 'Detect significant changes in application category usage patterns that may indicate shadow IT adoption, workflow changes, or policy bypass.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'shadow-it', 'application-usage'],
+      requiredFields: ['timestamp', 'app', 'category', 'user', 'activity', 'site', 'srcip'],
+      detectionLogic: 'Alert when a previously low-volume application category increases by more than 300% in a 4-hour window, or when new applications appear with more than 10 unique users within the first hour of detection.',
+      operationalValue: 'Category shifts indicate changing user behavior, potential shadow IT adoption, or new business requirements. Early visibility enables proactive policy and capacity adjustments.',
+      changeMgmtRelevance: 'Application adoption changes after departmental tool approvals, vendor onboarding, or IT policy communications are expected. Unexpected shifts warrant investigation.',
+      troubleshootingWorkflow: '1. Identify which categories or applications showed growth\n2. Determine the user population driving the change\n3. Check if the application was recently approved or deployed\n4. Verify appropriate security policies cover the new usage\n5. Assess bandwidth and capacity impact\n6. Update policy if needed to ensure proper inspection',
+      dashboardDependency: 'Application Usage Trends dashboard, Shadow IT Discovery dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Activity by category over time',
+          description: 'Track category-level usage trends to identify shifts',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by category'
+        },
+        {
+          name: 'New applications by user adoption',
+          description: 'Find recently appearing applications with growing user bases',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize UniqueUsers=dcount(user), Activities=count(), FirstSeen=min(timestamp) by app, category\n| order by UniqueUsers desc\n| limit 30'
+        },
+        {
+          name: 'Top growing applications (last 4 hours vs baseline)',
+          description: 'Compare recent app usage against historical to find rapid growth',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize RecentActivities=count(), UniqueUsers=dcount(user) by app, category\n| where RecentActivities > 20\n| order by RecentActivities desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-006',
+      name: 'Cloud Storage Activity Surge',
+      objective: 'Detect unusual spikes in cloud storage activities (upload, download, share) that may indicate bulk data movement or capacity planning needs.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'cloud-storage', 'data-movement'],
+      requiredFields: ['timestamp', 'user', 'app', 'activity', 'object', 'category', 'dstip'],
+      detectionLogic: 'Alert when upload or download activities for storage applications exceed 200% of the 7-day baseline in a 30-minute window. Also alert when a single user performs more than 100 file operations in 15 minutes.',
+      operationalValue: 'Cloud storage surges can indicate employee offboarding (data hoarding), project migration activities, or potential data theft. Early detection enables timely intervention.',
+      changeMgmtRelevance: 'Data migration projects, department reorganizations, or new backup solutions may legitimately cause storage surges. Coordinate with project timelines.',
+      troubleshootingWorkflow: '1. Identify the users and applications involved\n2. Determine the activity type — upload, download, share, delete\n3. Check the volume of objects and files affected\n4. Verify if this is a known migration or backup activity\n5. Check user employment status (upcoming departures)\n6. If unauthorized: engage security team for containment',
+      dashboardDependency: 'Cloud Storage Activity dashboard, Data Movement Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Storage activity volume by type over time',
+          description: 'Track upload, download, and share activities to detect surges',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activity in ("Upload", "Download", "Share", "Delete")\n| timestats span=30m count() by activity, app'
+        },
+        {
+          name: 'Top users by file operations',
+          description: 'Identify users performing the most cloud storage actions',
+          query: 'dataset="$DATASET" earliest=-4h\n| where activity in ("Upload", "Download", "Share", "Delete")\n| summarize Operations=count(), UniqueObjects=dcount(object) by user, app, activity\n| order by Operations desc\n| limit 20'
+        },
+        {
+          name: 'Bulk download detection',
+          description: 'Find users downloading large numbers of files in short periods',
+          query: 'dataset="$DATASET" activity="Download" earliest=-2h\n| summarize Downloads=count(), UniqueFiles=dcount(object) by user, app\n| where Downloads > 50\n| order by Downloads desc'
+        }
+      ]
+    },
+    {
+      id: 'net-obs-007',
+      name: 'Netskope Log Ingestion Health',
+      objective: 'Detect when Netskope event logs stop arriving or experience delivery delays, ensuring continuous visibility into cloud activity.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'ingestion'],
+      requiredFields: ['timestamp', 'user', 'app', 'srcip', 'activity'],
+      detectionLogic: 'Alert when no events are received for 5 consecutive minutes during business hours, or when event volume drops below 20% of the expected baseline. Also alert on event timestamp skew exceeding 10 minutes.',
+      operationalValue: 'Log pipeline health is foundational for all Netskope detections. Without timely event delivery, security policies cannot be validated and user activity goes unmonitored.',
+      changeMgmtRelevance: 'Log delivery issues after Netskope API changes, Cribl pipeline modifications, or credential rotations indicate integration configuration problems.',
+      troubleshootingWorkflow: '1. Check Netskope API connectivity and authentication\n2. Verify API token has not expired or been rotated\n3. Check Cribl source health metrics for the Netskope input\n4. Review Netskope admin console for platform alerts\n5. Verify no rate limiting or quota exhaustion\n6. Check network connectivity between Cribl and Netskope API endpoint',
+      dashboardDependency: 'Log Ingestion Health dashboard, Pipeline Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track overall Netskope event delivery rate',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() as EventsPerInterval'
+        },
+        {
+          name: 'Events per application (delivery check)',
+          description: 'Verify events are arriving across all expected applications',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), LastSeen=max(timestamp) by app\n| order by Events desc'
+        },
+        {
+          name: 'Unique users per interval (liveliness check)',
+          description: 'Use unique user count as a proxy for log completeness',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=15m dcount(user) as UniqueUsers, count() as TotalEvents'
+        },
+        {
+          name: 'Source IP coverage check',
+          description: 'Verify events are arriving from expected source locations',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Events=count(), UniqueUsers=dcount(user) by srcip\n| order by Events desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'cloudflare': [
+    {
+      id: 'cfl-obs-001',
+      name: 'Edge Response Error Rate Spike',
+      objective: 'Detect when Cloudflare edge response errors (5xx) spike, indicating origin server failures, configuration issues, or upstream outages.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'edge', 'origin-health'],
+      requiredFields: ['EdgeStartTimestamp', 'EdgeResponseStatus', 'OriginResponseStatus', 'ClientRequestHost', 'ClientRequestURI', 'ClientIP'],
+      detectionLogic: 'Alert when 5xx EdgeResponseStatus exceeds 5% of total requests over a 5-minute window, or when any single host exceeds 10% error rate. Distinguish between Cloudflare-generated errors (52x) and origin errors (500, 502, 503).',
+      operationalValue: '5xx error spikes directly impact users and revenue. Distinguishing edge vs origin errors guides triage — is the problem in Cloudflare configuration or the backend?',
+      changeMgmtRelevance: 'Error spikes after DNS changes, origin configuration updates, or Cloudflare rule modifications indicate deployment issues requiring immediate investigation.',
+      troubleshootingWorkflow: '1. Determine error type: EdgeResponseStatus vs OriginResponseStatus\n2. If 521/522/523: origin is unreachable — check origin server health\n3. If 502/503 from origin: backend application or capacity issue\n4. Check if errors are concentrated on specific hosts or URIs\n5. Review recent Cloudflare configuration changes\n6. Check origin server logs and health checks',
+      dashboardDependency: 'Edge Error Rate dashboard, Origin Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by status code over time',
+          description: 'Track 5xx errors to identify spikes and patterns',
+          query: 'dataset="$DATASET" earliest=-12h\n| where toint(EdgeResponseStatus) >= 500\n| timestats span=5m count() by EdgeResponseStatus'
+        },
+        {
+          name: 'Error rate by host',
+          description: 'Identify which hosts are experiencing the most errors',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Total=count(), Errors=countif(toint(EdgeResponseStatus) >= 500) by ClientRequestHost\n| extend ErrorRate=round(Errors * 100.0 / Total, 2)\n| where Total > 50\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Edge vs Origin error comparison',
+          description: 'Distinguish Cloudflare-generated errors from origin errors',
+          query: 'dataset="$DATASET" earliest=-4h\n| where toint(EdgeResponseStatus) >= 500\n| summarize Count=count() by EdgeResponseStatus, OriginResponseStatus, ClientRequestHost\n| order by Count desc\n| limit 30'
+        },
+        {
+          name: 'Error concentration by URI',
+          description: 'Find specific endpoints generating the most errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| where toint(EdgeResponseStatus) >= 500\n| summarize Errors=count(), UniqueIPs=dcount(ClientIP) by ClientRequestURI, ClientRequestHost, EdgeResponseStatus\n| order by Errors desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-002',
+      name: 'Cache Hit Ratio Degradation',
+      objective: 'Detect when Cloudflare cache effectiveness drops, causing increased origin load, higher latency, and potential capacity issues.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'cache', 'cdn'],
+      requiredFields: ['EdgeStartTimestamp', 'CacheCacheStatus', 'ClientRequestHost', 'ClientRequestURI', 'EdgeResponseStatus', 'EdgeColoCode'],
+      detectionLogic: 'Alert when cache HIT ratio drops below 40% over a 30-minute window (baseline typically 60-80%). Track by host and edge colo. Alert specifically when MISS + EXPIRED exceeds 70% of cacheable requests.',
+      operationalValue: 'Cache degradation increases origin load, raises costs, and degrades user experience through higher latency. Early detection enables cache rule tuning before origin capacity is exhausted.',
+      changeMgmtRelevance: 'Cache ratio drops after page rule changes, cache TTL modifications, or origin header changes indicate misconfigured caching directives.',
+      troubleshootingWorkflow: '1. Identify which hosts and colos show cache degradation\n2. Check CacheCacheStatus distribution (HIT, MISS, EXPIRED, BYPASS, DYNAMIC)\n3. Review recent page rule or cache rule changes\n4. Check if origin is sending no-cache headers\n5. Verify cache TTLs are appropriate for the content type\n6. Check if traffic pattern changed (new URIs not yet cached)',
+      dashboardDependency: 'Cache Performance dashboard, CDN Efficiency dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Cache status distribution over time',
+          description: 'Track cache hit/miss ratios to detect degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by CacheCacheStatus'
+        },
+        {
+          name: 'Cache hit ratio by host',
+          description: 'Identify which hosts have the lowest cache effectiveness',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Hits=countif(CacheCacheStatus == "hit") by ClientRequestHost\n| extend HitRatio=round(Hits * 100.0 / Total, 1)\n| where Total > 100\n| order by HitRatio asc'
+        },
+        {
+          name: 'Cache performance by edge colo',
+          description: 'Compare cache effectiveness across edge locations',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Hits=countif(CacheCacheStatus == "hit"), Misses=countif(CacheCacheStatus == "miss") by EdgeColoCode\n| extend HitRatio=round(Hits * 100.0 / Total, 1)\n| where Total > 50\n| order by HitRatio asc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-003',
+      name: 'Traffic Volume Anomaly',
+      objective: 'Detect unusual traffic volume changes that may indicate DDoS activity, viral content, bot surges, or service disruption.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'traffic', 'volume-anomaly'],
+      requiredFields: ['EdgeStartTimestamp', 'ClientIP', 'ClientRequestHost', 'ClientRequestMethod', 'EdgeResponseStatus', 'ClientRequestURI'],
+      detectionLogic: 'Alert when request volume exceeds 300% of the rolling 7-day baseline in a 5-minute window. Also alert when volume drops below 30% of baseline (indicating possible DNS or routing issue). Evaluate per host.',
+      operationalValue: 'Volume anomalies require different responses: spikes may need rate limiting or scaling; drops may indicate DNS failures or origin issues. Both require rapid assessment.',
+      changeMgmtRelevance: 'Traffic changes after DNS migrations, marketing campaigns, or product launches may be expected. Unexpected changes indicate configuration or infrastructure issues.',
+      troubleshootingWorkflow: '1. Determine if the anomaly is a spike or a drop\n2. For spikes: check if traffic is from diverse IPs (organic) or concentrated (attack)\n3. For drops: verify DNS resolution and Cloudflare configuration\n4. Check if specific hosts or URIs are affected\n5. Review WAF and rate limiting rule changes\n6. Verify origin capacity if traffic is passing through',
+      dashboardDependency: 'Traffic Volume dashboard, Capacity Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request volume over time by host',
+          description: 'Track traffic levels per host to detect anomalies',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by ClientRequestHost'
+        },
+        {
+          name: 'Unique client IPs over time',
+          description: 'Monitor unique visitor count to distinguish organic growth from attacks',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m dcount(ClientIP) as UniqueClients'
+        },
+        {
+          name: 'Top requesting IPs during anomaly',
+          description: 'Identify sources driving volume changes',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), UniqueHosts=dcount(ClientRequestHost), UniqueURIs=dcount(ClientRequestURI) by ClientIP\n| order by Requests desc\n| limit 20'
+        },
+        {
+          name: 'Request method distribution during spike',
+          description: 'Determine if traffic spike is normal browsing or automated',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count() by ClientRequestMethod, ClientRequestHost\n| order by Requests desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-004',
+      name: 'Origin Response Time Degradation',
+      objective: 'Detect when origin servers respond slowly through Cloudflare, indicating backend performance issues before they become outages.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'origin', 'latency'],
+      requiredFields: ['EdgeStartTimestamp', 'OriginResponseStatus', 'ClientRequestHost', 'ClientRequestURI', 'CacheCacheStatus', 'EdgeColoCode'],
+      detectionLogic: 'Alert when origin response errors (timeout-related 522, 524 status codes) exceed 2% of non-cached requests over a 10-minute window. Track separately by host and edge colo to isolate regional issues.',
+      operationalValue: 'Origin latency degradation impacts user experience for all cache-miss traffic. Early detection enables scaling, failover, or traffic management before full outage.',
+      changeMgmtRelevance: 'Origin performance changes after application deployments, database migrations, or infrastructure changes. Critical metric for deployment validation.',
+      troubleshootingWorkflow: '1. Identify affected hosts and scope of the issue\n2. Check if the issue is regional (specific EdgeColoCode) or global\n3. For 522/524: origin is timing out — check server health\n4. Review origin server metrics (CPU, memory, connections)\n5. Check if recent deployments affected backend performance\n6. Verify load balancer and health check configurations',
+      dashboardDependency: 'Origin Performance dashboard, Backend Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Origin error codes over time',
+          description: 'Track origin-related error responses to detect degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| where toint(OriginResponseStatus) >= 500 or OriginResponseStatus in ("522", "524")\n| timestats span=5m count() by OriginResponseStatus'
+        },
+        {
+          name: 'Origin errors by host and colo',
+          description: 'Identify if origin issues are regional or global',
+          query: 'dataset="$DATASET" earliest=-4h\n| where toint(OriginResponseStatus) >= 500\n| summarize Errors=count() by ClientRequestHost, EdgeColoCode, OriginResponseStatus\n| order by Errors desc\n| limit 30'
+        },
+        {
+          name: 'Cache miss rate during degradation',
+          description: 'Check if cache misses are overwhelming the origin',
+          query: 'dataset="$DATASET" earliest=-2h\n| where CacheCacheStatus in ("miss", "expired", "bypass")\n| summarize CacheMisses=count() by ClientRequestHost\n| order by CacheMisses desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-005',
+      name: 'WAF Action Rate Change',
+      objective: 'Detect changes in Cloudflare WAF action patterns that may indicate rule misconfiguration, new attack patterns, or false positive increases.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'waf', 'security-operations'],
+      requiredFields: ['EdgeStartTimestamp', 'WAFAction', 'ClientRequestHost', 'ClientRequestURI', 'ClientIP', 'SecurityLevel'],
+      detectionLogic: 'Alert when WAF challenge or block actions increase by more than 200% over the 24-hour baseline, or when a previously quiet WAF rule begins firing at more than 50 events per hour. Track action distribution shifts.',
+      operationalValue: 'WAF action changes indicate either new threats being correctly blocked or false positives impacting legitimate users. Both require assessment to maintain security without disrupting access.',
+      changeMgmtRelevance: 'WAF action spikes after security level changes, managed rule updates, or custom rule deployments need validation to prevent legitimate traffic blocking.',
+      troubleshootingWorkflow: '1. Identify which WAF actions are changing (challenge, block, simulate)\n2. Determine the affected hosts and URIs\n3. Check if Cloudflare security level was changed\n4. Review managed rule update history\n5. Sample challenged/blocked requests for false positive assessment\n6. Adjust rules or security level if legitimate traffic is affected',
+      dashboardDependency: 'WAF Activity dashboard, Security Operations dashboard',
+      criblSearchQueries: [
+        {
+          name: 'WAF actions over time',
+          description: 'Track WAF enforcement activity to detect changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where WAFAction != ""\n| timestats span=30m count() by WAFAction'
+        },
+        {
+          name: 'WAF actions by host and URI',
+          description: 'Identify which resources are triggering WAF actions',
+          query: 'dataset="$DATASET" earliest=-4h\n| where WAFAction != ""\n| summarize Actions=count(), UniqueIPs=dcount(ClientIP) by WAFAction, ClientRequestHost, ClientRequestURI\n| order by Actions desc\n| limit 30'
+        },
+        {
+          name: 'Security level distribution',
+          description: 'Monitor security level settings across the fleet',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count() by SecurityLevel, ClientRequestHost\n| order by Requests desc'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-006',
+      name: 'Edge Colo Distribution Shift',
+      objective: 'Detect when traffic shifts between edge locations, indicating DNS routing changes, colo outages, or BGP routing issues.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'routing', 'edge-network'],
+      requiredFields: ['EdgeStartTimestamp', 'EdgeColoCode', 'ClientIP', 'ClientRequestHost', 'EdgeResponseStatus'],
+      detectionLogic: 'Alert when a normally active EdgeColoCode drops to zero traffic, or when a single colo suddenly handles more than 200% of its baseline traffic. Evaluate on 15-minute windows per colo.',
+      operationalValue: 'Edge distribution shifts impact user latency and can indicate infrastructure issues. Traffic shifting away from a colo may indicate an outage; traffic concentrating may indicate failover.',
+      changeMgmtRelevance: 'Routing changes, DNS configuration updates, or Cloudflare maintenance windows can cause expected distribution shifts. Unexpected shifts require investigation.',
+      troubleshootingWorkflow: '1. Identify which colos show distribution changes\n2. Check if Cloudflare has maintenance or incidents in affected regions\n3. Verify DNS configuration has not changed\n4. Check if BGP routing changes occurred\n5. Monitor latency impact for affected users\n6. Review Cloudflare status page for platform issues',
+      dashboardDependency: 'Edge Network Distribution dashboard, Global Traffic Map dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic by edge colo over time',
+          description: 'Track request distribution across edge locations',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by EdgeColoCode'
+        },
+        {
+          name: 'Current colo distribution with error rates',
+          description: 'See traffic volume and health per edge location',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Errors=countif(toint(EdgeResponseStatus) >= 500) by EdgeColoCode\n| extend ErrorRate=round(Errors * 100.0 / Total, 2)\n| order by Total desc'
+        },
+        {
+          name: 'Colos with low or zero traffic (last hour)',
+          description: 'Find edge locations that may be experiencing issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), UniqueIPs=dcount(ClientIP) by EdgeColoCode\n| order by Requests asc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cfl-obs-007',
+      name: 'Client Error Rate Baseline Deviation',
+      objective: 'Detect when client-side errors (4xx) deviate from normal patterns, indicating broken links, API changes, or bot activity.',
+      severity: 'Low',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'client-errors', 'content-health'],
+      requiredFields: ['EdgeStartTimestamp', 'EdgeResponseStatus', 'ClientRequestHost', 'ClientRequestURI', 'ClientRequestMethod', 'ClientIP'],
+      detectionLogic: 'Alert when 404 errors exceed 10% of total requests for a host, or when 403/401 errors spike by more than 200% against the 7-day baseline. Exclude known bot/scanner noise by filtering high-frequency single-IP patterns.',
+      operationalValue: 'Elevated 4xx rates indicate broken content (404), permission issues (403), or authentication problems (401). Persistent 404 spikes after deployments indicate broken links or missing assets.',
+      changeMgmtRelevance: '4xx spikes after content deployments, URL restructuring, or authentication configuration changes indicate incomplete migrations or misconfigurations.',
+      troubleshootingWorkflow: '1. Identify the dominant 4xx error code\n2. For 404: find the missing URIs and check if they were recently moved\n3. For 403: check WAF rules and access policies\n4. For 401: verify authentication backend health\n5. Determine if errors are from legitimate users or scanners\n6. Fix broken links or redirect rules as needed',
+      dashboardDependency: 'Client Error dashboard, Content Health dashboard',
+      criblSearchQueries: [
+        {
+          name: '4xx error distribution over time',
+          description: 'Track client error trends to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where toint(EdgeResponseStatus) >= 400 and toint(EdgeResponseStatus) < 500\n| timestats span=30m count() by EdgeResponseStatus'
+        },
+        {
+          name: 'Top 404 URIs',
+          description: 'Find the most frequently requested missing resources',
+          query: 'dataset="$DATASET" EdgeResponseStatus="404" earliest=-4h\n| summarize Hits=count(), UniqueIPs=dcount(ClientIP) by ClientRequestURI, ClientRequestHost\n| order by Hits desc\n| limit 30'
+        },
+        {
+          name: '4xx rate by host',
+          description: 'Identify which hosts have elevated client error rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), ClientErrors=countif(toint(EdgeResponseStatus) >= 400 and toint(EdgeResponseStatus) < 500) by ClientRequestHost\n| extend ErrorRate=round(ClientErrors * 100.0 / Total, 1)\n| where Total > 100\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Error source analysis',
+          description: 'Determine if errors come from real users or automated scanners',
+          query: 'dataset="$DATASET" earliest=-2h\n| where toint(EdgeResponseStatus) >= 400 and toint(EdgeResponseStatus) < 500\n| summarize Errors=count(), UniqueURIs=dcount(ClientRequestURI) by ClientIP\n| order by Errors desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'wiz-cloud-security': [
+    {
+      id: 'wiz-obs-001',
+      name: 'Critical Finding Remediation SLA Breach',
+      objective: 'Detect when critical severity findings remain in open status beyond SLA thresholds, indicating remediation process failures or resource constraints.',
+      severity: 'Critical',
+      category: 'Data Quality',
+      tags: ['observability', 'sla', 'remediation', 'compliance'],
+      requiredFields: ['timestamp', 'severity', 'status', 'title', 'resource_id', 'subscription', 'remediation'],
+      detectionLogic: 'Alert when Critical severity findings with status not equal to "Resolved" have been open for more than 24 hours. Track remediation velocity — if no status change occurs within defined SLA windows (Critical: 24h, High: 72h, Medium: 7d).',
+      operationalValue: 'SLA breaches indicate broken remediation workflows, overwhelmed teams, or deprioritized critical risks. Tracking ensures accountability and continuous risk reduction.',
+      changeMgmtRelevance: 'New findings appearing after infrastructure changes indicate security regressions. Remediation timelines should account for change freezes and staffing.',
+      troubleshootingWorkflow: '1. Identify which critical findings are breaching SLA\n2. Determine the resource owner and subscription\n3. Check if remediation guidance is available and actionable\n4. Verify the finding is not a false positive\n5. Escalate to resource owner with remediation steps\n6. If resource owner unresponsive: escalate to management',
+      dashboardDependency: 'SLA Compliance dashboard, Remediation Velocity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Open critical findings by age',
+          description: 'Track critical findings that remain unresolved',
+          query: 'dataset="$DATASET" severity="Critical" earliest=-30d\n| where status != "Resolved"\n| summarize Count=count(), OldestFinding=min(timestamp) by title, subscription, resource_id\n| order by OldestFinding asc'
+        },
+        {
+          name: 'Remediation velocity by severity',
+          description: 'Measure how quickly findings are being resolved',
+          query: 'dataset="$DATASET" status="Resolved" earliest=-30d\n| summarize Resolved=count() by severity\n| order by Resolved desc'
+        },
+        {
+          name: 'SLA breach count by subscription',
+          description: 'Identify subscriptions with the most overdue findings',
+          query: 'dataset="$DATASET" severity in ("Critical", "High") earliest=-30d\n| where status != "Resolved"\n| summarize OpenFindings=count() by subscription, severity\n| order by OpenFindings desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-002',
+      name: 'New Finding Volume Spike',
+      objective: 'Detect when the rate of new security findings exceeds normal thresholds, indicating infrastructure drift, new deployments, or scanning changes.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'findings', 'drift'],
+      requiredFields: ['timestamp', 'severity', 'title', 'resource_type', 'cloud_provider', 'subscription', 'rule_name'],
+      detectionLogic: 'Alert when new findings in a 4-hour window exceed 200% of the 7-day rolling average for the same time period. Also alert when a single rule_name generates more than 50 new findings in one hour, indicating systemic misconfiguration.',
+      operationalValue: 'Finding spikes indicate infrastructure drift at scale. A single misconfigured Terraform module can create hundreds of findings across resources. Early detection enables rapid remediation.',
+      changeMgmtRelevance: 'Finding spikes correlating with deployment windows indicate security regressions from code changes. Critical for shift-left feedback loops.',
+      troubleshootingWorkflow: '1. Identify which rule_names are generating the most new findings\n2. Check if findings share a common subscription or resource_type\n3. Determine if a recent deployment or infrastructure change occurred\n4. Check if Wiz scanning rules were updated (new rules = new findings)\n5. If deployment-related: engage the deploying team for remediation\n6. If rule change: validate findings are real and not false positives',
+      dashboardDependency: 'Finding Trends dashboard, Deployment Impact dashboard',
+      criblSearchQueries: [
+        {
+          name: 'New findings over time by severity',
+          description: 'Track finding creation rate to identify spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by severity'
+        },
+        {
+          name: 'Top rules generating findings',
+          description: 'Identify which security rules are producing the most findings',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Findings=count(), UniqueResources=dcount(resource_id) by rule_name, severity\n| order by Findings desc\n| limit 20'
+        },
+        {
+          name: 'Finding spike by subscription',
+          description: 'Determine which cloud subscriptions are generating new findings',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Findings=count() by subscription, cloud_provider, severity\n| order by Findings desc\n| limit 20'
+        },
+        {
+          name: 'Resource type concentration',
+          description: 'Find which resource types are most affected',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Findings=count(), UniqueResources=dcount(resource_id) by resource_type, rule_name\n| order by Findings desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-003',
+      name: 'Cloud Provider Coverage Gap',
+      objective: 'Detect when security scanning coverage drops for a cloud provider or subscription, indicating integration issues or subscription offboarding.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'coverage', 'scanning'],
+      requiredFields: ['timestamp', 'cloud_provider', 'subscription', 'resource_type', 'severity', 'rule_name'],
+      detectionLogic: 'Alert when a previously active subscription produces zero findings for more than 24 hours, or when finding volume for a cloud_provider drops below 30% of its 7-day baseline. Track per-provider and per-subscription baselines.',
+      operationalValue: 'Coverage gaps mean security risks are not being detected. A disconnected subscription or failed scanner means resources operate without security oversight.',
+      changeMgmtRelevance: 'Coverage drops after cloud provider connector changes, credential rotations, or subscription transfers indicate integration failures requiring re-establishment.',
+      troubleshootingWorkflow: '1. Identify which subscriptions or providers show coverage gaps\n2. Verify Wiz connector health in the admin console\n3. Check if service principal credentials expired or were rotated\n4. Verify the subscription is still active in the cloud provider\n5. Check if Wiz scanning schedule was modified\n6. Re-establish connector if credentials are the issue',
+      dashboardDependency: 'Coverage Monitoring dashboard, Connector Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Findings per subscription over time',
+          description: 'Track scanning activity per subscription to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d count() by subscription, cloud_provider'
+        },
+        {
+          name: 'Subscriptions with no recent findings',
+          description: 'Identify subscriptions that may have lost scanning coverage',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastFinding=max(timestamp), TotalFindings=count() by subscription, cloud_provider\n| order by LastFinding asc'
+        },
+        {
+          name: 'Resource type coverage by provider',
+          description: 'Verify all expected resource types are being scanned',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Findings=count(), UniqueRules=dcount(rule_name) by cloud_provider, resource_type\n| order by cloud_provider asc, Findings desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-004',
+      name: 'Resource Type Risk Concentration',
+      objective: 'Detect when specific resource types accumulate disproportionate risk, indicating systemic configuration drift or insecure deployment patterns.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'risk-concentration', 'resource-management'],
+      requiredFields: ['timestamp', 'resource_type', 'severity', 'resource_id', 'subscription', 'rule_name', 'status'],
+      detectionLogic: 'Alert when any single resource_type accounts for more than 40% of all Critical/High findings, or when a resource_type finding count increases by more than 150% week-over-week. Indicates systemic misconfiguration patterns.',
+      operationalValue: 'Risk concentration in specific resource types indicates systemic issues (bad templates, missing hardening standards). Addressing the pattern fixes many findings at once.',
+      changeMgmtRelevance: 'New resource type concentrations after infrastructure-as-code template changes indicate the template needs security hardening before further deployment.',
+      troubleshootingWorkflow: '1. Identify the concentrated resource type and dominant rule_names\n2. Determine which subscriptions contain the affected resources\n3. Check if resources share a common deployment template or module\n4. Review the remediation guidance for common fixes\n5. Create a systemic fix (template update, policy enforcement)\n6. Track remediation progress as the fix rolls out',
+      dashboardDependency: 'Risk Distribution dashboard, Resource Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Findings by resource type and severity',
+          description: 'Identify which resource types have the highest risk concentration',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Resolved"\n| summarize Findings=count(), UniqueResources=dcount(resource_id) by resource_type, severity\n| order by Findings desc'
+        },
+        {
+          name: 'Resource type risk trend (weekly comparison)',
+          description: 'Track how risk concentration changes over time',
+          query: 'dataset="$DATASET" earliest=-14d\n| where severity in ("Critical", "High")\n| timestats span=1d count() by resource_type'
+        },
+        {
+          name: 'Top rules for concentrated resource types',
+          description: 'Understand what specific misconfigurations affect the resource type',
+          query: 'dataset="$DATASET" resource_type="$RESOURCE_TYPE" earliest=-7d\n| where status != "Resolved"\n| summarize Findings=count(), UniqueResources=dcount(resource_id) by rule_name, severity\n| order by Findings desc\n| limit 20'
+        },
+        {
+          name: 'Subscription distribution for concentrated resources',
+          description: 'See if the risk is concentrated in specific subscriptions',
+          query: 'dataset="$DATASET" resource_type="$RESOURCE_TYPE" earliest=-7d\n| where status != "Resolved" and severity in ("Critical", "High")\n| summarize Findings=count() by subscription, cloud_provider\n| order by Findings desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-005',
+      name: 'Remediation Regression Detection',
+      objective: 'Detect when previously resolved findings reappear, indicating configuration drift, deployment rollbacks, or ineffective remediation.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'regression', 'remediation'],
+      requiredFields: ['timestamp', 'title', 'resource_id', 'status', 'severity', 'subscription', 'rule_name'],
+      detectionLogic: 'Alert when a finding with the same title and resource_id transitions from Resolved back to Open/In Progress. Track recurrence rate — findings recurring more than twice indicate systemic remediation failure.',
+      operationalValue: 'Remediation regressions waste team effort and indicate that fixes are not persistent. Identifying regression patterns enables root cause fixes that prevent recurrence.',
+      changeMgmtRelevance: 'Regressions after deployments indicate that infrastructure-as-code does not include the security fix, or that the fix was overwritten by a subsequent deployment.',
+      troubleshootingWorkflow: '1. Identify which findings are recurring and on which resources\n2. Check if a deployment or configuration change reverted the fix\n3. Verify the fix was applied to the IaC template (not just manually)\n4. Determine if auto-remediation is in place but being overridden\n5. Engage the resource owner to apply a persistent fix\n6. Consider preventive controls (policies) to block the misconfiguration',
+      dashboardDependency: 'Remediation Effectiveness dashboard, Regression Tracking dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Status transitions over time',
+          description: 'Track finding status changes to detect regressions',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize StatusChanges=count() by resource_id, title, status\n| order by StatusChanges desc\n| limit 30'
+        },
+        {
+          name: 'Recurring findings (same resource, multiple occurrences)',
+          description: 'Find findings that keep reappearing on the same resources',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize Occurrences=count(), LastSeen=max(timestamp) by resource_id, title, rule_name\n| where Occurrences > 1\n| order by Occurrences desc\n| limit 20'
+        },
+        {
+          name: 'Regression rate by subscription',
+          description: 'Identify subscriptions with the highest regression rates',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize TotalFindings=count(), UniqueResources=dcount(resource_id) by subscription, title\n| where TotalFindings > UniqueResources\n| extend RegressionIndicator=TotalFindings - UniqueResources\n| order by RegressionIndicator desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-006',
+      name: 'Multi-Cloud Security Posture Drift',
+      objective: 'Detect when security posture diverges between cloud providers or subscriptions, indicating inconsistent security standards or governance gaps.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'multi-cloud', 'governance'],
+      requiredFields: ['timestamp', 'cloud_provider', 'severity', 'resource_type', 'subscription', 'status', 'rule_name'],
+      detectionLogic: 'Alert when the ratio of Critical+High findings per resource differs by more than 3x between cloud providers, or when one subscription has more than 5x the finding density of peer subscriptions in the same provider.',
+      operationalValue: 'Posture drift between clouds indicates inconsistent governance. If AWS resources are well-hardened but Azure resources are not, the organization has a blind spot attackers can exploit.',
+      changeMgmtRelevance: 'Drift often occurs when new cloud environments are provisioned without equivalent security controls. Change reviews should include multi-cloud posture assessment.',
+      troubleshootingWorkflow: '1. Compare finding density across cloud providers\n2. Identify which rule_names fire in one provider but not another\n3. Check if equivalent security controls exist across all providers\n4. Verify scanning coverage is consistent across providers\n5. Review cloud governance policies for gaps\n6. Create equivalent hardening standards for all providers',
+      dashboardDependency: 'Multi-Cloud Posture dashboard, Governance Comparison dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Finding density by cloud provider',
+          description: 'Compare security posture across cloud environments',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Resolved"\n| summarize Findings=count(), UniqueResources=dcount(resource_id) by cloud_provider, severity\n| order by cloud_provider asc, severity asc'
+        },
+        {
+          name: 'Rule coverage comparison across providers',
+          description: 'Identify rules that fire in one provider but not others',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity in ("Critical", "High")\n| summarize Findings=count() by rule_name, cloud_provider\n| order by rule_name asc'
+        },
+        {
+          name: 'Subscription posture ranking',
+          description: 'Rank subscriptions by finding density to identify outliers',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status != "Resolved" and severity in ("Critical", "High")\n| summarize CriticalHigh=count(), UniqueResources=dcount(resource_id) by subscription, cloud_provider\n| extend FindingsPerResource=round(todouble(CriticalHigh) / todouble(UniqueResources), 2)\n| order by FindingsPerResource desc'
+        }
+      ]
+    },
+    {
+      id: 'wiz-obs-007',
+      name: 'Wiz Scan Data Freshness',
+      objective: 'Monitor the freshness and completeness of Wiz scanning data to ensure findings reflect current infrastructure state.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'freshness', 'pipeline'],
+      requiredFields: ['timestamp', 'cloud_provider', 'subscription', 'resource_type', 'severity', 'status'],
+      detectionLogic: 'Alert when no new findings are received for 24 hours from any active subscription, or when overall finding volume drops below 30% of the 7-day baseline. Also alert if timestamp distribution shows stale data (all events older than 12 hours).',
+      operationalValue: 'Stale scan data means decisions are based on outdated information. If Wiz scanning fails, new risks go undetected and remediation tracking becomes inaccurate.',
+      changeMgmtRelevance: 'Scan data freshness issues after connector changes, API key rotations, or Wiz platform updates indicate integration health problems.',
+      troubleshootingWorkflow: '1. Check when the last findings were received per subscription\n2. Verify Wiz connector status and health\n3. Check API credentials have not expired\n4. Review Wiz platform status for scanning delays\n5. Verify Cribl source is processing Wiz data without errors\n6. Check for rate limiting or API quota issues',
+      dashboardDependency: 'Data Freshness dashboard, Pipeline Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Finding ingestion rate over time',
+          description: 'Track data delivery rate to detect freshness issues',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() as Findings'
+        },
+        {
+          name: 'Last finding per subscription',
+          description: 'Identify subscriptions with stale data',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastFinding=max(timestamp), TotalFindings=count() by subscription, cloud_provider\n| order by LastFinding asc'
+        },
+        {
+          name: 'Resource type coverage freshness',
+          description: 'Verify all resource types are being continuously scanned',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastScan=max(timestamp), Findings=count() by resource_type, cloud_provider\n| order by LastScan asc'
+        },
+        {
+          name: 'Daily finding volume trend',
+          description: 'Monitor overall scan output for completeness',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1d count() by cloud_provider, severity'
+        }
+      ]
+    }
+  ],
+
+  'sentinelone-edr': [
+    {
+      id: 'sen-obs-001',
+      name: 'Agent Reporting Gap Detected',
+      objective: 'Detect when SentinelOne agents stop reporting events, indicating potential agent failure, network isolation, or endpoint offline status.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'agent-health', 'endpoint'],
+      requiredFields: ['createdAt', 'agentComputerName', 'agentOsType', 'siteName'],
+      detectionLogic: 'Alert when an agent that previously reported at least 10 events per hour goes silent for more than 30 minutes. Compare each agent\'s current reporting frequency against its 7-day baseline. Evaluate per agentComputerName on 15-minute windows.',
+      operationalValue: 'Silent agents mean blind endpoints. If an agent stops reporting, the organization has no visibility into threats on that machine. Early detection enables remediation before coverage gaps become security incidents.',
+      changeMgmtRelevance: 'Agent silences often follow OS patches, endpoint management changes, network segmentation updates, or SentinelOne policy pushes. Correlate with change windows to distinguish planned maintenance from failures.',
+      troubleshootingWorkflow: '1. Identify which agents have gone silent and their last known event time\n2. Check if the silence is site-wide or isolated to specific endpoints\n3. Verify network connectivity to the SentinelOne management console\n4. Check if a policy push or agent upgrade was recently deployed\n5. Verify the endpoint is powered on and network-connected\n6. Check Cribl pipeline health for this source — are events being dropped upstream?',
+      dashboardDependency: 'Agent Coverage dashboard, Endpoint Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Last seen timestamp per agent',
+          description: 'Find agents that may have stopped reporting events',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize LastSeen=max(createdAt), EventCount=count() by agentComputerName, agentOsType, siteName\n| order by LastSeen asc\n| limit 50'
+        },
+        {
+          name: 'Agent reporting frequency over time',
+          description: 'Track event volume per agent to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by agentComputerName'
+        },
+        {
+          name: 'Site-level reporting health',
+          description: 'Aggregate reporting status by site to detect widespread issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ActiveAgents=dcount(agentComputerName), TotalEvents=count() by siteName\n| order by ActiveAgents asc'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-002',
+      name: 'Mitigation Action Failure Rate Increase',
+      objective: 'Detect when automated mitigations are failing at an abnormal rate, indicating agent issues, policy misconfigurations, or resource constraints on endpoints.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'mitigation', 'remediation'],
+      requiredFields: ['mitigationStatus', 'threatName', 'agentComputerName', 'classification', 'siteName', 'createdAt'],
+      detectionLogic: 'Alert when the ratio of non-mitigated threats (mitigationStatus != "mitigated") exceeds 20% over a 1-hour window, or when the absolute count of failed mitigations exceeds 3x the 7-day baseline.',
+      operationalValue: 'Failed mitigations mean threats are detected but not contained. This gap between detection and remediation creates exposure windows that require manual intervention.',
+      changeMgmtRelevance: 'Mitigation failures often follow policy changes that alter automated response actions, agent upgrades that introduce bugs, or endpoint configurations that block remediation.',
+      troubleshootingWorkflow: '1. Identify which endpoints have failed mitigations\n2. Check mitigationStatus values — are they pending, failed, or partially mitigated?\n3. Determine if failures are concentrated on specific OS types or sites\n4. Check if threat classification affects mitigation success\n5. Verify agent has sufficient permissions and disk space for remediation\n6. Check for recent policy changes to automated response actions',
+      dashboardDependency: 'Mitigation Status dashboard, Threat Response Effectiveness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Mitigation status breakdown',
+          description: 'See the distribution of mitigation outcomes across the fleet',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Count=count() by mitigationStatus, classification\n| order by Count desc'
+        },
+        {
+          name: 'Failed mitigations by endpoint',
+          description: 'Identify endpoints with the most mitigation failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where mitigationStatus != "mitigated"\n| summarize FailedCount=count(), Threats=dcount(threatName) by agentComputerName, siteName, agentOsType\n| order by FailedCount desc\n| limit 25'
+        },
+        {
+          name: 'Mitigation success rate trend',
+          description: 'Track mitigation effectiveness over time to spot degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend is_mitigated=iif(mitigationStatus == "mitigated", 1, 0)\n| timestats span=1h Total=count(), Mitigated=sum(is_mitigated)'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-003',
+      name: 'Threat Classification Distribution Shift',
+      objective: 'Detect significant changes in the mix of threat classifications, indicating new attack campaigns, false positive surges, or detection policy changes.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'classification', 'baseline'],
+      requiredFields: ['classification', 'threatName', 'agentComputerName', 'siteName', 'createdAt'],
+      detectionLogic: 'Alert when any single classification category increases by >150% compared to its 7-day rolling average, or when a new classification appears that has not been seen in the past 30 days. Evaluate hourly.',
+      operationalValue: 'Classification shifts reveal emerging campaigns (sudden malware surge), detection tuning problems (false positive floods), or policy drift (reclassification of known software).',
+      changeMgmtRelevance: 'Classification changes often follow SentinelOne engine updates, custom detection rule changes, or exclusion policy modifications.',
+      troubleshootingWorkflow: '1. Identify which classification(s) shifted and by how much\n2. Determine if the shift is across all sites or localized\n3. Check if specific threatNames dominate the new classification volume\n4. Verify whether this correlates with a SentinelOne engine or policy update\n5. Assess if the detections are true positives or a false positive surge\n6. Check if new software deployments triggered the classification change',
+      dashboardDependency: 'Threat Classification Trends dashboard, Detection Quality dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Classification distribution over time',
+          description: 'Visualize how threat classifications trend to spot distribution shifts',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by classification'
+        },
+        {
+          name: 'Top classifications in last hour vs prior day average',
+          description: 'Compare current classification mix against baseline',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize CurrentCount=count() by classification\n| order by CurrentCount desc'
+        },
+        {
+          name: 'Threat names driving classification changes',
+          description: 'Drill into which specific threats are behind a classification spike',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Count=count(), AffectedHosts=dcount(agentComputerName) by classification, threatName\n| order by Count desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-004',
+      name: 'OS Type Coverage Imbalance',
+      objective: 'Monitor agent deployment coverage by OS type to ensure no platform loses protection silently.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'coverage', 'fleet-management'],
+      requiredFields: ['agentOsType', 'agentComputerName', 'siteName', 'createdAt'],
+      detectionLogic: 'Alert when the distinct agent count for any OS type drops by more than 15% compared to the previous 24-hour window. Evaluate every 4 hours with site-level granularity.',
+      operationalValue: 'Coverage drops by OS type can indicate mass agent failures, deployment rollback issues, or decommissioning without replacement. Ensures fleet-wide protection consistency.',
+      changeMgmtRelevance: 'OS updates, imaging changes, or endpoint management tool changes can cause agent loss on specific platforms. Correlate with deployment schedules.',
+      troubleshootingWorkflow: '1. Identify which OS type and site lost coverage\n2. Compare current active agent count against prior baseline\n3. Check if specific agents dropped off or if the decline is gradual\n4. Verify endpoint management tools — were machines reimaged?\n5. Check for OS-specific agent compatibility issues\n6. Confirm no mass decommissioning event occurred',
+      dashboardDependency: 'Fleet Coverage dashboard, OS Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active agents by OS type and site',
+          description: 'Current coverage view by operating system and site',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize ActiveAgents=dcount(agentComputerName), Events=count() by agentOsType, siteName\n| order by ActiveAgents desc'
+        },
+        {
+          name: 'Agent count trend by OS type',
+          description: 'Track distinct agent count over time to spot coverage drops',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h ActiveAgents=dcount(agentComputerName) by agentOsType'
+        },
+        {
+          name: 'Recently silent agents by OS type',
+          description: 'Find agents grouped by OS that stopped reporting in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize LastSeen=max(createdAt) by agentComputerName, agentOsType, siteName\n| where LastSeen < ago(4h)\n| summarize SilentAgents=count() by agentOsType, siteName\n| order by SilentAgents desc'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-005',
+      name: 'Threat Detection Volume Anomaly',
+      objective: 'Identify abnormal spikes or drops in overall threat detection volume that may indicate scanner issues, environmental changes, or detection engine problems.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'volume', 'anomaly'],
+      requiredFields: ['threatName', 'classification', 'agentComputerName', 'siteName', 'createdAt'],
+      detectionLogic: 'Alert when total threat detection volume exceeds 300% of the hourly baseline or drops below 20% of expected volume. Use day-of-week adjusted baselines. Separate alerts for spikes vs drops as they have different operational meanings.',
+      operationalValue: 'Volume spikes may indicate active incidents or false positive storms requiring tuning. Volume drops may indicate detection engine failures or connectivity issues with the management console.',
+      changeMgmtRelevance: 'Detection volume changes after engine updates, exclusion policy changes, or new detection rules indicate the change had significant impact on detection efficacy.',
+      troubleshootingWorkflow: '1. Determine if the anomaly is a spike or a drop\n2. For spikes: identify the top threatNames and affected hosts\n3. For drops: verify agent connectivity and engine health\n4. Check if the anomaly is site-wide or localized\n5. Correlate with recent policy or engine updates\n6. Assess if manual triage capacity is affected',
+      dashboardDependency: 'Detection Volume Trends dashboard, SOC Workload dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Hourly threat detection volume',
+          description: 'Track overall detection volume to identify anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by siteName'
+        },
+        {
+          name: 'Current hour vs baseline comparison',
+          description: 'Compare current detection rate against historical norms',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize CurrentCount=count(), UniqueThreats=dcount(threatName), AffectedHosts=dcount(agentComputerName) by siteName\n| order by CurrentCount desc'
+        },
+        {
+          name: 'Top threats driving volume anomaly',
+          description: 'Identify which specific threats are behind volume spikes',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Count=count(), Hosts=dcount(agentComputerName) by threatName, classification\n| order by Count desc\n| limit 20'
+        },
+        {
+          name: 'Detection volume by hour of day (7-day view)',
+          description: 'Establish baseline patterns to contextualize current volume',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour_of_day=hourofday(createdAt)\n| summarize AvgDetections=count() by hour_of_day, siteName\n| order by hour_of_day asc'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-006',
+      name: 'File Path Pattern Concentration',
+      objective: 'Detect when threat detections concentrate on specific file paths, indicating potential scanning gaps, recurring infections, or environmental issues.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'file-path', 'pattern-analysis'],
+      requiredFields: ['filePath', 'threatName', 'agentComputerName', 'classification', 'createdAt'],
+      detectionLogic: 'Alert when a single file path accounts for more than 40% of all detections in a 4-hour window, or when the same file path triggers detections on more than 10 unique hosts. This identifies either legitimate software being misclassified or a common infection vector.',
+      operationalValue: 'Path concentration reveals systemic issues: either a false positive affecting a common enterprise application path, or a shared resource (network drive, download location) acting as an infection vector.',
+      changeMgmtRelevance: 'New software deployments, application updates, or shared storage changes often trigger path-concentrated detections that require exclusion rule updates.',
+      troubleshootingWorkflow: '1. Identify the concentrated file path and associated threat name\n2. Determine if detections are on a single host or multiple hosts\n3. Check if the file hash (sha256) is consistent across detections\n4. Verify if the file is a known enterprise application\n5. If legitimate: create an exclusion rule for the path\n6. If malicious: investigate the shared resource or deployment mechanism',
+      dashboardDependency: 'Detection Patterns dashboard, False Positive Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top file paths by detection count',
+          description: 'Identify paths with the highest concentration of detections',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Count=count(), UniqueHosts=dcount(agentComputerName), Threats=dcount(threatName) by filePath\n| order by Count desc\n| limit 20'
+        },
+        {
+          name: 'File path concentration ratio',
+          description: 'Calculate what percentage of detections each path represents',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize PathCount=count() by filePath\n| extend TotalDetections=sum(PathCount)\n| extend ConcentrationPct=round(PathCount * 100.0 / TotalDetections, 1)\n| order by ConcentrationPct desc\n| limit 15'
+        },
+        {
+          name: 'Hosts affected by top detection paths',
+          description: 'See which endpoints are triggering on the most common paths',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Detections=count() by filePath, agentComputerName, classification\n| order by Detections desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'sen-obs-007',
+      name: 'Event Ingestion Latency',
+      objective: 'Monitor the time delay between when SentinelOne creates an event and when it arrives in the search platform, detecting pipeline bottlenecks.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'pipeline'],
+      requiredFields: ['createdAt', 'agentComputerName', 'siteName'],
+      detectionLogic: 'Alert when the average delay between createdAt timestamp and ingestion time exceeds 10 minutes over a 15-minute evaluation window, or when P95 latency exceeds 30 minutes. Evaluate per siteName.',
+      operationalValue: 'High ingestion latency means threat detections arrive too late for real-time response. SOC teams may be responding to threats that have already progressed through the kill chain.',
+      changeMgmtRelevance: 'Latency increases after Cribl pipeline changes, SentinelOne API configuration changes, or infrastructure scaling events indicate capacity or configuration issues.',
+      troubleshootingWorkflow: '1. Identify which sites have elevated ingestion latency\n2. Check Cribl source and pipeline metrics for backpressure\n3. Verify SentinelOne API rate limits are not being hit\n4. Check network connectivity between collection infrastructure and SentinelOne cloud\n5. Review Cribl worker queue depths and memory utilization\n6. Determine if latency is consistent or bursty',
+      dashboardDependency: 'Pipeline Latency dashboard, Ingestion Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Ingestion latency by site',
+          description: 'Measure delay between event creation and arrival in the platform',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend ingestion_delay=_time - todatetime(createdAt)\n| summarize AvgDelay=avg(ingestion_delay), MaxDelay=max(ingestion_delay), Events=count() by siteName\n| order by AvgDelay desc'
+        },
+        {
+          name: 'Latency trend over time',
+          description: 'Track ingestion delay trends to spot degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend ingestion_delay=_time - todatetime(createdAt)\n| timestats span=15m AvgDelay=avg(ingestion_delay), MaxDelay=max(ingestion_delay)'
+        },
+        {
+          name: 'High-latency events breakdown',
+          description: 'Identify which agents and sites contribute to high-latency events',
+          query: 'dataset="$DATASET" earliest=-1h\n| extend ingestion_delay=_time - todatetime(createdAt)\n| where ingestion_delay > 600\n| summarize LateEvents=count() by agentComputerName, siteName\n| order by LateEvents desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'proofpoint-email': [
+    {
+      id: 'ppf-obs-001',
+      name: 'Email Processing Pipeline Gap',
+      objective: 'Detect when Proofpoint event flow stops or significantly decreases, indicating API collection failures, service outages, or pipeline issues.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'email-flow'],
+      requiredFields: ['timestamp', 'sender', 'recipient', 'cluster'],
+      detectionLogic: 'Alert when email event volume drops below 30% of the hourly baseline for the same day-of-week and time-of-day. Evaluate per cluster with 15-minute windows. Also alert if zero events received for more than 10 minutes during business hours.',
+      operationalValue: 'Email is business-critical infrastructure. If Proofpoint events stop flowing, security visibility into phishing, malware, and impostor threats is lost. Early detection enables rapid pipeline restoration.',
+      changeMgmtRelevance: 'Pipeline gaps often follow API credential rotations, Proofpoint cluster maintenance, or Cribl source configuration changes. Correlate with change windows.',
+      troubleshootingWorkflow: '1. Confirm the gap is real — check last received event timestamp per cluster\n2. Verify Proofpoint API connectivity and authentication\n3. Check Cribl source health metrics for the Proofpoint collector\n4. Review Proofpoint service status for known outages\n5. Check API rate limiting or credential expiration\n6. Verify network connectivity to Proofpoint endpoints',
+      dashboardDependency: 'Email Pipeline Health dashboard, Source Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume per cluster over time',
+          description: 'Track email event ingestion rate to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by cluster'
+        },
+        {
+          name: 'Last seen timestamp per cluster',
+          description: 'Find clusters that may have stopped sending events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(timestamp), EventCount=count() by cluster\n| order by LastSeen asc'
+        },
+        {
+          name: 'Hourly volume comparison (current vs 7-day average)',
+          description: 'Compare current ingestion rate against historical baseline',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize CurrentCount=count(), UniqueSenders=dcount(sender), UniqueRecipients=dcount(recipient) by cluster\n| order by CurrentCount asc'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-002',
+      name: 'Spam Score Distribution Shift',
+      objective: 'Detect when the distribution of spam scores changes significantly, indicating filter tuning issues, new spam campaigns, or scoring engine problems.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'spam', 'scoring'],
+      requiredFields: ['spamScore', 'sender', 'recipient', 'cluster', 'timestamp'],
+      detectionLogic: 'Alert when the average spamScore shifts by more than 2 standard deviations from the 7-day rolling mean, or when the percentage of messages scoring above the quarantine threshold changes by more than 25% in a 1-hour window.',
+      operationalValue: 'Spam score shifts indicate either a new spam campaign overwhelming filters, a scoring engine update that changed thresholds, or a misconfiguration that is over/under-scoring legitimate mail.',
+      changeMgmtRelevance: 'Score distribution changes after Proofpoint policy updates, spam filter tuning, or allowlist/blocklist modifications indicate the change had significant impact.',
+      troubleshootingWorkflow: '1. Identify the direction of the shift — are scores higher or lower than baseline?\n2. Check if the shift is cluster-wide or localized to specific recipients\n3. Review recent Proofpoint policy changes or engine updates\n4. Sample messages at the shifted scores to validate accuracy\n5. Check for new bulk senders that may be skewing scores\n6. Verify allowlist/blocklist entries have not been modified unexpectedly',
+      dashboardDependency: 'Spam Score Distribution dashboard, Email Quality dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Spam score distribution over time',
+          description: 'Visualize how spam scores trend to identify distribution shifts',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h AvgScore=avg(spamScore), MaxScore=max(spamScore), P95Score=percentile(spamScore, 95)'
+        },
+        {
+          name: 'Score band breakdown (current vs baseline)',
+          description: 'Compare current spam score distribution against norms',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend score_band=case(spamScore < 25, "Low (0-24)", spamScore < 50, "Medium (25-49)", spamScore < 75, "High (50-74)", "Critical (75-100)")\n| summarize Count=count() by score_band, cluster\n| order by Count desc'
+        },
+        {
+          name: 'Top senders driving high spam scores',
+          description: 'Identify senders contributing to score distribution shifts',
+          query: 'dataset="$DATASET" spamScore > 50 earliest=-4h\n| summarize Messages=count(), AvgScore=avg(spamScore), Recipients=dcount(recipient) by sender\n| order by Messages desc\n| limit 25'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-003',
+      name: 'Quarantine Volume Spike',
+      objective: 'Detect abnormal increases in quarantined messages that may overwhelm review capacity or indicate over-aggressive filtering blocking legitimate mail.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'quarantine', 'workload'],
+      requiredFields: ['quarantineFolder', 'sender', 'recipient', 'subject', 'spamScore', 'timestamp'],
+      detectionLogic: 'Alert when quarantine volume exceeds 200% of the 7-day hourly baseline, or when a single quarantineFolder receives more than 500 messages in a 30-minute window. Separate alerting for different quarantine folders.',
+      operationalValue: 'Quarantine spikes create review backlogs for security teams. If legitimate mail is being quarantined at scale, business operations are impacted. If malicious mail is spiking, it may indicate an active campaign.',
+      changeMgmtRelevance: 'Quarantine volume increases after filter policy changes, new detection rules, or threshold adjustments indicate the change needs tuning to avoid alert fatigue.',
+      troubleshootingWorkflow: '1. Identify which quarantine folder(s) are spiking\n2. Sample quarantined messages to assess false positive rate\n3. Check if a specific sender or domain dominates the quarantine\n4. Review recent policy changes that may have lowered thresholds\n5. Determine if this is a new campaign or over-aggressive filtering\n6. Assess whether SOC review capacity can handle the volume',
+      dashboardDependency: 'Quarantine Volume dashboard, SOC Workload dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Quarantine volume by folder over time',
+          description: 'Track quarantine rates per folder to identify spikes',
+          query: 'dataset="$DATASET" quarantineFolder != "" earliest=-24h\n| timestats span=30m count() by quarantineFolder'
+        },
+        {
+          name: 'Top senders in quarantine (last 4 hours)',
+          description: 'Identify senders driving quarantine volume',
+          query: 'dataset="$DATASET" quarantineFolder != "" earliest=-4h\n| summarize QuarantinedMsgs=count(), UniqueRecipients=dcount(recipient), AvgSpamScore=avg(spamScore) by sender, quarantineFolder\n| order by QuarantinedMsgs desc\n| limit 25'
+        },
+        {
+          name: 'Quarantine rate as percentage of total mail',
+          description: 'See what proportion of mail is being quarantined',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_quarantined=iif(quarantineFolder != "", 1, 0)\n| timestats span=30m Total=count(), Quarantined=sum(is_quarantined)'
+        },
+        {
+          name: 'Quarantined subjects — common patterns',
+          description: 'Find subject line patterns in quarantined messages to identify campaigns',
+          query: 'dataset="$DATASET" quarantineFolder != "" earliest=-2h\n| summarize Count=count(), Senders=dcount(sender) by subject\n| order by Count desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-004',
+      name: 'Phish Score Calibration Drift',
+      objective: 'Monitor phishScore reliability by detecting when scores diverge from actual threat classifications, indicating model drift or calibration issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'phishing', 'model-accuracy'],
+      requiredFields: ['phishScore', 'threatsInfoMap_classification', 'sender', 'recipient', 'timestamp'],
+      detectionLogic: 'Alert when messages with low phishScore (<30) are subsequently classified as phishing threats, or when high phishScore (>70) messages have no associated threat classification. Track the score-to-classification correlation on a rolling 24-hour basis.',
+      operationalValue: 'Score calibration drift means the phishing model is becoming less reliable. If high-confidence scores no longer correlate with actual threats, response automation built on those scores becomes unreliable.',
+      changeMgmtRelevance: 'Model drift may follow Proofpoint engine updates, training data changes, or configuration modifications that affect scoring.',
+      troubleshootingWorkflow: '1. Identify the direction of calibration drift — over-scoring or under-scoring?\n2. Sample messages at various score levels to validate classifications\n3. Check if drift is limited to specific sender domains or message types\n4. Review recent Proofpoint engine or model updates\n5. Verify threat intelligence feeds are current and accessible\n6. Contact Proofpoint support if systemic model degradation is confirmed',
+      dashboardDependency: 'Score Accuracy dashboard, Detection Calibration dashboard',
+      criblSearchQueries: [
+        {
+          name: 'PhishScore vs classification correlation',
+          description: 'Compare phish scores against actual threat classifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend score_band=case(phishScore < 30, "Low", phishScore < 70, "Medium", "High")\n| summarize Count=count() by score_band, threatsInfoMap_classification\n| order by score_band asc, Count desc'
+        },
+        {
+          name: 'High phishScore messages without threat classification',
+          description: 'Find potential over-scoring — high scores with no confirmed threat',
+          query: 'dataset="$DATASET" phishScore > 70 earliest=-24h\n| where threatsInfoMap_classification == "" or threatsInfoMap_classification == "none"\n| summarize Count=count(), UniqueSenders=dcount(sender) by cluster\n| order by Count desc'
+        },
+        {
+          name: 'PhishScore trend by classification',
+          description: 'Track how scores relate to classifications over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h AvgPhishScore=avg(phishScore) by threatsInfoMap_classification'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-005',
+      name: 'Impostor Score Alert Threshold Breach',
+      objective: 'Monitor for sustained increases in impostor (BEC) scores across the environment, indicating targeted impersonation campaigns or scoring anomalies.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'impostor', 'bec'],
+      requiredFields: ['impostorScore', 'sender', 'recipient', 'subject', 'timestamp', 'cluster'],
+      detectionLogic: 'Alert when the count of messages with impostorScore > 50 exceeds 150% of the 7-day baseline for the same hour, or when any single recipient receives more than 5 high-impostor-score messages in a 1-hour window.',
+      operationalValue: 'Business email compromise (BEC) is the highest-cost email threat. Spikes in impostor scores require immediate investigation as they may indicate active impersonation campaigns targeting executives or finance teams.',
+      changeMgmtRelevance: 'Impostor score spikes after domain configuration changes (SPF, DKIM, DMARC), new sender allowlists, or organizational changes (new executives) may require policy adjustments.',
+      troubleshootingWorkflow: '1. Identify recipients receiving high-impostor-score messages\n2. Check if senders are spoofing known internal executives\n3. Verify DMARC/SPF/DKIM alignment for the sending domains\n4. Determine if this is a targeted campaign or broad spray\n5. Check if sender domains are newly registered\n6. Escalate to incident response if active BEC campaign confirmed',
+      dashboardDependency: 'BEC Threat dashboard, Impostor Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High impostor score messages over time',
+          description: 'Track BEC-scored messages to identify campaign timing',
+          query: 'dataset="$DATASET" impostorScore > 50 earliest=-24h\n| timestats span=1h count() by cluster'
+        },
+        {
+          name: 'Top targeted recipients',
+          description: 'Identify which recipients are receiving the most impostor messages',
+          query: 'dataset="$DATASET" impostorScore > 50 earliest=-24h\n| summarize HighImpostorMsgs=count(), UniqueSenders=dcount(sender), AvgScore=avg(impostorScore) by recipient\n| order by HighImpostorMsgs desc\n| limit 20'
+        },
+        {
+          name: 'Impostor score breakdown by sender domain',
+          description: 'Find which sending domains are generating impostor signals',
+          query: 'dataset="$DATASET" impostorScore > 30 earliest=-12h\n| extend sender_domain=extract("@(.+)$", 1, sender)\n| summarize Messages=count(), AvgScore=avg(impostorScore), Targets=dcount(recipient) by sender_domain\n| order by AvgScore desc\n| limit 20'
+        },
+        {
+          name: 'Subject line patterns in impostor messages',
+          description: 'Identify common BEC lures in high-impostor-score messages',
+          query: 'dataset="$DATASET" impostorScore > 60 earliest=-24h\n| summarize Count=count(), AvgScore=avg(impostorScore) by subject\n| order by Count desc\n| limit 15'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-006',
+      name: 'Threat Type Distribution Change',
+      objective: 'Detect shifts in the types of threats observed (URL, attachment, impostor) indicating new campaign tactics or detection capability changes.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'threat-landscape', 'tactics'],
+      requiredFields: ['threatsInfoMap_threatType', 'threatsInfoMap_classification', 'sender', 'recipient', 'timestamp'],
+      detectionLogic: 'Alert when any threat type increases by more than 200% compared to its 7-day rolling average, or when the relative proportion of threat types shifts by more than 20 percentage points in a 4-hour window.',
+      operationalValue: 'Threat type shifts reveal evolving attacker tactics. A shift from URL-based to attachment-based threats requires different response procedures. Understanding the current threat mix helps prioritize security controls.',
+      changeMgmtRelevance: 'Threat type distribution changes may follow Proofpoint detection engine updates, new URL rewriting rules, or attachment sandboxing policy changes.',
+      troubleshootingWorkflow: '1. Identify which threat type(s) shifted and the magnitude\n2. Determine if the shift is an increase in one type or decrease in another\n3. Sample recent threats of the dominant type to understand the campaign\n4. Check if Proofpoint detection capabilities changed for any threat type\n5. Review whether new security controls affected one threat type more than others\n6. Update SOC runbooks if the threat landscape has fundamentally shifted',
+      dashboardDependency: 'Threat Landscape dashboard, Campaign Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Threat type volume over time',
+          description: 'Visualize how different threat types trend',
+          query: 'dataset="$DATASET" threatsInfoMap_threatType != "" earliest=-7d\n| timestats span=4h count() by threatsInfoMap_threatType'
+        },
+        {
+          name: 'Current threat type distribution',
+          description: 'See the current mix of threat types being detected',
+          query: 'dataset="$DATASET" threatsInfoMap_threatType != "" earliest=-4h\n| summarize Count=count(), UniqueSenders=dcount(sender), UniqueTargets=dcount(recipient) by threatsInfoMap_threatType, threatsInfoMap_classification\n| order by Count desc'
+        },
+        {
+          name: 'Threat type ratio comparison',
+          description: 'Compare threat type proportions for current window vs baseline',
+          query: 'dataset="$DATASET" threatsInfoMap_threatType != "" earliest=-1h\n| summarize Count=count() by threatsInfoMap_threatType\n| extend TotalThreats=sum(Count)\n| extend Percentage=round(Count * 100.0 / TotalThreats, 1)\n| order by Percentage desc'
+        }
+      ]
+    },
+    {
+      id: 'ppf-obs-007',
+      name: 'Message Disposition Processing Delay',
+      objective: 'Monitor for delays or failures in message disposition actions (quarantine, deliver, redirect), indicating processing bottlenecks or policy execution failures.',
+      severity: 'Low',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'disposition', 'processing'],
+      requiredFields: ['messageParts_disposition', 'timestamp', 'sender', 'recipient', 'cluster'],
+      detectionLogic: 'Alert when the ratio of messages without a final disposition exceeds 5% over a 30-minute window, or when disposition processing time (gap between message receipt and action) exceeds 5 minutes for more than 10% of messages.',
+      operationalValue: 'Delayed or missing dispositions mean messages may be stuck in processing limbo — neither delivered nor quarantined. This creates both security risk (unscanned delivery) and business impact (delayed legitimate mail).',
+      changeMgmtRelevance: 'Disposition delays after policy changes indicate that new rules may be computationally expensive or creating processing conflicts.',
+      troubleshootingWorkflow: '1. Identify which disposition types are affected\n2. Check if the issue is cluster-wide or localized\n3. Review Proofpoint processing queue metrics\n4. Verify policy evaluation is completing without errors\n5. Check for conflicting rules that may cause indeterminate disposition\n6. Review Proofpoint infrastructure health and capacity',
+      dashboardDependency: 'Email Processing Health dashboard, Disposition Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Disposition distribution over time',
+          description: 'Track how messages are being dispositioned to spot processing issues',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by messageParts_disposition'
+        },
+        {
+          name: 'Messages with missing or unusual dispositions',
+          description: 'Find messages that may be stuck in processing',
+          query: 'dataset="$DATASET" earliest=-2h\n| where messageParts_disposition == "" or messageParts_disposition == "unknown"\n| summarize Count=count(), Senders=dcount(sender), Recipients=dcount(recipient) by cluster\n| order by Count desc'
+        },
+        {
+          name: 'Disposition breakdown by cluster',
+          description: 'Compare disposition patterns across clusters to identify inconsistencies',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Count=count() by messageParts_disposition, cluster\n| order by cluster asc, Count desc'
+        },
+        {
+          name: 'Volume of undispositioned messages trend',
+          description: 'Track messages without final disposition over time',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend has_disposition=iif(messageParts_disposition != "" and messageParts_disposition != "unknown", 1, 0)\n| timestats span=30m Total=count(), WithDisposition=sum(has_disposition)'
+        }
+      ]
+    }
+  ],
+  'mimecast-email': [
+    {
+      id: 'mmc-obs-001',
+      name: 'Email Routing Flow Interruption',
+      objective: 'Detect when email routing patterns change unexpectedly, indicating mail flow issues, MX record changes, or relay failures.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'routing', 'mail-flow'],
+      requiredFields: ['datetime', 'route', 'senderAddress', 'recipientAddress', 'Action'],
+      detectionLogic: 'Alert when event volume for any route drops below 25% of its 4-hour baseline, or when a route that was active in the past 24 hours produces zero events for 15 minutes during business hours. Evaluate per route.',
+      operationalValue: 'Email routing interruptions mean messages are not being delivered or processed. This directly impacts business operations and may indicate infrastructure failures requiring immediate attention.',
+      changeMgmtRelevance: 'Routing changes follow MX record updates, relay configuration changes, or Mimecast policy modifications. Unexpected route drops after changes indicate misconfiguration.',
+      troubleshootingWorkflow: '1. Identify which route(s) have stopped or reduced\n2. Check if the route drop correlates with a known maintenance window\n3. Verify MX records and relay connectivity\n4. Check Mimecast service status for the affected route\n5. Verify upstream mail server health\n6. Check Cribl pipeline health for this source',
+      dashboardDependency: 'Mail Flow Health dashboard, Route Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by route over time',
+          description: 'Track mail flow per route to identify interruptions',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by route'
+        },
+        {
+          name: 'Route health summary',
+          description: 'Current status of all routes with last seen times',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(datetime), Messages=count(), UniqueSenders=dcount(senderAddress) by route\n| order by LastSeen asc'
+        },
+        {
+          name: 'Routes with sudden volume drop',
+          description: 'Find routes that have significantly decreased in the last hour',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize RecentMessages=count() by route\n| where RecentMessages < 10\n| order by RecentMessages asc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-002',
+      name: 'TLS Version Degradation',
+      objective: 'Detect when email connections downgrade to older TLS versions, indicating certificate issues, configuration drift, or potential downgrade attacks.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'tls', 'encryption'],
+      requiredFields: ['TlsVersion', 'senderAddress', 'route', 'datetime', 'Action'],
+      detectionLogic: 'Alert when the proportion of connections using TLS 1.0 or 1.1 increases by more than 10 percentage points compared to the 7-day baseline, or when a route that was exclusively TLS 1.2+ begins using older versions.',
+      operationalValue: 'TLS downgrades indicate infrastructure problems (expired certificates, misconfigured servers) or active attacks. Maintaining strong encryption for email in transit is a compliance requirement.',
+      changeMgmtRelevance: 'TLS version changes follow certificate renewals, load balancer updates, or partner server configuration changes. Unexpected downgrades after changes require immediate investigation.',
+      troubleshootingWorkflow: '1. Identify which routes are experiencing TLS downgrades\n2. Determine if the downgrade is inbound, outbound, or both\n3. Check certificate validity and configuration on affected servers\n4. Verify partner/relay server TLS capabilities\n5. Check for recent certificate or load balancer changes\n6. Review Mimecast TLS policy settings for the affected route',
+      dashboardDependency: 'Encryption Health dashboard, TLS Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'TLS version distribution over time',
+          description: 'Track TLS version usage to detect downgrades',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by TlsVersion'
+        },
+        {
+          name: 'Routes using weak TLS versions',
+          description: 'Identify routes with outdated encryption',
+          query: 'dataset="$DATASET" earliest=-24h\n| where TlsVersion in ("TLSv1.0", "TLSv1.1") or TlsVersion == ""\n| summarize WeakTLS=count(), UniqueSenders=dcount(senderAddress) by route, TlsVersion\n| order by WeakTLS desc'
+        },
+        {
+          name: 'TLS version ratio by route',
+          description: 'See the encryption strength breakdown per route',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Count=count() by route, TlsVersion\n| order by route asc, Count desc'
+        },
+        {
+          name: 'Senders with weak TLS connections',
+          description: 'Identify external senders connecting with outdated encryption',
+          query: 'dataset="$DATASET" earliest=-24h\n| where TlsVersion in ("TLSv1.0", "TLSv1.1") or TlsVersion == ""\n| summarize Messages=count() by senderAddress, TlsVersion\n| order by Messages desc\n| limit 25'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-003',
+      name: 'Rejection Rate Anomaly',
+      objective: 'Detect abnormal increases in email rejections that may indicate blocking legitimate senders, DNS issues, or overly aggressive policy.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'rejection', 'delivery'],
+      requiredFields: ['RejectionType', 'senderAddress', 'recipientAddress', 'route', 'datetime'],
+      detectionLogic: 'Alert when the overall rejection rate exceeds 25% of total messages over a 1-hour window, or when any single RejectionType increases by more than 200% compared to its 7-day baseline. Also alert when a previously clean sender begins getting rejected.',
+      operationalValue: 'High rejection rates mean legitimate mail may be bouncing. This directly impacts business communications and can damage sender reputation for the organization.',
+      changeMgmtRelevance: 'Rejection rate spikes after policy changes, blocklist updates, or authentication configuration changes indicate over-aggressive filtering requiring immediate adjustment.',
+      troubleshootingWorkflow: '1. Identify which RejectionType(s) are elevated\n2. Determine if rejections are concentrated on specific senders or recipients\n3. Check if a policy change or blocklist update occurred recently\n4. Verify DNS records (SPF, DKIM, DMARC) for rejected senders\n5. Sample rejected messages to assess false positive rate\n6. Check if the rejection is pre-DATA (connection) or post-DATA (content)',
+      dashboardDependency: 'Email Rejection dashboard, Delivery Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Rejection rate by type over time',
+          description: 'Track rejection patterns to identify anomalous increases',
+          query: 'dataset="$DATASET" RejectionType != "" earliest=-24h\n| timestats span=30m count() by RejectionType'
+        },
+        {
+          name: 'Top rejected senders',
+          description: 'Identify senders being rejected most frequently',
+          query: 'dataset="$DATASET" RejectionType != "" earliest=-4h\n| summarize Rejections=count(), UniqueRecipients=dcount(recipientAddress) by senderAddress, RejectionType\n| order by Rejections desc\n| limit 25'
+        },
+        {
+          name: 'Rejection ratio vs total mail volume',
+          description: 'See what percentage of mail is being rejected',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_rejected=iif(RejectionType != "", 1, 0)\n| timestats span=30m Total=count(), Rejected=sum(is_rejected)'
+        },
+        {
+          name: 'Rejections by route and type',
+          description: 'Identify which routes are experiencing the most rejections',
+          query: 'dataset="$DATASET" RejectionType != "" earliest=-4h\n| summarize Count=count() by route, RejectionType\n| order by Count desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-004',
+      name: 'Virus Detection Volume Spike',
+      objective: 'Monitor for surges in virus-positive messages that may indicate active malware campaigns, scanning failures, or false positive outbreaks.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'virus', 'malware'],
+      requiredFields: ['VirusFound', 'senderAddress', 'recipientAddress', 'AttachmentCount', 'datetime', 'Action'],
+      detectionLogic: 'Alert when virus-positive messages exceed 300% of the 7-day hourly baseline, or when more than 50 unique senders trigger virus detections in a 1-hour window. Also alert on sudden virus detection drops as this may indicate scanner failure.',
+      operationalValue: 'Virus detection spikes require immediate assessment — is this a real campaign requiring containment, a false positive storm causing business disruption, or a scanner update causing reclassification?',
+      changeMgmtRelevance: 'Virus detection changes after AV engine updates, signature deployments, or scanning policy changes indicate update impact that may need rollback.',
+      troubleshootingWorkflow: '1. Confirm whether detections are spikes or drops\n2. For spikes: identify the virus name and affected recipients\n3. Check if detections correlate with specific attachment types\n4. Verify if this is a known campaign via threat intelligence\n5. For drops: verify scanner health and signature currency\n6. Assess whether quarantine capacity can handle the volume',
+      dashboardDependency: 'Malware Detection dashboard, AV Scanner Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Virus detections over time',
+          description: 'Track virus-positive message volume to spot spikes',
+          query: 'dataset="$DATASET" VirusFound != "" earliest=-7d\n| timestats span=1h count()'
+        },
+        {
+          name: 'Top virus-positive senders and recipients',
+          description: 'Identify the scope of virus detections',
+          query: 'dataset="$DATASET" VirusFound != "" earliest=-4h\n| summarize Detections=count(), UniqueRecipients=dcount(recipientAddress) by senderAddress\n| order by Detections desc\n| limit 20'
+        },
+        {
+          name: 'Virus detection vs attachment presence correlation',
+          description: 'Verify if virus detections correlate with attachments as expected',
+          query: 'dataset="$DATASET" VirusFound != "" earliest=-24h\n| summarize Count=count(), AvgAttachments=avg(AttachmentCount) by Action\n| order by Count desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-005',
+      name: 'Spam Score Threshold Effectiveness',
+      objective: 'Monitor whether spam scoring is effectively separating legitimate mail from spam, detecting calibration drift or filter bypass.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'spam', 'effectiveness'],
+      requiredFields: ['SpamScore', 'Action', 'senderAddress', 'recipientAddress', 'route', 'datetime'],
+      detectionLogic: 'Alert when the proportion of high-SpamScore messages (>7) that receive an "Allow" action exceeds 10%, indicating potential filter bypass. Also alert when low-SpamScore messages (<3) are blocked, indicating over-filtering.',
+      operationalValue: 'Spam score calibration directly affects mail delivery quality. Over-filtering blocks business mail; under-filtering floods inboxes. Monitoring effectiveness ensures the right balance is maintained.',
+      changeMgmtRelevance: 'Score threshold effectiveness changes after spam policy updates, allowlist modifications, or Mimecast configuration changes require threshold recalibration.',
+      troubleshootingWorkflow: '1. Identify whether the issue is over-filtering or under-filtering\n2. Check SpamScore distribution by action to find calibration gaps\n3. Sample messages at boundary scores to validate accuracy\n4. Review recent policy or threshold changes\n5. Check if specific routes have different effectiveness levels\n6. Adjust thresholds based on false positive/negative analysis',
+      dashboardDependency: 'Spam Filter Effectiveness dashboard, Score Calibration dashboard',
+      criblSearchQueries: [
+        {
+          name: 'SpamScore distribution by action',
+          description: 'See how scores correlate with filtering actions',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Count=count() by SpamScore, Action\n| order by SpamScore asc'
+        },
+        {
+          name: 'High-score messages that were allowed',
+          description: 'Find potential filter bypasses — high spam scores with allow action',
+          query: 'dataset="$DATASET" SpamScore > 7 Action="Allow" earliest=-24h\n| summarize Allowed=count() by senderAddress, route\n| order by Allowed desc\n| limit 20'
+        },
+        {
+          name: 'Score effectiveness trend over time',
+          description: 'Track the relationship between scores and actions over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend score_band=case(SpamScore < 3, "Clean", SpamScore < 7, "Suspect", "Spam")\n| timestats span=4h count() by score_band, Action'
+        },
+        {
+          name: 'Low-score messages that were blocked',
+          description: 'Find potential over-filtering — low spam scores with block action',
+          query: 'dataset="$DATASET" SpamScore < 3 Action != "Allow" earliest=-24h\n| summarize Blocked=count() by senderAddress, recipientAddress, Action\n| order by Blocked desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-006',
+      name: 'Attachment Volume Anomaly',
+      objective: 'Detect unusual changes in email attachment patterns that may indicate data exfiltration attempts, campaign waves, or scanning bottlenecks.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'attachments', 'volume'],
+      requiredFields: ['AttachmentCount', 'senderAddress', 'recipientAddress', 'route', 'datetime'],
+      detectionLogic: 'Alert when the average AttachmentCount per message exceeds 150% of the 7-day baseline for the same time window, or when messages with 5+ attachments exceed 200% of normal volume. Evaluate per route.',
+      operationalValue: 'Attachment volume anomalies can indicate data exfiltration (large outbound attachments), malware campaigns (mass inbound attachments), or scanning bottlenecks that delay mail processing.',
+      changeMgmtRelevance: 'Attachment pattern changes after DLP policy updates, attachment size limit changes, or scanning engine updates indicate policy impact requiring validation.',
+      troubleshootingWorkflow: '1. Identify whether attachment anomaly is inbound or outbound\n2. Check if specific senders or recipients dominate high-attachment messages\n3. Determine if attachment count correlates with virus detections\n4. Verify scanning infrastructure can handle the attachment load\n5. Check for bulk data transfer via email that should use other channels\n6. Review attachment size limits and DLP policy effectiveness',
+      dashboardDependency: 'Attachment Analysis dashboard, Email Volume dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Attachment count distribution over time',
+          description: 'Track how attachment volumes trend per route',
+          query: 'dataset="$DATASET" AttachmentCount > 0 earliest=-24h\n| timestats span=1h AvgAttachments=avg(AttachmentCount), MaxAttachments=max(AttachmentCount), Messages=count() by route'
+        },
+        {
+          name: 'High-attachment messages by sender',
+          description: 'Identify senders with unusually high attachment counts',
+          query: 'dataset="$DATASET" AttachmentCount > 3 earliest=-4h\n| summarize Messages=count(), TotalAttachments=sum(AttachmentCount), AvgAttach=avg(AttachmentCount) by senderAddress\n| order by TotalAttachments desc\n| limit 20'
+        },
+        {
+          name: 'Attachment volume trend comparison',
+          description: 'Compare current attachment patterns against recent baseline',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize TotalMessages=count(), WithAttachments=countif(AttachmentCount > 0), AvgAttach=avg(AttachmentCount) by route\n| extend AttachPct=round(WithAttachments * 100.0 / TotalMessages, 1)\n| order by AttachPct desc'
+        }
+      ]
+    },
+    {
+      id: 'mmc-obs-007',
+      name: 'Action Policy Consistency Monitor',
+      objective: 'Ensure email policy actions are applied consistently across routes and time, detecting policy drift or misconfiguration.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'policy', 'consistency'],
+      requiredFields: ['Action', 'route', 'SpamScore', 'senderAddress', 'datetime'],
+      detectionLogic: 'Alert when the action distribution for a route deviates by more than 15 percentage points from its 7-day baseline, or when two routes that should have identical policies show divergent action ratios (>10% difference).',
+      operationalValue: 'Policy inconsistency across routes means some mail paths have different security postures. This creates gaps that attackers can exploit and makes troubleshooting delivery issues difficult.',
+      changeMgmtRelevance: 'Policy consistency breaks after partial rollouts, route-specific overrides, or configuration changes that only apply to some routes.',
+      troubleshootingWorkflow: '1. Identify which routes have inconsistent action distributions\n2. Compare affected routes against the expected policy baseline\n3. Check if a recent policy change only partially propagated\n4. Verify route-specific overrides are intentional\n5. Review Mimecast policy configuration for consistency\n6. Correct any unintended drift and document the expected state',
+      dashboardDependency: 'Policy Consistency dashboard, Route Comparison dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Action distribution by route',
+          description: 'Compare how actions are distributed across different routes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Count=count() by route, Action\n| order by route asc, Count desc'
+        },
+        {
+          name: 'Action ratio trends per route',
+          description: 'Track whether action proportions shift over time for each route',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by Action, route'
+        },
+        {
+          name: 'Routes with divergent action profiles',
+          description: 'Find routes whose action distributions differ significantly',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Allowed=countif(Action == "Allow"), Blocked=countif(Action != "Allow") by route\n| extend AllowRate=round(Allowed * 100.0 / Total, 1)\n| order by AllowRate asc'
+        }
+      ]
+    }
+  ],
+  'aws-alb-logs': [
+    {
+      id: 'alb-obs-001',
+      name: 'Target Response Time Degradation',
+      objective: 'Detect when backend target response times increase significantly, indicating application performance issues, resource exhaustion, or deployment problems.',
+      severity: 'Critical',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'application'],
+      requiredFields: ['target_processing_time', 'target_ip', 'target_port', 'elb', 'request_url', 'timestamp'],
+      detectionLogic: 'Alert when average target_processing_time exceeds 5 seconds over a 5-minute window, or when P95 latency exceeds 10 seconds. Also alert when latency increases by more than 300% compared to the same time-of-day baseline from the past 7 days.',
+      operationalValue: 'Backend latency directly impacts user experience and can cascade to connection pool exhaustion, timeout storms, and complete service failure. Early detection enables scaling or rollback before user impact.',
+      changeMgmtRelevance: 'Latency increases after deployments, database migrations, or infrastructure changes indicate the change introduced a performance regression requiring investigation.',
+      troubleshootingWorkflow: '1. Identify which target IPs have elevated response times\n2. Determine if the issue is specific targets or all targets behind the ALB\n3. Check if specific request URLs correlate with high latency\n4. Review application metrics (CPU, memory, connection pools) on affected targets\n5. Check for recent deployments to the target group\n6. Verify database and downstream dependency performance',
+      dashboardDependency: 'Application Performance dashboard, Target Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average response time by target over time',
+          description: 'Track backend latency per target to identify degraded instances',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m AvgLatency=avg(target_processing_time), P95=percentile(target_processing_time, 95) by target_ip'
+        },
+        {
+          name: 'Slowest targets in the last hour',
+          description: 'Find targets with the worst response times',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgLatency=avg(target_processing_time), MaxLatency=max(target_processing_time), Requests=count() by target_ip, target_port, elb\n| where AvgLatency > 2\n| order by AvgLatency desc'
+        },
+        {
+          name: 'Slow endpoints — URLs with highest latency',
+          description: 'Identify which API endpoints are causing latency issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgLatency=avg(target_processing_time), P95=max(target_processing_time), Requests=count() by request_url\n| where Requests > 10\n| order by AvgLatency desc\n| limit 25'
+        },
+        {
+          name: 'Latency percentile trend',
+          description: 'Visualize latency distribution over time to spot gradual degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m P50=percentile(target_processing_time, 50), P95=percentile(target_processing_time, 95), P99=percentile(target_processing_time, 99)'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-002',
+      name: 'HTTP 5xx Error Rate Spike',
+      objective: 'Detect when backend targets return elevated server error rates, indicating application crashes, resource exhaustion, or deployment failures.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'http-5xx', 'application-health'],
+      requiredFields: ['target_status_code', 'elb_status_code', 'target_ip', 'request_url', 'elb', 'timestamp'],
+      detectionLogic: 'Alert when target_status_code 5xx responses exceed 5% of total requests over a 5-minute window, or when the absolute count of 5xx responses exceeds 100 per minute. Separate ELB-generated 5xx (502, 503, 504) from target-generated 5xx.',
+      operationalValue: '5xx errors mean the application is failing for users. Distinguishing ELB-generated errors (target unreachable) from target-generated errors (application bugs) determines whether the fix is infrastructure or application.',
+      changeMgmtRelevance: '5xx spikes after deployments are the clearest signal of a bad release. Automated canary analysis should track this metric for rollback decisions.',
+      troubleshootingWorkflow: '1. Determine if errors are ELB-generated (502/503/504) or target-generated\n2. For ELB 502: targets are returning invalid responses or closing connections\n3. For ELB 503: no healthy targets available\n4. For ELB 504: target did not respond within timeout\n5. For target 5xx: check application logs on affected targets\n6. Check if a deployment is in progress or just completed',
+      dashboardDependency: 'Error Rate dashboard, Deployment Health dashboard',
+      criblSearchQueries: [
+        {
+          name: '5xx error rate over time',
+          description: 'Track server error rate to identify spikes',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_5xx=iif(target_status_code >= 500 and target_status_code < 600, 1, 0)\n| timestats span=5m Total=count(), Errors=sum(is_5xx)'
+        },
+        {
+          name: 'Error breakdown by status code and target',
+          description: 'Identify which targets and error codes dominate',
+          query: 'dataset="$DATASET" target_status_code >= 500 earliest=-1h\n| summarize Count=count() by target_status_code, target_ip, elb\n| order by Count desc'
+        },
+        {
+          name: 'ELB vs target error attribution',
+          description: 'Distinguish infrastructure errors from application errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| where elb_status_code >= 500 or target_status_code >= 500\n| extend error_source=case(elb_status_code >= 500 and target_status_code < 500, "ELB", target_status_code >= 500, "Target", "Other")\n| summarize Count=count() by error_source, elb_status_code, target_status_code\n| order by Count desc'
+        },
+        {
+          name: 'URLs with highest error rates',
+          description: 'Find endpoints with the most server errors',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Total=count(), Errors=countif(target_status_code >= 500) by request_url\n| where Total > 20\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| where ErrorRate > 5\n| order by ErrorRate desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-003',
+      name: 'ALB Request Processing Time Anomaly',
+      objective: 'Detect when the load balancer itself introduces unusual processing delays, indicating ALB capacity issues, TLS negotiation problems, or configuration errors.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'alb-health', 'infrastructure'],
+      requiredFields: ['request_processing_time', 'response_processing_time', 'elb', 'client_ip', 'ssl_cipher', 'timestamp'],
+      detectionLogic: 'Alert when average request_processing_time exceeds 100ms over a 5-minute window (normal is <1ms), or when response_processing_time consistently exceeds 500ms. These indicate ALB-layer issues rather than backend problems.',
+      operationalValue: 'Elevated ALB processing times indicate infrastructure problems at the load balancer layer that affect all backends equally. These are distinct from target latency issues and require different remediation.',
+      changeMgmtRelevance: 'ALB processing delays after SSL certificate changes, security policy updates, or ALB configuration modifications indicate the change introduced overhead.',
+      troubleshootingWorkflow: '1. Confirm the delay is at the ALB layer (request_processing_time) not backend\n2. Check if the issue is specific to certain ELBs or fleet-wide\n3. Review SSL/TLS cipher suite — expensive ciphers cause processing delay\n4. Check ALB CloudWatch metrics for capacity and active connections\n5. Verify no WAF rules are causing inspection delays\n6. Check if client connection behavior changed (slow clients, incomplete requests)',
+      dashboardDependency: 'ALB Infrastructure Health dashboard, Processing Time Breakdown dashboard',
+      criblSearchQueries: [
+        {
+          name: 'ALB processing time breakdown over time',
+          description: 'Separate ALB processing from backend latency',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m AvgReqProcess=avg(request_processing_time), AvgRespProcess=avg(response_processing_time), AvgTargetProcess=avg(target_processing_time) by elb'
+        },
+        {
+          name: 'High ALB processing time events',
+          description: 'Find requests where the ALB introduced significant delay',
+          query: 'dataset="$DATASET" request_processing_time > 0.1 earliest=-1h\n| summarize Count=count(), AvgALBDelay=avg(request_processing_time) by elb, ssl_cipher\n| order by Count desc'
+        },
+        {
+          name: 'Processing time by SSL cipher',
+          description: 'Determine if specific cipher suites are causing overhead',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgReqTime=avg(request_processing_time), Requests=count() by ssl_cipher, ssl_protocol\n| order by AvgReqTime desc'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-004',
+      name: 'Target Group Health Degradation',
+      objective: 'Detect when targets begin failing or responding inconsistently, indicating individual instance failures or uneven load distribution.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'target-health', 'load-balancing'],
+      requiredFields: ['target_ip', 'target_port', 'target_status_code', 'target_processing_time', 'elb', 'timestamp'],
+      detectionLogic: 'Alert when a target that was previously healthy begins returning errors or shows latency divergence (>3x other targets in the group). Also alert when the number of distinct active targets drops below expected count.',
+      operationalValue: 'Individual target failures under a load balancer can be masked by health checks but still cause intermittent user errors. Detecting degraded targets enables proactive replacement before complete failure.',
+      changeMgmtRelevance: 'Target health degradation after deployments indicates the new code has issues on specific instances. Rolling deployments should pause when target health degrades.',
+      troubleshootingWorkflow: '1. Identify which targets are showing degraded responses\n2. Compare error rates and latency across all targets in the group\n3. Check if the ALB health checks have already marked the target unhealthy\n4. Review target instance metrics (CPU, memory, disk, network)\n5. Check for recent deployments to the specific target\n6. Determine if the issue is consistent or intermittent',
+      dashboardDependency: 'Target Group Health dashboard, Instance Comparison dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Per-target error rate and latency',
+          description: 'Compare health metrics across all targets',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), Errors=countif(target_status_code >= 500), AvgLatency=avg(target_processing_time) by target_ip, target_port, elb\n| extend ErrorRate=round(Errors * 100.0 / Requests, 1)\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Target activity over time',
+          description: 'Track request distribution across targets to detect failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by target_ip'
+        },
+        {
+          name: 'Active target count per ELB',
+          description: 'Monitor the number of distinct targets receiving traffic',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m ActiveTargets=dcount(target_ip) by elb'
+        },
+        {
+          name: 'Latency outlier targets',
+          description: 'Find targets with significantly worse latency than peers',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgLatency=avg(target_processing_time), P95Latency=percentile(target_processing_time, 95), Requests=count() by target_ip, elb\n| where Requests > 50\n| order by AvgLatency desc'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-005',
+      name: 'Client Connection Pattern Shift',
+      objective: 'Detect significant changes in client connection patterns including new client IPs, unusual ports, or shifted user agent distributions.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'traffic-pattern', 'client'],
+      requiredFields: ['client_ip', 'client_port', 'user_agent', 'request_url', 'elb', 'timestamp'],
+      detectionLogic: 'Alert when the number of unique client IPs changes by more than 50% compared to the same time window from the previous week, or when a new user_agent accounts for more than 20% of traffic in a 1-hour window.',
+      operationalValue: 'Client pattern shifts reveal traffic routing changes, new integrations going live, bot activity, or DNS failover events. Understanding who is connecting helps attribute performance and error impacts.',
+      changeMgmtRelevance: 'Client pattern changes after DNS updates, CDN configuration changes, or partner integrations going live validate that traffic is flowing as expected.',
+      troubleshootingWorkflow: '1. Determine the nature of the shift — new clients, lost clients, or changed patterns?\n2. Check if new client IPs correspond to known infrastructure (CDN, partner)\n3. Review user_agent distribution for unexpected bots or scrapers\n4. Verify DNS records point to the expected ALB\n5. Check if a failover event redirected traffic to this ALB\n6. Correlate with capacity metrics to ensure the ALB can handle the new pattern',
+      dashboardDependency: 'Traffic Analysis dashboard, Client Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unique clients over time',
+          description: 'Track the number of distinct client IPs connecting',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h UniqueClients=dcount(client_ip) by elb'
+        },
+        {
+          name: 'Top user agents by request volume',
+          description: 'Identify dominant client types and detect new entries',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Requests=count(), UniqueClients=dcount(client_ip) by user_agent\n| order by Requests desc\n| limit 20'
+        },
+        {
+          name: 'New client IPs in the last hour',
+          description: 'Find clients that appeared recently but were not seen before',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Requests=count(), FirstSeen=min(timestamp) by client_ip, user_agent\n| order by Requests desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-006',
+      name: 'SSL/TLS Handshake Failure Rate',
+      objective: 'Detect increases in TLS negotiation failures that may indicate certificate issues, client incompatibility, or infrastructure problems.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'tls', 'connectivity'],
+      requiredFields: ['ssl_cipher', 'ssl_protocol', 'elb_status_code', 'client_ip', 'elb', 'timestamp'],
+      detectionLogic: 'Alert when requests with empty ssl_cipher (failed TLS handshake) exceed 5% of total requests, or when the number of connections with outdated ssl_protocol (TLS 1.0, 1.1) increases by more than 50% compared to baseline.',
+      operationalValue: 'TLS failures mean clients cannot connect at all. This is a complete availability failure for affected users. Certificate expiration, protocol mismatches, and cipher suite incompatibility are common causes.',
+      changeMgmtRelevance: 'TLS failures after certificate rotations, security policy updates, or ALB listener changes indicate the change broke client connectivity.',
+      troubleshootingWorkflow: '1. Determine if failures are complete (no connection) or partial (downgraded)\n2. Check certificate validity and chain completeness\n3. Review SSL policy — were older protocols or ciphers removed?\n4. Identify affected client IPs — are they specific systems or broad?\n5. Check if the certificate covers all requested domains (SANs)\n6. Verify intermediate certificate chain is properly configured',
+      dashboardDependency: 'TLS Health dashboard, Certificate Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'SSL protocol and cipher distribution',
+          description: 'See the current mix of TLS versions and ciphers in use',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Requests=count() by ssl_protocol, ssl_cipher\n| order by Requests desc'
+        },
+        {
+          name: 'Failed TLS connections over time',
+          description: 'Track connections with empty cipher (handshake failure)',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend tls_failed=iif(ssl_cipher == "" or ssl_cipher == "-", 1, 0)\n| timestats span=15m Total=count(), Failed=sum(tls_failed) by elb'
+        },
+        {
+          name: 'Clients with TLS failures',
+          description: 'Identify which clients are experiencing handshake failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ssl_cipher == "" or ssl_cipher == "-"\n| summarize FailedConnections=count() by client_ip, elb\n| order by FailedConnections desc\n| limit 20'
+        },
+        {
+          name: 'SSL protocol version trend',
+          description: 'Monitor protocol version usage over time to detect downgrades',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by ssl_protocol'
+        }
+      ]
+    },
+    {
+      id: 'alb-obs-007',
+      name: 'Request Volume Baseline Deviation',
+      objective: 'Detect significant traffic volume deviations from expected patterns, indicating capacity concerns, traffic shifts, or upstream routing changes.',
+      severity: 'Low',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'traffic-volume', 'baseline'],
+      requiredFields: ['elb', 'client_ip', 'request_url', 'timestamp'],
+      detectionLogic: 'Alert when total request volume deviates by more than 40% from the day-of-week and time-of-day adjusted baseline. Track per ELB with 15-minute evaluation windows. Separate alerts for spikes (capacity risk) and drops (availability risk).',
+      operationalValue: 'Volume deviations are leading indicators of capacity issues (spikes may overwhelm targets) or availability issues (drops may indicate upstream failures or DNS problems). Proactive detection enables scaling before degradation.',
+      changeMgmtRelevance: 'Traffic volume changes after DNS changes, CDN updates, or marketing campaigns indicate the infrastructure needs to scale to meet new demand.',
+      troubleshootingWorkflow: '1. Determine if the deviation is a spike or a drop\n2. For spikes: verify target group can handle the load, check auto-scaling\n3. For drops: check upstream routing, DNS, and CDN configuration\n4. Compare traffic patterns across all ELBs to determine if traffic shifted\n5. Check if a specific URL path is driving the volume change\n6. Review capacity plans and scaling policies',
+      dashboardDependency: 'Traffic Volume dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request volume by ELB over time',
+          description: 'Track overall traffic patterns to detect deviations',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=15m count() by elb'
+        },
+        {
+          name: 'Current volume vs baseline comparison',
+          description: 'Compare current request rate against expected volume',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize CurrentRequests=count(), UniqueClients=dcount(client_ip), UniqueURLs=dcount(request_url) by elb\n| order by CurrentRequests desc'
+        },
+        {
+          name: 'Volume by hour of day (weekly pattern)',
+          description: 'Establish normal traffic patterns for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour_of_day=hourofday(timestamp)\n| summarize HourlyAvg=count() by hour_of_day, elb\n| order by hour_of_day asc'
+        }
+      ]
+    }
+  ],
+  'fortinet-fortigate': [
+    {
+      id: 'fgt-obs-001',
+      name: 'Firewall Policy Deny Rate Spike',
+      objective: 'Detect abnormal increases in denied traffic that may indicate network misconfigurations, policy errors, or application connectivity failures.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'policy', 'connectivity'],
+      requiredFields: ['action', 'policyid', 'srcip', 'dstip', 'dstport', 'service', 'date', 'time'],
+      detectionLogic: 'Alert when deny actions exceed 200% of the 7-day hourly baseline for a specific policyid, or when the overall deny rate exceeds 40% of total traffic over a 15-minute window. Evaluate per policy and per source IP.',
+      operationalValue: 'Deny rate spikes indicate that legitimate traffic is being blocked (application outages) or that attack traffic is hitting the perimeter (security event). Distinguishing between the two drives different response actions.',
+      changeMgmtRelevance: 'Deny rate increases after policy changes, network reconfigurations, or application migrations indicate broken connectivity requiring immediate rollback or correction.',
+      troubleshootingWorkflow: '1. Identify which policy IDs are generating denies\n2. Check if the denied traffic is from known internal sources (likely misconfiguration)\n3. Determine the destination — is it a business-critical service?\n4. Check if a policy change recently modified this rule\n5. Verify the intended traffic path and whether alternative rules should match\n6. Assess business impact — are users or applications affected?',
+      dashboardDependency: 'Firewall Policy Effectiveness dashboard, Deny Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Deny actions by policy over time',
+          description: 'Track denial rates per policy to identify spikes',
+          query: 'dataset="$DATASET" action="deny" earliest=-24h\n| timestats span=15m count() by policyid'
+        },
+        {
+          name: 'Top denied source/destination pairs',
+          description: 'Identify which traffic flows are being blocked',
+          query: 'dataset="$DATASET" action="deny" earliest=-4h\n| summarize DenyCount=count() by srcip, dstip, dstport, service, policyid\n| order by DenyCount desc\n| limit 25'
+        },
+        {
+          name: 'Deny rate as percentage of total traffic',
+          description: 'Monitor the overall deny ratio to detect abnormal blocking',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_deny=iif(action == "deny", 1, 0)\n| timestats span=15m Total=count(), Denied=sum(is_deny)'
+        },
+        {
+          name: 'Policies with highest deny counts',
+          description: 'Find policies generating the most denials for review',
+          query: 'dataset="$DATASET" action="deny" earliest=-1h\n| summarize DenyCount=count(), UniqueSrc=dcount(srcip), UniqueDst=dcount(dstip) by policyid, service\n| order by DenyCount desc\n| limit 15'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-002',
+      name: 'Session Duration Anomaly',
+      objective: 'Detect abnormal session durations that may indicate application hangs, tunnel failures, or persistent unauthorized connections.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'session-duration', 'connectivity'],
+      requiredFields: ['duration', 'srcip', 'dstip', 'dstport', 'service', 'action', 'policyid', 'date'],
+      detectionLogic: 'Alert when average session duration for a service exceeds 3x its 7-day baseline, or when sessions lasting more than 3600 seconds increase by more than 200%. Also detect services where duration drops to near-zero (connection resets).',
+      operationalValue: 'Duration anomalies reveal application issues: extremely long sessions indicate hangs or keepalive failures; extremely short sessions indicate rapid connection failures. Both patterns warrant investigation.',
+      changeMgmtRelevance: 'Session duration changes after firewall timeout adjustments, application deployments, or network changes indicate the change affected connection behavior.',
+      troubleshootingWorkflow: '1. Identify which services have anomalous session durations\n2. For long sessions: check if connections are idle (low sentbyte/rcvdbyte)\n3. For short sessions: check if connections are being immediately reset\n4. Verify firewall session timeout settings for the affected policy\n5. Check application health for affected destinations\n6. Review if NAT or routing changes affected session tracking',
+      dashboardDependency: 'Session Analysis dashboard, Service Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average session duration by service',
+          description: 'Compare session durations across services to find anomalies',
+          query: 'dataset="$DATASET" action="accept" earliest=-24h\n| summarize AvgDuration=avg(duration), MaxDuration=max(duration), Sessions=count() by service, dstport\n| order by AvgDuration desc\n| limit 25'
+        },
+        {
+          name: 'Session duration trends over time',
+          description: 'Track how session durations change to spot anomaly onset',
+          query: 'dataset="$DATASET" action="accept" earliest=-12h\n| timestats span=30m AvgDuration=avg(duration), P95Duration=percentile(duration, 95) by service'
+        },
+        {
+          name: 'Extremely long sessions',
+          description: 'Find sessions that may be hanging or improperly maintained',
+          query: 'dataset="$DATASET" duration > 3600 earliest=-4h\n| summarize LongSessions=count(), AvgBytes=avg(sentbyte) by srcip, dstip, dstport, service, policyid\n| order by LongSessions desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-003',
+      name: 'Bandwidth Utilization Threshold',
+      objective: 'Monitor traffic volume patterns to detect capacity approaching limits, unusual data transfers, or traffic shifts that require capacity planning.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'bandwidth', 'throughput'],
+      requiredFields: ['sentbyte', 'rcvdbyte', 'srcip', 'dstip', 'service', 'policyid', 'date', 'time'],
+      detectionLogic: 'Alert when total byte throughput (sentbyte + rcvdbyte) exceeds 80% of the interface capacity baseline over a 15-minute window. Also alert when any single source IP exceeds 10% of total throughput.',
+      operationalValue: 'Approaching bandwidth limits causes packet loss, latency, and connection failures. Proactive detection enables traffic engineering, QoS adjustments, or capacity expansion before users are affected.',
+      changeMgmtRelevance: 'Bandwidth utilization changes after new application deployments, backup schedule changes, or traffic routing modifications indicate the change has significant capacity impact.',
+      troubleshootingWorkflow: '1. Identify which direction (sent vs received) is consuming bandwidth\n2. Determine if a specific source/destination pair dominates throughput\n3. Check if the traffic is business-legitimate (backups, replication)\n4. Review QoS policies and traffic shaping effectiveness\n5. Verify interface speed/duplex settings\n6. Plan capacity expansion if growth is sustained',
+      dashboardDependency: 'Bandwidth Utilization dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Total throughput over time',
+          description: 'Track aggregate bandwidth utilization',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=5m TotalSent=sum(sentbyte), TotalRcvd=sum(rcvdbyte)'
+        },
+        {
+          name: 'Top bandwidth consumers by source IP',
+          description: 'Identify which sources use the most bandwidth',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize SentBytes=sum(sentbyte), RcvdBytes=sum(rcvdbyte), Sessions=count() by srcip\n| extend TotalBytes=SentBytes + RcvdBytes\n| order by TotalBytes desc\n| limit 20'
+        },
+        {
+          name: 'Bandwidth by service and policy',
+          description: 'See which services and policies consume the most throughput',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize SentBytes=sum(sentbyte), RcvdBytes=sum(rcvdbyte), Sessions=count() by service, policyid\n| extend TotalBytes=SentBytes + RcvdBytes\n| order by TotalBytes desc\n| limit 15'
+        },
+        {
+          name: 'Bandwidth trend by hour of day',
+          description: 'Establish utilization patterns for capacity planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour_of_day=hourofday(todatetime(strcat(date, " ", time)))\n| summarize AvgSent=avg(sentbyte), AvgRcvd=avg(rcvdbyte) by hour_of_day\n| order by hour_of_day asc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-004',
+      name: 'Log Source Silence Detection',
+      objective: 'Detect when FortiGate devices stop sending logs, indicating collection failures, device issues, or network connectivity problems.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'device-health'],
+      requiredFields: ['devname', 'logid', 'date', 'time', 'subtype', 'vd'],
+      detectionLogic: 'Alert when no logs are received from a device (devname) within 5 minutes during expected activity periods. Use device-specific baselines accounting for low-traffic devices. Also detect sudden volume drops (>80% reduction).',
+      operationalValue: 'Silent firewalls mean complete visibility loss for the network segments they protect. This is the highest priority observability concern — without logs, all security and operational detections are blind.',
+      changeMgmtRelevance: 'Log silence after firmware upgrades, configuration pushes, or network changes indicates the change disrupted logging. Immediate investigation is required.',
+      troubleshootingWorkflow: '1. Identify which device(s) stopped sending logs\n2. Check if the silence affects all log subtypes or specific ones\n3. Verify device is reachable via management network\n4. Check syslog/OFTP configuration on the FortiGate\n5. Verify Cribl source health and connectivity\n6. Check for firmware upgrade or reboot events\n7. Verify VDOM configuration has not changed',
+      dashboardDependency: 'Device Coverage dashboard, Log Pipeline Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Log volume per device over time',
+          description: 'Track ingestion rate per FortiGate to detect silences',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m count() by devname'
+        },
+        {
+          name: 'Last seen timestamp per device',
+          description: 'Find devices that may have stopped sending logs',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(todatetime(strcat(date, " ", time))), Events=count(), Subtypes=dcount(subtype) by devname, vd\n| order by LastSeen asc'
+        },
+        {
+          name: 'Log subtype coverage per device',
+          description: 'Verify all expected log types are being received from each device',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Count=count() by devname, subtype\n| order by devname asc, Count desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-005',
+      name: 'Security Level Event Distribution Change',
+      objective: 'Monitor for shifts in the distribution of event severity levels, indicating new threats, policy changes, or logging configuration drift.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'severity', 'event-distribution'],
+      requiredFields: ['level', 'subtype', 'devname', 'logid', 'date', 'time'],
+      detectionLogic: 'Alert when any severity level (emergency, alert, critical, error, warning) increases by more than 200% compared to its 7-day hourly baseline. Also alert when the ratio of high-severity events to total events shifts by more than 15 percentage points.',
+      operationalValue: 'Severity distribution shifts indicate either real operational issues (more errors/criticals) or configuration changes that reclassified events. Both scenarios require investigation to maintain reliable alerting.',
+      changeMgmtRelevance: 'Level distribution changes after firmware updates, logging configuration changes, or policy modifications indicate the change affected event classification.',
+      troubleshootingWorkflow: '1. Identify which severity level(s) shifted\n2. Determine if the shift is across all devices or specific ones\n3. Check which log subtypes are contributing to the level change\n4. Review recent firmware or configuration updates\n5. Sample events at the elevated level to validate severity accuracy\n6. Adjust monitoring thresholds if the change is intentional',
+      dashboardDependency: 'Event Severity Trends dashboard, Device Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event level distribution over time',
+          description: 'Track severity level trends to identify shifts',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by level'
+        },
+        {
+          name: 'High-severity events by device and subtype',
+          description: 'Identify sources of elevated severity events',
+          query: 'dataset="$DATASET" level in ("emergency", "alert", "critical", "error") earliest=-4h\n| summarize Count=count() by level, devname, subtype\n| order by Count desc\n| limit 25'
+        },
+        {
+          name: 'Level ratio per device',
+          description: 'Compare severity distributions across devices',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), HighSev=countif(level in ("emergency", "alert", "critical", "error")) by devname\n| extend HighSevPct=round(HighSev * 100.0 / Total, 1)\n| order by HighSevPct desc'
+        },
+        {
+          name: 'Log IDs contributing to severity spikes',
+          description: 'Find which specific log event types are driving level changes',
+          query: 'dataset="$DATASET" level in ("emergency", "alert", "critical", "error") earliest=-1h\n| summarize Count=count() by logid, level, subtype, devname\n| order by Count desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-006',
+      name: 'VDOM Traffic Imbalance',
+      objective: 'Detect when virtual domain traffic distribution shifts unexpectedly, indicating routing changes, VDOM misconfiguration, or capacity issues.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'vdom', 'load-distribution'],
+      requiredFields: ['vd', 'sentbyte', 'rcvdbyte', 'srcip', 'dstip', 'action', 'devname', 'date'],
+      detectionLogic: 'Alert when traffic volume for any VDOM deviates by more than 50% from its 7-day baseline, or when the traffic ratio between VDOMs on the same device shifts by more than 20 percentage points. Evaluate per device.',
+      operationalValue: 'VDOM imbalances can indicate routing issues directing traffic to the wrong virtual domain, capacity exhaustion on one VDOM, or configuration drift between VDOMs that should be balanced.',
+      changeMgmtRelevance: 'VDOM traffic shifts after routing changes, policy modifications, or VDOM configuration updates indicate the change affected traffic distribution.',
+      troubleshootingWorkflow: '1. Identify which VDOM(s) have abnormal traffic levels\n2. Determine if traffic shifted from one VDOM to another (routing change)\n3. Check inter-VDOM link configuration\n4. Verify routing tables and policy routes per VDOM\n5. Review VDOM resource limits (session table, bandwidth)\n6. Check for recent configuration changes to VDOM assignments',
+      dashboardDependency: 'VDOM Distribution dashboard, Device Capacity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic volume by VDOM over time',
+          description: 'Track traffic distribution across virtual domains',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m TotalBytes=sum(sentbyte) + sum(rcvdbyte), Sessions=count() by vd, devname'
+        },
+        {
+          name: 'VDOM traffic ratio per device',
+          description: 'Compare traffic proportions across VDOMs on each device',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count(), Bytes=sum(sentbyte) + sum(rcvdbyte) by vd, devname\n| order by devname asc, Bytes desc'
+        },
+        {
+          name: 'VDOM session distribution',
+          description: 'Monitor session counts per VDOM for capacity planning',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count(), UniqueSrc=dcount(srcip), UniqueDst=dcount(dstip) by vd, devname\n| order by Sessions desc'
+        }
+      ]
+    },
+    {
+      id: 'fgt-obs-007',
+      name: 'Service Port Availability Monitor',
+      objective: 'Detect when traffic to expected service ports drops or disappears, indicating service outages, routing failures, or policy blocking.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'service-port', 'connectivity'],
+      requiredFields: ['dstport', 'service', 'action', 'srcip', 'dstip', 'policyid', 'date', 'time'],
+      detectionLogic: 'Alert when traffic to a monitored service port drops below 25% of its 4-hour baseline, or when a port that consistently received traffic goes to zero for more than 15 minutes. Focus on well-known service ports (80, 443, 25, 53, 389, 3306, 5432).',
+      operationalValue: 'Service port traffic drops often precede user-reported outages. Detecting these at the firewall layer provides early warning that a service may be unreachable before application monitoring catches it.',
+      changeMgmtRelevance: 'Port-level traffic drops after firewall rule changes, routing updates, or service migrations indicate connectivity was broken by the change.',
+      troubleshootingWorkflow: '1. Identify which service port(s) lost traffic\n2. Check if traffic is being denied by policy or simply not arriving\n3. Verify the destination service is running and listening\n4. Check routing between source and destination networks\n5. Review firewall policies that allow this service\n6. Verify DNS resolution for the service endpoint',
+      dashboardDependency: 'Service Availability dashboard, Port Traffic Matrix dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic volume by service port over time',
+          description: 'Track connection volume to key service ports',
+          query: 'dataset="$DATASET" earliest=-12h\n| where dstport in (80, 443, 25, 53, 389, 3306, 5432, 8443)\n| timestats span=15m count() by dstport, service'
+        },
+        {
+          name: 'Service ports with traffic drops',
+          description: 'Find ports that have significantly less traffic than expected',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Sessions=count(), UniqueSrc=dcount(srcip) by dstport, service, action\n| where Sessions < 5\n| order by Sessions asc'
+        },
+        {
+          name: 'Port availability by destination IP',
+          description: 'Check which destination servers may have lost connectivity',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count(), AllowedSessions=countif(action == "accept"), DeniedSessions=countif(action == "deny") by dstip, dstport, service\n| extend DenyRate=round(DeniedSessions * 100.0 / Sessions, 1)\n| where Sessions > 5\n| order by DenyRate desc\n| limit 25'
+        },
+        {
+          name: 'Service port traffic trend comparison',
+          description: 'Compare current port traffic against weekly patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where dstport in (80, 443, 25, 53, 389)\n| timestats span=1h count() by service'
+        }
+      ]
+    }
+  ],
+
+  'aws-guardduty': [
+    {
+      id: 'grd-obs-001',
+      name: 'GuardDuty Finding Ingestion Gap',
+      objective: 'Detect when GuardDuty findings stop arriving from one or more AWS accounts, indicating a collection pipeline failure, detector disabled state, or IAM permission regression.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'aws'],
+      requiredFields: ['updatedAt', 'accountId', 'region', 'type', 'severity'],
+      detectionLogic: 'Alert when no GuardDuty findings are received from an account/region pair that previously reported at least 1 finding per hour over the prior 7 days. Evaluate on 30-minute windows. Also alert if total finding volume across all accounts drops >70% from baseline.',
+      operationalValue: 'GuardDuty is the foundation of AWS threat detection. A silent detector means blind spots across the entire account. Early detection of ingestion gaps prevents extended periods without security visibility.',
+      changeMgmtRelevance: 'Ingestion gaps often follow IAM policy changes, CloudFormation stack updates, or Cribl pipeline modifications. Correlate with recent infrastructure changes.',
+      troubleshootingWorkflow: '1. Identify which account/region pairs stopped reporting\n2. Verify the GuardDuty detector is still enabled in the AWS console\n3. Check IAM role permissions for the collection mechanism\n4. Verify Cribl source connectivity and health metrics\n5. Check if CloudTrail (GuardDuty dependency) is still active\n6. Review recent Terraform/CloudFormation changes to the account',
+      dashboardDependency: 'GuardDuty Ingestion Health dashboard, Account Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Finding volume per account/region over time',
+          description: 'Track ingestion rate per account to detect drop-offs or gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by accountId, region'
+        },
+        {
+          name: 'Accounts with no findings in last 2 hours',
+          description: 'Identify accounts that may have stopped sending findings',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(updatedAt), FindingCount=count() by accountId, region\n| order by LastSeen asc'
+        },
+        {
+          name: 'Total finding volume trend (all accounts)',
+          description: 'Monitor overall ingestion health across the GuardDuty fleet',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by accountId\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-002',
+      name: 'High Severity Finding Spike',
+      objective: 'Detect sudden increases in high and critical severity GuardDuty findings that may indicate an active incident or a noisy misconfiguration generating false positives.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'severity', 'triage'],
+      requiredFields: ['severity', 'type', 'accountId', 'region', 'updatedAt'],
+      detectionLogic: 'Alert when the count of findings with severity >= 7 exceeds 300% of the 7-day baseline for the same time window. Evaluate on 15-minute intervals. Differentiate between diverse finding types (likely real incident) vs single repeated type (likely noisy rule).',
+      operationalValue: 'Spikes in high-severity findings require immediate triage. Distinguishing real incidents from noisy detectors prevents both alert fatigue and missed threats.',
+      changeMgmtRelevance: 'New workload deployments or infrastructure changes can trigger GuardDuty findings that appear as spikes. Correlate with deployment timelines.',
+      troubleshootingWorkflow: '1. Determine if spike is from one finding type or many\n2. Single type = likely noisy rule or known deployment activity\n3. Multiple types = potential real incident requiring escalation\n4. Check affected accounts and regions for scope\n5. Review finding details for actionable IOCs\n6. Suppress or archive if confirmed false positive pattern',
+      dashboardDependency: 'GuardDuty Severity Trends dashboard, Active Findings dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High severity findings over time',
+          description: 'Track volume of critical and high severity findings to spot spikes',
+          query: 'dataset="$DATASET" severity >= 7 earliest=-24h\n| timestats span=15m count() by type'
+        },
+        {
+          name: 'Finding type distribution during spike',
+          description: 'Determine if a spike is from diverse types (real) or repeated (noisy)',
+          query: 'dataset="$DATASET" severity >= 7 earliest=-4h\n| summarize FindingCount=count() by type, accountId\n| order by FindingCount desc\n| limit 20'
+        },
+        {
+          name: 'Severity distribution trend',
+          description: 'Compare severity levels over time to contextualize current state',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend SeverityBucket=iif(severity >= 7, "High/Critical", iif(severity >= 4, "Medium", "Low"))\n| timestats span=1h count() by SeverityBucket'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-003',
+      name: 'Regional Coverage Imbalance',
+      objective: 'Detect when GuardDuty finding coverage becomes uneven across regions, indicating detectors may be disabled or misconfigured in specific regions.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'coverage', 'regional', 'completeness'],
+      requiredFields: ['region', 'accountId', 'type', 'updatedAt'],
+      detectionLogic: 'Alert when a region that historically generates findings drops to zero or below 20% of its baseline while other regions remain normal. Compare region-level volumes against 14-day historical averages.',
+      operationalValue: 'Attackers often operate in less-monitored regions. Ensuring consistent coverage across all active regions eliminates blind spots that adversaries exploit.',
+      changeMgmtRelevance: 'Regional coverage gaps often follow org-wide policy changes, SCP updates, or region-specific infrastructure modifications.',
+      troubleshootingWorkflow: '1. Identify which regions have dropped below baseline\n2. Verify GuardDuty detector status in those regions\n3. Check if workloads still exist in the affected regions\n4. Review Service Control Policies for region restrictions\n5. Verify log forwarding configuration per region\n6. Check Cribl routing rules for region-based filtering',
+      dashboardDependency: 'Regional Coverage Map dashboard, Account Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Finding volume by region (last 7 days)',
+          description: 'Compare finding rates across regions to identify coverage gaps',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize FindingCount=count(), UniqueTypes=dcount(type) by region\n| order by FindingCount desc'
+        },
+        {
+          name: 'Region activity over time',
+          description: 'Timechart of findings per region to spot drop-offs',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=6h count() by region'
+        },
+        {
+          name: 'Regions with recent silence',
+          description: 'Find regions that were active but have gone quiet',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize LastSeen=max(updatedAt), Total=count() by region, accountId\n| order by LastSeen asc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-004',
+      name: 'Network Connection Action Volume Anomaly',
+      objective: 'Monitor network-based GuardDuty findings for unusual volume patterns that indicate scanning activity, resource compromise, or network misconfiguration.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'network', 'volume', 'anomaly'],
+      requiredFields: ['action_actionType', 'service_action_networkConnectionAction_remoteIpDetails_ipAddressV4', 'resource_type', 'resource_instanceDetails_instanceId', 'severity', 'updatedAt'],
+      detectionLogic: 'Alert when NETWORK_CONNECTION action findings from a single instance exceed 10x the normal rate within a 30-minute window. Also alert on sudden appearance of network findings from instances with no prior network-related findings.',
+      operationalValue: 'Network-related findings at high volume often indicate active compromise, cryptomining, or misconfigured security groups. Rapid identification enables containment.',
+      changeMgmtRelevance: 'Network findings can spike after security group changes, new service deployments, or VPC peering modifications that expose instances to new traffic patterns.',
+      troubleshootingWorkflow: '1. Identify the affected instance(s) and remote IPs\n2. Determine if this is inbound or outbound network activity\n3. Check if the instance was recently deployed or modified\n4. Review security group changes for the instance\n5. Correlate with VPC Flow Logs for traffic context\n6. Determine if instance needs isolation',
+      dashboardDependency: 'Network Findings dashboard, Instance Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Network action findings by instance',
+          description: 'Identify instances generating the most network-related findings',
+          query: 'dataset="$DATASET" action_actionType="NETWORK_CONNECTION" earliest=-24h\n| summarize FindingCount=count() by resource_instanceDetails_instanceId, resource_type\n| order by FindingCount desc\n| limit 20'
+        },
+        {
+          name: 'Remote IPs in network findings',
+          description: 'Track which remote IPs are involved in network-related findings',
+          query: 'dataset="$DATASET" action_actionType="NETWORK_CONNECTION" earliest=-12h\n| summarize Hits=count() by service_action_networkConnectionAction_remoteIpDetails_ipAddressV4, resource_instanceDetails_instanceId\n| order by Hits desc\n| limit 30'
+        },
+        {
+          name: 'Network findings trend per instance',
+          description: 'Time-series view of network findings to spot volume spikes',
+          query: 'dataset="$DATASET" action_actionType="NETWORK_CONNECTION" earliest=-48h\n| timestats span=1h count() by resource_instanceDetails_instanceId'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-005',
+      name: 'Finding Type Diversity Change',
+      objective: 'Track the variety of GuardDuty finding types over time to detect when detection capability narrows or expands unexpectedly.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'coverage', 'detection-health'],
+      requiredFields: ['type', 'accountId', 'updatedAt', 'severity'],
+      detectionLogic: 'Alert when the number of distinct finding types seen in the last 24 hours drops below 50% of the 30-day average distinct type count. This indicates potential detector feature degradation or data source loss.',
+      operationalValue: 'A reduction in finding type diversity suggests GuardDuty features may be disabled, data sources (DNS logs, VPC flow logs, CloudTrail) may be disconnected, or the detector configuration has been tampered with.',
+      changeMgmtRelevance: 'Feature flags, data source changes, or GuardDuty plan modifications directly affect which finding types can be generated.',
+      troubleshootingWorkflow: '1. Compare current finding types against historical type catalog\n2. Identify which finding categories disappeared\n3. Check GuardDuty feature enablement (S3, EKS, Malware, etc.)\n4. Verify connected data sources (CloudTrail, DNS, VPC Flow)\n5. Review detector configuration for disabled features\n6. Check if Cribl filtering rules are dropping finding types',
+      dashboardDependency: 'Detection Coverage dashboard, Finding Type Catalog dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Distinct finding types per day',
+          description: 'Track finding type diversity over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| extend day=format_datetime(updatedAt, "yyyy-MM-dd")\n| summarize UniqueTypes=dcount(type) by day\n| order by day desc'
+        },
+        {
+          name: 'Finding type catalog (last 7 days vs last 24 hours)',
+          description: 'Compare which types appeared recently vs historically',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastSeen=max(updatedAt), Total=count() by type\n| order by LastSeen desc'
+        },
+        {
+          name: 'Missing finding types (seen historically but not recently)',
+          description: 'Identify finding types that have disappeared from recent data',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize RecentCount=count() by type\n| order by RecentCount asc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-006',
+      name: 'Resource Type Distribution Shift',
+      objective: 'Monitor changes in which AWS resource types are generating findings to detect infrastructure shifts or detection blind spots.',
+      severity: 'Low',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'resource', 'infrastructure'],
+      requiredFields: ['resource_type', 'accountId', 'region', 'type', 'updatedAt'],
+      detectionLogic: 'Alert when a new resource type appears in findings that was not seen in the previous 30 days, or when an established resource type disappears entirely. Track resource type proportions for gradual shifts.',
+      operationalValue: 'Resource type distribution reflects infrastructure composition. Shifts indicate new workloads needing security coverage or decommissioned resources still generating alerts.',
+      changeMgmtRelevance: 'New resource types in findings often correlate with new service deployments. Disappearing resource types may indicate decommissioning or detection loss.',
+      troubleshootingWorkflow: '1. Identify new or missing resource types\n2. Correlate with known infrastructure changes or deployments\n3. Verify if new resource types have appropriate response procedures\n4. Check if missing types indicate decommissioned workloads\n5. Update detection documentation for new resource types\n6. Verify Cribl routing handles new resource type formats',
+      dashboardDependency: 'Resource Coverage dashboard, Infrastructure Changes dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Finding volume by resource type',
+          description: 'See which resource types generate the most findings',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize FindingCount=count(), Accounts=dcount(accountId) by resource_type\n| order by FindingCount desc'
+        },
+        {
+          name: 'Resource type trend over time',
+          description: 'Track how resource type distribution changes week over week',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1d count() by resource_type'
+        },
+        {
+          name: 'New resource types (first seen recently)',
+          description: 'Identify resource types that appeared for the first time recently',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize FirstSeen=min(updatedAt), LastSeen=max(updatedAt), Total=count() by resource_type\n| order by FirstSeen desc'
+        }
+      ]
+    },
+    {
+      id: 'grd-obs-007',
+      name: 'Finding Staleness and Update Lag',
+      objective: 'Detect when GuardDuty findings have excessive lag between generation and ingestion, indicating pipeline delays or processing bottlenecks.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'latency', 'pipeline', 'freshness'],
+      requiredFields: ['updatedAt', 'accountId', 'region', 'type', 'title'],
+      detectionLogic: 'Alert when the difference between finding updatedAt timestamp and Cribl ingestion time (_time) exceeds 15 minutes for more than 10% of findings in a 30-minute window. Also alert on findings arriving more than 1 hour stale.',
+      operationalValue: 'Stale findings reduce the value of real-time detection. A 1-hour-old critical finding is significantly less actionable than a 2-minute-old one. Pipeline lag must be monitored and minimized.',
+      changeMgmtRelevance: 'Ingestion lag increases after Cribl pipeline changes, source reconfiguration, or AWS EventBridge rule modifications.',
+      troubleshootingWorkflow: '1. Measure current ingestion lag per account/region\n2. Identify if lag is consistent or intermittent\n3. Check Cribl worker queue depth and backpressure\n4. Verify EventBridge/CloudWatch event delivery latency\n5. Review Cribl pipeline processing time metrics\n6. Check for batch vs streaming delivery mode changes',
+      dashboardDependency: 'Pipeline Latency dashboard, Ingestion Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Ingestion lag by account and region',
+          description: 'Measure time between finding generation and Cribl receipt',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize AvgLag=avg(_time - todatetime(updatedAt)), MaxLag=max(_time - todatetime(updatedAt)) by accountId, region\n| order by AvgLag desc'
+        },
+        {
+          name: 'Findings arriving more than 1 hour stale',
+          description: 'Identify severely delayed findings that may indicate pipeline issues',
+          query: 'dataset="$DATASET" earliest=-6h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(updatedAt))\n| where lag_minutes > 60\n| summarize StaleCount=count() by accountId, region, type\n| order by StaleCount desc'
+        },
+        {
+          name: 'Lag trend over time',
+          description: 'Track whether ingestion latency is improving or degrading',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(updatedAt))\n| timestats span=1h avg(lag_minutes), max(lag_minutes) by region'
+        },
+        {
+          name: 'Lag percentiles by region',
+          description: 'Distribution of ingestion delay to identify outlier regions',
+          query: 'dataset="$DATASET" earliest=-6h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(updatedAt))\n| summarize P50=percentile(lag_minutes, 50), P95=percentile(lag_minutes, 95), P99=percentile(lag_minutes, 99) by region\n| order by P95 desc'
+        }
+      ]
+    }
+  ],
+  'google-workspace-audit': [
+    {
+      id: 'gsw-obs-001',
+      name: 'Audit Log Ingestion Gap',
+      objective: 'Detect when Google Workspace audit logs stop arriving from specific applications, indicating API collection failures, OAuth token expiration, or pipeline issues.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'google-workspace'],
+      requiredFields: ['id_time', 'id_applicationName', 'actor_email', 'events_type'],
+      detectionLogic: 'Alert when no audit events are received from an application (admin, login, drive, etc.) within 30 minutes when that application historically generates events continuously. Track per-application ingestion rates against 7-day baselines.',
+      operationalValue: 'Google Workspace audit logs are critical for security monitoring, compliance, and operational visibility. Silent applications create compliance gaps and detection blind spots.',
+      changeMgmtRelevance: 'Ingestion gaps follow OAuth credential rotations, API scope changes, Google admin console modifications, or Cribl source reconfigurations.',
+      troubleshootingWorkflow: '1. Identify which applications stopped sending events\n2. Check OAuth token validity and API access\n3. Verify Google Workspace Reports API availability\n4. Review Cribl source configuration and health\n5. Check if Google admin disabled audit logging for the application\n6. Verify API quota limits have not been exceeded',
+      dashboardDependency: 'Workspace Ingestion Health dashboard, Application Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume per application over time',
+          description: 'Track ingestion rate per Workspace application to detect gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by id_applicationName'
+        },
+        {
+          name: 'Applications with no events in last hour',
+          description: 'Find applications that may have stopped sending audit logs',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(id_time), EventCount=count() by id_applicationName\n| order by LastSeen asc'
+        },
+        {
+          name: 'Ingestion volume comparison (today vs yesterday)',
+          description: 'Compare current ingestion against previous day for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by id_applicationName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-002',
+      name: 'Admin Activity Volume Spike',
+      objective: 'Detect unusual spikes in administrative actions that may indicate bulk configuration changes, automation runaway, or unauthorized administrative activity.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'admin', 'volume'],
+      requiredFields: ['actor_email', 'events_type', 'events_name', 'id_applicationName', 'id_time'],
+      detectionLogic: 'Alert when administrative event volume exceeds 500% of the hourly baseline for the same day-of-week and time window. Differentiate between single-actor spikes (automation/bulk change) and multi-actor spikes (organizational event).',
+      operationalValue: 'Administrative activity spikes often indicate bulk changes that can impact users across the organization. Early detection enables rapid response if changes are unintended.',
+      changeMgmtRelevance: 'Planned bulk admin changes (user provisioning, policy rollouts) should be correlated with change tickets. Unexpected spikes indicate unauthorized or accidental changes.',
+      troubleshootingWorkflow: '1. Identify which actor(s) are driving the spike\n2. Determine the event types involved (user management, settings, etc.)\n3. Single actor = check for automation or scripted bulk change\n4. Multiple actors = check for organizational event or training\n5. Verify changes against approved change requests\n6. Assess blast radius — how many users/settings affected?',
+      dashboardDependency: 'Admin Activity Trends dashboard, Change Velocity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Admin events per actor over time',
+          description: 'Identify which administrators are generating the most activity',
+          query: 'dataset="$DATASET" id_applicationName="admin" earliest=-24h\n| timestats span=1h count() by actor_email'
+        },
+        {
+          name: 'Event type breakdown during spike',
+          description: 'Understand what types of admin actions are being performed',
+          query: 'dataset="$DATASET" id_applicationName="admin" earliest=-4h\n| summarize ActionCount=count() by events_name, actor_email\n| order by ActionCount desc\n| limit 30'
+        },
+        {
+          name: 'Admin activity comparison (current vs baseline)',
+          description: 'Compare current admin volume against historical norms',
+          query: 'dataset="$DATASET" id_applicationName="admin" earliest=-7d\n| timestats span=4h count() by events_type'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-003',
+      name: 'Login Event Error Rate Increase',
+      objective: 'Detect increases in failed login attempts across the organization that may indicate authentication infrastructure issues, MFA outages, or credential stuffing.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'authentication', 'availability'],
+      requiredFields: ['events_name', 'events_type', 'actor_email', 'ipAddress', 'id_time', 'id_applicationName'],
+      detectionLogic: 'Alert when login failure events exceed 200% of baseline for the same time window, or when failure rate (failures/total logins) exceeds 30%. Evaluate on 15-minute windows with day-of-week adjusted baselines.',
+      operationalValue: 'Authentication failures at scale indicate infrastructure problems affecting user productivity. Could signal IdP issues, MFA provider outages, or network connectivity problems to Google.',
+      changeMgmtRelevance: 'Login failures often spike after SSO configuration changes, conditional access policy updates, or MFA enrollment campaigns.',
+      troubleshootingWorkflow: '1. Determine scope — is this org-wide or specific OU/group?\n2. Check if failures are from specific IP ranges (office locations)\n3. Verify IdP/SSO infrastructure health\n4. Check Google Workspace service status page\n5. Review recent conditional access or MFA policy changes\n6. Determine if failures are interactive or programmatic (service accounts)',
+      dashboardDependency: 'Authentication Health dashboard, Login Failure Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Login failures over time',
+          description: 'Track authentication failure volume to identify spikes',
+          query: 'dataset="$DATASET" id_applicationName="login" events_name="login_failure" earliest=-24h\n| timestats span=15m count() by events_type'
+        },
+        {
+          name: 'Failure rate by source IP',
+          description: 'Identify which networks are experiencing the most failures',
+          query: 'dataset="$DATASET" id_applicationName="login" earliest=-4h\n| summarize Total=count(), Failures=countif(events_name == "login_failure") by ipAddress\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 5\n| order by FailRate desc\n| limit 20'
+        },
+        {
+          name: 'Most affected users during failure spike',
+          description: 'Find users experiencing repeated login failures',
+          query: 'dataset="$DATASET" id_applicationName="login" events_name="login_failure" earliest=-2h\n| summarize FailCount=count() by actor_email, ipAddress\n| order by FailCount desc\n| limit 30'
+        },
+        {
+          name: 'Login success vs failure ratio trend',
+          description: 'Monitor overall authentication health over time',
+          query: 'dataset="$DATASET" id_applicationName="login" earliest=-48h\n| extend is_failure=iif(events_name == "login_failure", 1, 0)\n| timestats span=1h Total=count(), Failures=sum(is_failure)'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-004',
+      name: 'Organizational Unit Event Imbalance',
+      objective: 'Detect when specific organizational units stop generating expected audit events, indicating potential misconfiguration or policy gaps.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'coverage', 'organizational'],
+      requiredFields: ['orgUnitName', 'events_type', 'events_name', 'id_time', 'id_applicationName'],
+      detectionLogic: 'Alert when an organizational unit that historically generates at least 10 events per hour drops to zero for 2+ consecutive hours. Compare OU-level volumes against 14-day baselines adjusted for business hours.',
+      operationalValue: 'OU-level coverage gaps indicate that entire departments or teams may be operating without audit visibility. Ensures consistent compliance coverage across the organization.',
+      changeMgmtRelevance: 'OU restructuring, policy inheritance changes, or directory sync issues can silently remove audit coverage from specific units.',
+      troubleshootingWorkflow: '1. Identify which OUs have dropped below baseline\n2. Check if OU still has active users and resources\n3. Verify Google admin audit log settings for the OU\n4. Check for OU reorganization or user migration\n5. Verify directory sync status if using AD/LDAP sync\n6. Review API collection scope for OU-level filtering',
+      dashboardDependency: 'OU Coverage dashboard, Organizational Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by organizational unit',
+          description: 'Compare activity levels across OUs to find gaps',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize EventCount=count(), UniqueUsers=dcount(actor_email) by orgUnitName\n| order by EventCount desc'
+        },
+        {
+          name: 'OU activity trend over time',
+          description: 'Track per-OU event generation to spot drop-offs',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=4h count() by orgUnitName'
+        },
+        {
+          name: 'OUs with recent silence',
+          description: 'Find OUs that were active but have gone quiet',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize LastSeen=max(id_time), Total=count() by orgUnitName\n| order by LastSeen asc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-005',
+      name: 'Event Type Distribution Anomaly',
+      objective: 'Monitor the mix of event types to detect when normal operational patterns shift, indicating potential application changes or data quality issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'distribution', 'baseline'],
+      requiredFields: ['events_type', 'events_name', 'id_applicationName', 'id_time'],
+      detectionLogic: 'Alert when event type proportions shift more than 40% from historical norms. For example, if login events normally represent 30% of total volume but suddenly represent 70%, this indicates an anomaly requiring investigation.',
+      operationalValue: 'Distribution shifts reveal infrastructure changes, user behavior changes, or data pipeline issues that single-metric monitoring misses. Provides a holistic health indicator.',
+      changeMgmtRelevance: 'Event distribution changes after application updates, policy changes, or user workflow modifications. Useful for validating expected change impact.',
+      troubleshootingWorkflow: '1. Identify which event types shifted in proportion\n2. Determine if this is a volume increase in one type or decrease in another\n3. Check if the shift correlates with known changes or incidents\n4. Verify data pipeline is not filtering or duplicating events\n5. Review Google Workspace changelog for application updates\n6. Assess if this represents a new normal or temporary anomaly',
+      dashboardDependency: 'Event Distribution dashboard, Data Quality Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event type proportions (last 24h vs prior week)',
+          description: 'Compare current event mix against historical baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by events_type, id_applicationName\n| order by count_ desc'
+        },
+        {
+          name: 'Event type trend over time',
+          description: 'Track how event type volumes change day by day',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=12h count() by events_type'
+        },
+        {
+          name: 'Application-level event name diversity',
+          description: 'Check how many distinct event names each application generates',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize UniqueEvents=dcount(events_name), Total=count() by id_applicationName\n| order by UniqueEvents desc'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-006',
+      name: 'IP Address Source Diversity Change',
+      objective: 'Monitor the diversity of source IP addresses accessing Workspace to detect network infrastructure changes or unexpected access pattern shifts.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'network', 'access-patterns'],
+      requiredFields: ['ipAddress', 'actor_email', 'events_name', 'id_time', 'id_applicationName'],
+      detectionLogic: 'Alert when the number of unique source IPs changes by more than 50% compared to the same day-of-week baseline. Also alert on sudden appearance of IP ranges not seen in the prior 30 days (>20 events from new CIDR).',
+      operationalValue: 'IP diversity changes indicate VPN migrations, office network changes, remote workforce shifts, or potential unauthorized access from new locations.',
+      changeMgmtRelevance: 'Network infrastructure changes (VPN, proxy, SASE deployment) directly impact source IP patterns. Correlate with network change windows.',
+      troubleshootingWorkflow: '1. Identify whether this is an increase or decrease in IP diversity\n2. Increase = new access points (VPN, new office, BYOD)\n3. Decrease = network consolidation or outage affecting locations\n4. Check if new IPs belong to known corporate ranges\n5. Verify VPN/proxy infrastructure status\n6. Review if this aligns with workforce changes (hiring, remote policy)',
+      dashboardDependency: 'Access Patterns dashboard, Network Origin dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unique source IPs per day',
+          description: 'Track IP diversity over time to spot shifts',
+          query: 'dataset="$DATASET" earliest=-14d\n| extend day=format_datetime(id_time, "yyyy-MM-dd")\n| summarize UniqueIPs=dcount(ipAddress), Events=count() by day\n| order by day desc'
+        },
+        {
+          name: 'New IPs not seen in prior 30 days',
+          description: 'Identify source IPs that appeared recently for the first time',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstSeen=min(id_time), Events=count(), Users=dcount(actor_email) by ipAddress\n| order by Events desc\n| limit 30'
+        },
+        {
+          name: 'IP to user mapping (recent activity)',
+          description: 'Understand which users are associated with which source IPs',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Events=count() by ipAddress, actor_email\n| order by Events desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'gsw-obs-007',
+      name: 'Event Processing Latency',
+      objective: 'Detect when Google Workspace audit events arrive with excessive delay between event occurrence and ingestion, indicating API polling issues or pipeline bottlenecks.',
+      severity: 'Low',
+      category: 'Performance',
+      tags: ['observability', 'latency', 'pipeline', 'freshness'],
+      requiredFields: ['id_time', 'id_applicationName', 'events_type'],
+      detectionLogic: 'Alert when the difference between event id_time and Cribl ingestion time exceeds 30 minutes for more than 20% of events in a 1-hour window. Google Workspace API has inherent delays but excessive lag reduces detection value.',
+      operationalValue: 'Audit log freshness directly impacts security detection and compliance reporting SLAs. Excessive lag means security events are detected too late for effective response.',
+      changeMgmtRelevance: 'Latency increases after API polling interval changes, Cribl source reconfiguration, or Google API quota adjustments.',
+      troubleshootingWorkflow: '1. Measure current lag per application\n2. Determine if lag is consistent or application-specific\n3. Check API polling interval configuration\n4. Verify API quota utilization (may be throttled)\n5. Review Cribl worker processing backlog\n6. Check if Google is reporting API delays on status page',
+      dashboardDependency: 'Ingestion Latency dashboard, Pipeline Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event lag by application',
+          description: 'Measure time between event occurrence and ingestion per application',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(id_time))\n| summarize AvgLag=avg(lag_minutes), MaxLag=max(lag_minutes), P95=percentile(lag_minutes, 95) by id_applicationName\n| order by AvgLag desc'
+        },
+        {
+          name: 'Lag trend over time',
+          description: 'Track whether ingestion latency is improving or degrading',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(id_time))\n| timestats span=1h avg(lag_minutes), max(lag_minutes)'
+        },
+        {
+          name: 'Events arriving more than 1 hour late',
+          description: 'Identify severely delayed events requiring investigation',
+          query: 'dataset="$DATASET" earliest=-6h\n| extend lag_minutes=datetime_diff("minute", _time, todatetime(id_time))\n| where lag_minutes > 60\n| summarize LateCount=count() by id_applicationName, events_type\n| order by LateCount desc'
+        }
+      ]
+    }
+  ],
+  'microsoft-entra-id': [
+    {
+      id: 'ent-obs-001',
+      name: 'Sign-In Log Ingestion Gap',
+      objective: 'Detect when Entra ID sign-in logs stop arriving, indicating collection pipeline failures, API permission issues, or diagnostic settings misconfiguration.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'entra-id'],
+      requiredFields: ['createdDateTime', 'appDisplayName', 'userPrincipalName', 'status_errorCode'],
+      detectionLogic: 'Alert when no sign-in events are received within 15 minutes during business hours, or 60 minutes during off-hours. Compare against 7-day rolling baseline per hour-of-day. Also monitor for sudden total volume drops >80%.',
+      operationalValue: 'Entra ID sign-in logs are the foundation of identity security and access monitoring. A silent pipeline means zero visibility into authentication events, conditional access enforcement, and identity threats.',
+      changeMgmtRelevance: 'Ingestion gaps follow diagnostic settings changes, Log Analytics workspace modifications, API permission revocations, or Cribl source reconfigurations.',
+      troubleshootingWorkflow: '1. Check last received sign-in event timestamp\n2. Verify Azure diagnostic settings are routing to the collection endpoint\n3. Check Graph API permissions (AuditLog.Read.All)\n4. Verify Cribl source health metrics and connectivity\n5. Check Azure service health for Entra ID reporting delays\n6. Review recent changes to Azure tenant configuration',
+      dashboardDependency: 'Identity Pipeline Health dashboard, Sign-In Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Sign-in volume over time',
+          description: 'Track ingestion rate to detect gaps or drops',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by appDisplayName'
+        },
+        {
+          name: 'Last event per application',
+          description: 'Find applications that may have stopped generating sign-in events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(createdDateTime), EventCount=count() by appDisplayName\n| order by LastSeen asc'
+        },
+        {
+          name: 'Total volume comparison (today vs prior 7 days)',
+          description: 'Compare current ingestion against historical baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count()\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-002',
+      name: 'Authentication Error Rate Spike',
+      objective: 'Detect abnormal increases in sign-in error codes that indicate infrastructure issues, misconfigured applications, or degraded authentication services.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'authentication', 'reliability'],
+      requiredFields: ['status_errorCode', 'appDisplayName', 'userPrincipalName', 'createdDateTime', 'conditionalAccessStatus'],
+      detectionLogic: 'Alert when overall error rate (non-zero status_errorCode / total sign-ins) exceeds 25% over a 15-minute window, or when a specific error code volume increases >300% from baseline. Exclude known non-impacting codes (e.g., 50140 KMSI).',
+      operationalValue: 'Authentication errors at scale directly impact user productivity and indicate identity infrastructure problems. Early detection enables proactive remediation before helpdesk escalation.',
+      changeMgmtRelevance: 'Error spikes commonly follow conditional access policy changes, application registration updates, certificate rotations, or federation configuration modifications.',
+      troubleshootingWorkflow: '1. Identify the dominant error code(s) driving the spike\n2. Determine scope — specific app, all apps, specific users?\n3. Check Azure AD service health notifications\n4. Review recent conditional access policy changes\n5. Verify application certificate/secret expiration\n6. Check if MFA service or federation endpoint is degraded',
+      dashboardDependency: 'Authentication Health dashboard, Error Code Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error codes over time',
+          description: 'Track which error codes are trending up',
+          query: 'dataset="$DATASET" status_errorCode != "0" earliest=-24h\n| timestats span=15m count() by status_errorCode'
+        },
+        {
+          name: 'Error rate by application',
+          description: 'Find applications with the highest authentication failure rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Errors=countif(status_errorCode != "0") by appDisplayName\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| where Total > 10\n| order by ErrorRate desc\n| limit 20'
+        },
+        {
+          name: 'Top error codes with affected user count',
+          description: 'Understand the blast radius of each error code',
+          query: 'dataset="$DATASET" status_errorCode != "0" earliest=-2h\n| summarize Occurrences=count(), AffectedUsers=dcount(userPrincipalName), Apps=dcount(appDisplayName) by status_errorCode\n| order by Occurrences desc\n| limit 15'
+        },
+        {
+          name: 'Error rate trend (success vs failure)',
+          description: 'Monitor overall authentication health over time',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend is_error=iif(status_errorCode != "0", 1, 0)\n| timestats span=1h Total=count(), Errors=sum(is_error)'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-003',
+      name: 'Conditional Access Policy Enforcement Gap',
+      objective: 'Detect when conditional access policies stop being evaluated or enforced, indicating policy misconfiguration, service degradation, or scope changes.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'conditional-access', 'policy'],
+      requiredFields: ['conditionalAccessStatus', 'appDisplayName', 'userPrincipalName', 'createdDateTime', 'riskLevelDuringSignIn'],
+      detectionLogic: 'Alert when conditionalAccessStatus="notApplied" exceeds 60% of sign-ins for applications that previously had >80% "success" or "failure" CA evaluation. Track per-application CA enforcement ratios.',
+      operationalValue: 'Conditional access is the primary security control for identity. If policies stop applying, users may bypass MFA, device compliance, location restrictions, and risk-based controls without detection.',
+      changeMgmtRelevance: 'CA enforcement gaps follow policy scope changes, exclusion group modifications, named location updates, or application registration changes.',
+      troubleshootingWorkflow: '1. Identify which applications show CA evaluation drops\n2. Check CA policy assignments and exclusions\n3. Verify target applications are still in policy scope\n4. Review recent CA policy modifications in audit log\n5. Check if users are being excluded via group membership\n6. Verify Azure AD CA service health',
+      dashboardDependency: 'Conditional Access Effectiveness dashboard, Policy Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'CA status distribution by application',
+          description: 'See how conditional access policies are being applied per app',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by conditionalAccessStatus, appDisplayName\n| order by appDisplayName asc, count_ desc'
+        },
+        {
+          name: 'CA enforcement trend over time',
+          description: 'Track whether CA evaluation is remaining consistent or degrading',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=6h count() by conditionalAccessStatus'
+        },
+        {
+          name: 'Applications with low CA coverage',
+          description: 'Find apps where conditional access is not being applied',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count(), NotApplied=countif(conditionalAccessStatus == "notApplied") by appDisplayName\n| extend NotAppliedPct=round(NotApplied * 100.0 / Total, 1)\n| where Total > 20 and NotAppliedPct > 50\n| order by NotAppliedPct desc'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-004',
+      name: 'Geographic Access Pattern Shift',
+      objective: 'Monitor changes in sign-in geographic distribution to detect network infrastructure changes, VPN issues, or unexpected access location shifts.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'geographic', 'access-patterns'],
+      requiredFields: ['location_city', 'location_countryOrRegion', 'userPrincipalName', 'createdDateTime', 'ipAddress'],
+      detectionLogic: 'Alert when sign-in volume from a country/region changes by more than 60% from 7-day baseline, or when a previously unseen country appears with more than 20 sign-ins in an hour. Focus on aggregate patterns, not individual user anomalies.',
+      operationalValue: 'Geographic shifts at scale indicate VPN/SASE infrastructure issues, office connectivity problems, or workforce mobility changes requiring infrastructure adjustment.',
+      changeMgmtRelevance: 'VPN migrations, SASE deployments, office openings/closings, and proxy configuration changes directly affect geographic sign-in patterns.',
+      troubleshootingWorkflow: '1. Identify which regions/countries show abnormal volume\n2. Determine if this is an increase (new access) or decrease (lost access)\n3. Check VPN/SASE infrastructure status for affected locations\n4. Verify no office connectivity issues at affected sites\n5. Correlate with known workforce changes or travel patterns\n6. Check if proxy/VPN routing changes affected geolocation',
+      dashboardDependency: 'Geographic Access Map dashboard, Location Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Sign-ins by country over time',
+          description: 'Track geographic distribution of sign-in events',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=12h count() by location_countryOrRegion'
+        },
+        {
+          name: 'City-level sign-in volume',
+          description: 'Detailed view of sign-in origins at the city level',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize SignIns=count(), UniqueUsers=dcount(userPrincipalName) by location_city, location_countryOrRegion\n| order by SignIns desc\n| limit 30'
+        },
+        {
+          name: 'New countries in recent sign-ins',
+          description: 'Identify countries not seen in the historical baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Events=count(), Users=dcount(userPrincipalName), FirstSeen=min(createdDateTime) by location_countryOrRegion\n| order by FirstSeen desc'
+        },
+        {
+          name: 'Geographic diversity per user',
+          description: 'Check if users are signing in from an unusual number of locations',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Countries=dcount(location_countryOrRegion), Cities=dcount(location_city), SignIns=count() by userPrincipalName\n| where Countries > 2\n| order by Countries desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-005',
+      name: 'Risk Level Evaluation Degradation',
+      objective: 'Detect when Entra ID Identity Protection risk assessments stop being performed or report degraded coverage, reducing risk-based conditional access effectiveness.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'risk-assessment', 'identity-protection'],
+      requiredFields: ['riskLevelDuringSignIn', 'userPrincipalName', 'createdDateTime', 'appDisplayName', 'conditionalAccessStatus'],
+      detectionLogic: 'Alert when riskLevelDuringSignIn="none" exceeds 95% for extended periods (>4 hours) in accounts that previously showed risk diversity (low/medium/high). Also alert if risk evaluation stops entirely (field becomes null/empty).',
+      operationalValue: 'Identity Protection risk scoring drives risk-based conditional access policies. If risk assessment degrades, high-risk sign-ins bypass additional authentication requirements.',
+      changeMgmtRelevance: 'Risk evaluation changes after Identity Protection license changes, tenant configuration modifications, or Microsoft service updates.',
+      troubleshootingWorkflow: '1. Check if riskLevelDuringSignIn is being populated\n2. Verify Identity Protection P2 license is active\n3. Review Azure AD Identity Protection dashboard for service health\n4. Check if risk policies are still configured and enabled\n5. Verify no recent changes to Identity Protection settings\n6. Check Microsoft 365 service health for Identity Protection',
+      dashboardDependency: 'Risk Assessment Health dashboard, Identity Protection Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Risk level distribution over time',
+          description: 'Track risk assessment output to detect evaluation degradation',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=6h count() by riskLevelDuringSignIn'
+        },
+        {
+          name: 'Risk evaluation coverage',
+          description: 'Measure what percentage of sign-ins receive meaningful risk assessment',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count(), NoRisk=countif(riskLevelDuringSignIn == "none"), HasRisk=countif(riskLevelDuringSignIn != "none")\n| extend CoveragePct=round(HasRisk * 100.0 / Total, 1)'
+        },
+        {
+          name: 'Risk level by application',
+          description: 'Check which applications are receiving risk evaluations',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count(), Risky=countif(riskLevelDuringSignIn in ("low", "medium", "high")) by appDisplayName\n| extend RiskyPct=round(Risky * 100.0 / Total, 1)\n| order by Total desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-006',
+      name: 'Device Platform Distribution Shift',
+      objective: 'Monitor operating system distribution in sign-ins to detect device compliance drift, new platform adoption, or potential device spoofing campaigns.',
+      severity: 'Low',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'device', 'platform'],
+      requiredFields: ['deviceDetail_operatingSystem', 'userPrincipalName', 'createdDateTime', 'appDisplayName'],
+      detectionLogic: 'Alert when operating system proportions shift more than 30% from 30-day baseline. Track new OS versions appearing for the first time. Flag unknown or empty OS values exceeding 10% of sign-ins.',
+      operationalValue: 'Device platform shifts indicate new device rollouts, BYOD policy changes, or potential device compliance issues. Empty OS values may indicate legacy auth or non-compliant access.',
+      changeMgmtRelevance: 'OS distribution changes after device enrollment campaigns, OS upgrade cycles, MDM policy changes, or BYOD policy updates.',
+      troubleshootingWorkflow: '1. Identify which OS platforms shifted in proportion\n2. Check if new OS versions correspond to planned rollouts\n3. Investigate empty/unknown OS values (often legacy authentication)\n4. Verify device compliance policies for new platforms\n5. Check MDM enrollment status for affected platforms\n6. Review if Intune compliance policies cover new OS versions',
+      dashboardDependency: 'Device Platform dashboard, Compliance Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'OS distribution in sign-ins',
+          description: 'See which operating systems are being used for authentication',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize SignIns=count(), Users=dcount(userPrincipalName) by deviceDetail_operatingSystem\n| order by SignIns desc'
+        },
+        {
+          name: 'OS platform trend over time',
+          description: 'Track how device platform usage changes over weeks',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1d count() by deviceDetail_operatingSystem'
+        },
+        {
+          name: 'Users with empty or unknown OS',
+          description: 'Identify sign-ins without device OS information (potential legacy auth)',
+          query: 'dataset="$DATASET" earliest=-24h\n| where isempty(deviceDetail_operatingSystem) or deviceDetail_operatingSystem == ""\n| summarize Count=count() by userPrincipalName, appDisplayName\n| order by Count desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'ent-obs-007',
+      name: 'Application Sign-In Volume Anomaly',
+      objective: 'Detect when specific applications show unusual sign-in patterns that may indicate service issues, misconfigurations, or unexpected token refresh storms.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'application', 'volume'],
+      requiredFields: ['appDisplayName', 'userPrincipalName', 'createdDateTime', 'status_errorCode', 'ipAddress'],
+      detectionLogic: 'Alert when an application sign-in volume exceeds 400% of its 7-day hourly baseline, or drops below 20% of baseline during business hours. Token refresh storms often manifest as sudden volume spikes from a single application.',
+      operationalValue: 'Application-level volume anomalies indicate configuration problems (short token lifetimes causing refresh storms), service outages (zero sign-ins), or potential abuse (authentication floods).',
+      changeMgmtRelevance: 'Volume anomalies follow application registration changes, token lifetime policy updates, or client library upgrades that affect authentication frequency.',
+      troubleshootingWorkflow: '1. Identify the affected application(s)\n2. Determine if spike or drop — each has different root causes\n3. Spike: check for token refresh storms (short lifetimes)\n4. Drop: verify application availability and service health\n5. Check recent app registration or token policy changes\n6. Review if specific users or IPs are driving the anomaly',
+      dashboardDependency: 'Application Health dashboard, Sign-In Volume Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Sign-in volume per application over time',
+          description: 'Track authentication patterns per application to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by appDisplayName'
+        },
+        {
+          name: 'Applications with volume spikes (current vs baseline)',
+          description: 'Find applications with abnormal sign-in rates',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize CurrentVolume=count(), UniqueUsers=dcount(userPrincipalName), ErrorCount=countif(status_errorCode != "0") by appDisplayName\n| order by CurrentVolume desc\n| limit 20'
+        },
+        {
+          name: 'Per-user volume for anomalous application',
+          description: 'Determine if a spike is from many users or a few (token storm indicator)',
+          query: 'dataset="$DATASET" appDisplayName="$APP_NAME" earliest=-4h\n| summarize SignIns=count() by userPrincipalName, ipAddress\n| order by SignIns desc\n| limit 30'
+        },
+        {
+          name: 'Application error rate during anomaly',
+          description: 'Check if volume changes correlate with error rate changes',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Total=count(), Errors=countif(status_errorCode != "0") by appDisplayName\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| where Total > 50\n| order by ErrorRate desc'
+        }
+      ]
+    }
+  ],
+  'cyberark-pam': [
+    {
+      id: 'cyb-obs-001',
+      name: 'PAM Vault Event Ingestion Gap',
+      objective: 'Detect when CyberArk PAM audit events stop arriving, indicating vault connectivity issues, SIEM integration failures, or CEF forwarding misconfiguration.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'pam'],
+      requiredFields: ['timestamp', 'user', 'action', 'safe'],
+      detectionLogic: 'Alert when no PAM events are received within 15 minutes during business hours or 60 minutes outside business hours. CyberArk vaults should generate continuous activity from service accounts and automated processes. Total silence indicates a pipeline failure.',
+      operationalValue: 'PAM audit logs are required for compliance (SOX, PCI-DSS) and security monitoring. A gap in PAM logging means privileged access is occurring without audit trail, creating compliance violations and security blind spots.',
+      changeMgmtRelevance: 'Ingestion gaps follow vault upgrades, SIEM connector updates, network changes affecting syslog/CEF delivery, or Cribl pipeline modifications.',
+      troubleshootingWorkflow: '1. Check last received PAM event timestamp\n2. Verify CyberArk vault SIEM connector status\n3. Check CEF/syslog forwarding configuration\n4. Verify network connectivity between vault and log collector\n5. Review Cribl source health for PAM input\n6. Check vault server disk space and service status',
+      dashboardDependency: 'PAM Pipeline Health dashboard, Vault Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'PAM event volume over time',
+          description: 'Track ingestion rate to detect gaps or drops in vault logging',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by safe'
+        },
+        {
+          name: 'Last event timestamp per safe',
+          description: 'Identify safes that may have stopped generating audit events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(timestamp), EventCount=count() by safe\n| order by LastSeen asc'
+        },
+        {
+          name: 'Volume trend (current vs prior 7 days)',
+          description: 'Compare current ingestion against historical baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count()\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-002',
+      name: 'Credential Retrieval Rate Anomaly',
+      objective: 'Detect abnormal increases in password retrieval actions that may indicate runaway automation, service account storms, or capacity issues with dependent systems.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'credential-retrieval', 'capacity'],
+      requiredFields: ['action', 'user', 'target_account', 'target_address', 'timestamp', 'safe'],
+      detectionLogic: 'Alert when credential retrieval volume exceeds 300% of the hourly baseline for the same day-of-week. Differentiate between single-user storms (automation issue) and broad increases (infrastructure event). Focus on retrieve/checkout actions.',
+      operationalValue: 'Credential retrieval storms indicate automation failures, connection pool exhaustion, or application restart cascades. They can also cause vault performance degradation affecting all PAM users.',
+      changeMgmtRelevance: 'Retrieval spikes follow application deployments (new connections), vault CPM policy changes, or automated rotation schedules.',
+      troubleshootingWorkflow: '1. Identify which user(s) and target account(s) drive the spike\n2. Single user + single target = application connection pool issue\n3. Single user + many targets = automation runaway or CPM batch\n4. Many users + many targets = infrastructure restart event\n5. Check vault performance metrics (CPU, connection count)\n6. Verify dependent application health',
+      dashboardDependency: 'Credential Activity dashboard, Vault Performance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Credential retrievals per user over time',
+          description: 'Track who is retrieving credentials and at what rate',
+          query: 'dataset="$DATASET" action="Retrieve Password" earliest=-24h\n| timestats span=30m count() by user'
+        },
+        {
+          name: 'Top retrieval targets during spike',
+          description: 'Identify which target accounts are being accessed most',
+          query: 'dataset="$DATASET" action="Retrieve Password" earliest=-4h\n| summarize Retrievals=count() by user, target_account, target_address\n| order by Retrievals desc\n| limit 30'
+        },
+        {
+          name: 'Retrieval volume by safe',
+          description: 'Compare credential access patterns across safes',
+          query: 'dataset="$DATASET" action="Retrieve Password" earliest=-48h\n| timestats span=2h count() by safe'
+        },
+        {
+          name: 'Retrieval rate comparison (today vs baseline)',
+          description: 'Measure current retrieval velocity against historical norms',
+          query: 'dataset="$DATASET" action="Retrieve Password" earliest=-7d\n| timestats span=4h count()\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-003',
+      name: 'Safe Utilization Imbalance',
+      objective: 'Monitor activity distribution across safes to detect capacity issues, decommissioned safe activity, or coverage gaps in privileged access monitoring.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'safe', 'utilization'],
+      requiredFields: ['safe', 'action', 'user', 'target_account', 'timestamp'],
+      detectionLogic: 'Alert when a safe that historically generates >50 events/day drops to zero for a full business day. Also alert when a safe exceeds 200% of its historical daily volume, potentially indicating migration or consolidation in progress.',
+      operationalValue: 'Safe utilization patterns reflect the organization privileged access structure. Imbalances indicate infrastructure changes, decommissioning progress, or misconfigured access policies.',
+      changeMgmtRelevance: 'Safe activity changes follow account migrations between safes, safe decommissioning, new safe provisioning, or safe member permission changes.',
+      troubleshootingWorkflow: '1. Identify which safes show abnormal activity levels\n2. Check if safe membership has changed recently\n3. Verify safe is still accessible and not locked\n4. Review if accounts were migrated to a different safe\n5. Check CPM settings for the affected safe\n6. Verify safe owners are aware of the activity change',
+      dashboardDependency: 'Safe Utilization dashboard, Account Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by safe over time',
+          description: 'Track activity levels across safes to spot imbalances',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1d count() by safe'
+        },
+        {
+          name: 'Safe activity comparison',
+          description: 'Compare current safe utilization against historical norms',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Events=count(), UniqueUsers=dcount(user), UniqueTargets=dcount(target_account) by safe\n| order by Events desc'
+        },
+        {
+          name: 'Safes with no recent activity',
+          description: 'Find safes that have gone silent and may need investigation',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize LastSeen=max(timestamp), Total=count() by safe\n| order by LastSeen asc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-004',
+      name: 'Session Duration Anomaly',
+      objective: 'Detect abnormally long or short privileged sessions that may indicate hung connections, automation failures, or capacity constraints on target systems.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'session', 'duration'],
+      requiredFields: ['user', 'target_account', 'target_address', 'action', 'timestamp', 'station'],
+      detectionLogic: 'Alert when privileged session durations exceed 4 hours (potential hung session) or when sessions shorter than 5 seconds spike (potential connectivity issue). Compare session patterns against 7-day baseline per target_address.',
+      operationalValue: 'Abnormal session durations indicate application health issues on target systems, network connectivity problems, or credential rotation failures locking out automated processes.',
+      changeMgmtRelevance: 'Session duration changes follow target system maintenance, network changes, or CPM policy modifications affecting session management.',
+      troubleshootingWorkflow: '1. Identify affected target addresses and accounts\n2. Long sessions: check if connection is actively being used\n3. Short sessions: verify target system health and connectivity\n4. Check if CPM can successfully rotate affected credentials\n5. Verify PSM/session manager health\n6. Review target system resource utilization',
+      dashboardDependency: 'Session Duration dashboard, Target System Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Session activity by target address',
+          description: 'Track session patterns per target system',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Sessions=count(), UniqueUsers=dcount(user) by target_address, target_account\n| order by Sessions desc\n| limit 30'
+        },
+        {
+          name: 'Connect/disconnect pairs per station',
+          description: 'Track session lifecycle events to identify hung sessions',
+          query: 'dataset="$DATASET" earliest=-12h\n| where action in ("Connect", "Disconnect", "PSMConnect", "PSMDisconnect")\n| summarize count() by action, station, user, target_address\n| order by count_ desc'
+        },
+        {
+          name: 'Session events over time by target',
+          description: 'Visualize session activity patterns to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=2h count() by target_address, action'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-005',
+      name: 'Source Station Connectivity Change',
+      objective: 'Monitor which stations (workstations/jump servers) are connecting to the vault to detect infrastructure changes, VPN issues, or access architecture shifts.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'station', 'connectivity'],
+      requiredFields: ['station', 'source_address', 'user', 'action', 'timestamp'],
+      detectionLogic: 'Alert when a station that historically connects daily stops appearing for 24+ hours. Also alert on new stations appearing that were not seen in the prior 30 days with more than 5 events. Track station diversity per user.',
+      operationalValue: 'Station connectivity patterns reflect IT infrastructure health. Missing stations may indicate VPN failures, workstation issues, or jump server outages affecting privileged access workflows.',
+      changeMgmtRelevance: 'Station changes follow jump server migrations, VPN reconfigurations, workstation replacements, or PAM gateway deployments.',
+      troubleshootingWorkflow: '1. Identify which stations disappeared or appeared\n2. Missing station: verify workstation/jump server is online\n3. New station: confirm this is an authorized access point\n4. Check VPN connectivity for remote stations\n5. Verify PAM gateway health if using PVWA proxies\n6. Review if user access patterns changed (location, role)',
+      dashboardDependency: 'Station Activity dashboard, Access Architecture dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active stations over time',
+          description: 'Track which stations are connecting to the vault',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d dcount(station) as UniqueStations'
+        },
+        {
+          name: 'Station activity summary',
+          description: 'List all stations with their activity levels and last seen time',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastSeen=max(timestamp), Events=count(), Users=dcount(user) by station, source_address\n| order by LastSeen desc'
+        },
+        {
+          name: 'Stations missing in last 24 hours',
+          description: 'Find stations that were recently active but have gone silent',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize LastSeen=max(timestamp), Events=count() by station\n| order by LastSeen asc\n| limit 20'
+        },
+        {
+          name: 'New stations (first appearance)',
+          description: 'Identify stations appearing for the first time recently',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize FirstSeen=min(timestamp), LastSeen=max(timestamp), Events=count() by station, source_address\n| order by FirstSeen desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-006',
+      name: 'Action Type Distribution Shift',
+      objective: 'Monitor the mix of PAM actions to detect operational changes, policy modifications, or potential automation issues affecting vault operations.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'action-types', 'operational'],
+      requiredFields: ['action', 'user', 'severity', 'timestamp', 'safe'],
+      detectionLogic: 'Alert when the proportion of action types shifts more than 40% from 14-day baseline. For example, if password rotations normally represent 30% of events but drop to 5%, this indicates CPM issues. Track action diversity over time.',
+      operationalValue: 'Action type distribution reflects healthy vault operations. A reduction in rotation actions indicates CPM problems. A spike in failed actions indicates credential or connectivity issues.',
+      changeMgmtRelevance: 'Action distribution changes after CPM policy updates, platform changes, new safe configurations, or vault version upgrades.',
+      troubleshootingWorkflow: '1. Identify which action types shifted in proportion\n2. Decreased rotations: check CPM health and connectivity\n3. Increased failures: check target system accessibility\n4. New action types: verify expected after vault configuration change\n5. Review CPM logs for correlation\n6. Verify vault component (CPM, PSM, PVWA) health',
+      dashboardDependency: 'Vault Operations dashboard, Action Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Action type distribution',
+          description: 'See the mix of PAM actions to identify operational patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by action\n| order by count_ desc'
+        },
+        {
+          name: 'Action type trend over time',
+          description: 'Track how action proportions change day by day',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1d count() by action'
+        },
+        {
+          name: 'Actions by severity level',
+          description: 'Correlate action types with their severity ratings',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Events=count(), UniqueUsers=dcount(user) by action, severity\n| order by Events desc'
+        }
+      ]
+    },
+    {
+      id: 'cyb-obs-007',
+      name: 'High Severity Event Rate Increase',
+      objective: 'Detect spikes in high-severity PAM events that indicate operational issues requiring immediate attention, such as credential failures, policy violations, or vault health problems.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'severity', 'operational-health'],
+      requiredFields: ['severity', 'action', 'user', 'target_account', 'target_address', 'timestamp', 'reason'],
+      detectionLogic: 'Alert when high-severity events (severity >= 8) exceed 200% of baseline for the same time window. Also alert when the ratio of high-severity to total events exceeds 20% over a 30-minute window.',
+      operationalValue: 'High-severity PAM events often indicate failed operations that impact business processes relying on privileged credentials. Rapid detection enables proactive remediation before downstream service impact.',
+      changeMgmtRelevance: 'Severity spikes follow failed credential rotations, expired platform configurations, or vault policy changes that cause operation failures.',
+      troubleshootingWorkflow: '1. Identify the dominant high-severity action types\n2. Determine affected users and target systems\n3. Check if events are from CPM (rotation failures) or users (access issues)\n4. Review reason field for error context\n5. Verify target system accessibility\n6. Check vault component logs for errors',
+      dashboardDependency: 'Vault Health dashboard, Severity Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High severity events over time',
+          description: 'Track volume of critical PAM events to spot spikes',
+          query: 'dataset="$DATASET" severity >= "8" earliest=-24h\n| timestats span=30m count() by action'
+        },
+        {
+          name: 'High severity breakdown by target',
+          description: 'Identify which target systems are generating the most failures',
+          query: 'dataset="$DATASET" severity >= "8" earliest=-4h\n| summarize HighSevCount=count() by target_address, target_account, action, reason\n| order by HighSevCount desc\n| limit 20'
+        },
+        {
+          name: 'Severity distribution trend',
+          description: 'Monitor the ratio of high vs low severity events over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend SevBucket=iif(severity >= "8", "High", iif(severity >= "5", "Medium", "Low"))\n| timestats span=6h count() by SevBucket'
+        },
+        {
+          name: 'Users with most high-severity events',
+          description: 'Find users or service accounts driving severity spikes',
+          query: 'dataset="$DATASET" severity >= "8" earliest=-12h\n| summarize HighSev=count() by user, action\n| order by HighSev desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'microsoft-defender-endpoint': [
+    {
+      id: 'mde-obs-001',
+      name: 'Endpoint Telemetry Ingestion Gap',
+      objective: 'Detect when Defender for Endpoint telemetry stops arriving from devices, indicating sensor health issues, connectivity failures, or pipeline problems.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'pipeline', 'endpoint'],
+      requiredFields: ['Timestamp', 'DeviceName', 'ActionType', 'AlertSeverity'],
+      detectionLogic: 'Alert when total endpoint event volume drops >70% from baseline over a 30-minute window, or when specific high-activity devices stop reporting for 15+ minutes. Track device reporting health at both fleet and individual device level.',
+      operationalValue: 'Endpoint telemetry is the foundation of threat detection and response. Silent endpoints create security blind spots that attackers exploit. Fleet-level gaps indicate infrastructure issues affecting multiple devices.',
+      changeMgmtRelevance: 'Telemetry gaps follow Defender sensor updates, GPO policy changes, network infrastructure modifications, or Cribl pipeline reconfigurations.',
+      troubleshootingWorkflow: '1. Determine scope — fleet-wide or specific devices\n2. Fleet-wide: check Cribl source connectivity and processing\n3. Device-specific: verify sensor health via Defender console\n4. Check network connectivity between devices and Defender cloud\n5. Review recent Defender policy or sensor version changes\n6. Verify no proxy or firewall changes blocking telemetry upload',
+      dashboardDependency: 'Endpoint Coverage dashboard, Telemetry Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track overall endpoint telemetry ingestion to detect gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by ActionType'
+        },
+        {
+          name: 'Active devices per time window',
+          description: 'Monitor how many unique devices are reporting each period',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=30m dcount(DeviceName) as ActiveDevices'
+        },
+        {
+          name: 'Devices silent in last hour',
+          description: 'Identify devices that stopped reporting recently',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(Timestamp), Events=count() by DeviceName\n| order by LastSeen asc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-002',
+      name: 'Alert Severity Volume Spike',
+      objective: 'Detect unusual spikes in endpoint alert volume that may indicate an active campaign, noisy detection rule, or false positive storm requiring triage capacity planning.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'alerts', 'triage-capacity'],
+      requiredFields: ['AlertSeverity', 'DeviceName', 'ActionType', 'Timestamp', 'FileName'],
+      detectionLogic: 'Alert when high/critical severity alert volume exceeds 300% of the 7-day hourly baseline. Differentiate between diverse alert types (potential campaign) vs repeated single alert (noisy rule). Track per-device alert rates to identify outliers.',
+      operationalValue: 'Alert volume spikes overwhelm SOC capacity. Early detection enables proactive triage resource allocation and rapid identification of noisy rules versus real incidents.',
+      changeMgmtRelevance: 'Alert spikes follow new detection rule deployments, Defender policy updates, or software deployments that trigger behavioral detections.',
+      troubleshootingWorkflow: '1. Determine if spike is from one ActionType or many\n2. Single ActionType = likely noisy rule or known software\n3. Multiple types across devices = potential campaign\n4. Check if a software deployment occurred (triggers behavioral alerts)\n5. Review Defender custom detection rules for recent changes\n6. Assess SOC queue depth and allocate triage resources',
+      dashboardDependency: 'Alert Volume Trends dashboard, SOC Capacity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Alerts by severity over time',
+          description: 'Track alert volume trends to identify spikes',
+          query: 'dataset="$DATASET" AlertSeverity != "" earliest=-24h\n| timestats span=30m count() by AlertSeverity'
+        },
+        {
+          name: 'Alert ActionType distribution during spike',
+          description: 'Determine if spike is from diverse or repeated alert types',
+          query: 'dataset="$DATASET" AlertSeverity in ("High", "Critical") earliest=-4h\n| summarize AlertCount=count(), Devices=dcount(DeviceName) by ActionType\n| order by AlertCount desc\n| limit 20'
+        },
+        {
+          name: 'Devices generating most alerts',
+          description: 'Find devices that are driving alert volume',
+          query: 'dataset="$DATASET" AlertSeverity != "" earliest=-4h\n| summarize Alerts=count() by DeviceName, AlertSeverity\n| order by Alerts desc\n| limit 20'
+        },
+        {
+          name: 'Alert volume comparison (current vs baseline)',
+          description: 'Compare current alert rates against historical norms',
+          query: 'dataset="$DATASET" AlertSeverity != "" earliest=-7d\n| timestats span=4h count() by AlertSeverity'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-003',
+      name: 'Process Execution Baseline Deviation',
+      objective: 'Detect significant changes in process execution patterns across the fleet that indicate software deployments, configuration drift, or operational changes.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'process', 'baseline'],
+      requiredFields: ['FileName', 'FolderPath', 'ActionType', 'DeviceName', 'Timestamp', 'ProcessCommandLine'],
+      detectionLogic: 'Alert when new processes (FileName not seen in prior 7 days) appear on more than 10% of the fleet within a 4-hour window. Also alert when previously common processes disappear from more than 30% of devices. Focus on processes in system paths.',
+      operationalValue: 'Fleet-wide process changes indicate software deployments, updates, or unauthorized installations. Tracking process baselines enables rapid detection of both intended and unintended changes.',
+      changeMgmtRelevance: 'Process changes should correlate with deployment schedules. Unexpected new processes outside change windows require investigation.',
+      troubleshootingWorkflow: '1. Identify the new or changed processes\n2. Check deployment schedules for correlation\n3. Verify process publisher and signature status\n4. Determine scope — how many devices affected?\n5. Review process command lines for context\n6. Confirm with IT operations if this is a planned rollout',
+      dashboardDependency: 'Process Baseline dashboard, Fleet Change Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'New processes seen in last 24 hours',
+          description: 'Identify processes that appeared recently across the fleet',
+          query: 'dataset="$DATASET" ActionType="ProcessCreated" earliest=-24h\n| summarize FirstSeen=min(Timestamp), DeviceCount=dcount(DeviceName), Executions=count() by FileName, FolderPath\n| where DeviceCount > 5\n| order by FirstSeen desc\n| limit 30'
+        },
+        {
+          name: 'Process execution volume by name',
+          description: 'Track which processes are most active across the fleet',
+          query: 'dataset="$DATASET" ActionType="ProcessCreated" earliest=-48h\n| timestats span=4h count() by FileName\n| order by count_ desc'
+        },
+        {
+          name: 'Process command line patterns for new binaries',
+          description: 'Examine how new processes are being invoked',
+          query: 'dataset="$DATASET" ActionType="ProcessCreated" FileName="$FILE_NAME" earliest=-24h\n| summarize count() by ProcessCommandLine, DeviceName\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-004',
+      name: 'Network Connection Rate Anomaly',
+      objective: 'Detect unusual spikes in outbound network connection attempts from endpoints that may indicate service issues, misconfigured applications, or infrastructure capacity concerns.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'network', 'capacity'],
+      requiredFields: ['RemoteIP', 'DeviceName', 'ActionType', 'Timestamp', 'InitiatingProcessFileName'],
+      detectionLogic: 'Alert when outbound connection volume from a device exceeds 500% of its 7-day baseline, or when fleet-wide connection rates spike >200%. Differentiate between application-driven (single process) and system-wide (multiple processes) anomalies.',
+      operationalValue: 'Network connection spikes indicate application issues (retry storms), infrastructure problems (DNS failures causing reconnection floods), or capacity constraints requiring attention.',
+      changeMgmtRelevance: 'Connection rate changes follow application deployments, DNS changes, proxy reconfigurations, or firewall rule modifications.',
+      troubleshootingWorkflow: '1. Identify which device(s) and process(es) drive the spike\n2. Single process: likely application retry storm or misconfiguration\n3. Fleet-wide: infrastructure issue (DNS, proxy, gateway)\n4. Check target IPs — are connections to the same destination?\n5. Verify application health on affected devices\n6. Review recent network infrastructure changes',
+      dashboardDependency: 'Network Activity dashboard, Connection Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Outbound connections by device',
+          description: 'Find devices with the highest connection rates',
+          query: 'dataset="$DATASET" ActionType="ConnectionSuccess" earliest=-4h\n| summarize Connections=count(), UniqueIPs=dcount(RemoteIP) by DeviceName, InitiatingProcessFileName\n| order by Connections desc\n| limit 30'
+        },
+        {
+          name: 'Connection volume over time',
+          description: 'Track fleet-wide connection rates to spot anomalies',
+          query: 'dataset="$DATASET" ActionType="ConnectionSuccess" earliest=-48h\n| timestats span=1h count() by DeviceName'
+        },
+        {
+          name: 'Top remote IP destinations',
+          description: 'Identify which remote IPs are receiving the most connections',
+          query: 'dataset="$DATASET" ActionType="ConnectionSuccess" earliest=-4h\n| summarize Connections=count(), Devices=dcount(DeviceName) by RemoteIP\n| order by Connections desc\n| limit 20'
+        },
+        {
+          name: 'Process-level connection rates',
+          description: 'Determine which processes are generating the most network activity',
+          query: 'dataset="$DATASET" ActionType="ConnectionSuccess" earliest=-4h\n| summarize Connections=count(), Devices=dcount(DeviceName), UniqueIPs=dcount(RemoteIP) by InitiatingProcessFileName\n| order by Connections desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-005',
+      name: 'File Activity Volume Spike',
+      objective: 'Detect abnormal file system activity that may indicate backup jobs, data migrations, ransomware precursors, or disk capacity events.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'file-activity', 'storage'],
+      requiredFields: ['ActionType', 'FileName', 'FolderPath', 'DeviceName', 'Timestamp', 'AccountName'],
+      detectionLogic: 'Alert when file creation/modification volume exceeds 400% of the 7-day baseline on individual devices. Focus on devices with sustained high activity (>30 minutes) rather than brief bursts. Track affected folder paths for context.',
+      operationalValue: 'Excessive file activity impacts endpoint performance and may indicate storage capacity issues, failed backup jobs, or data migration tasks consuming disk I/O.',
+      changeMgmtRelevance: 'File activity spikes follow backup schedule changes, data migration projects, software installations, or Windows update deployments.',
+      troubleshootingWorkflow: '1. Identify affected device(s) and the account performing activity\n2. Check folder paths — are they in backup, temp, or user directories?\n3. Determine the initiating process (backup agent, update, user)\n4. Verify disk capacity on affected devices\n5. Check if this correlates with scheduled jobs (backup, scan)\n6. Review endpoint performance metrics for I/O impact',
+      dashboardDependency: 'File Activity dashboard, Storage Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'File activity by device and folder',
+          description: 'Identify devices with the highest file system activity',
+          query: 'dataset="$DATASET" ActionType in ("FileCreated", "FileModified") earliest=-24h\n| summarize FileOps=count(), UniqueFiles=dcount(FileName) by DeviceName, FolderPath\n| order by FileOps desc\n| limit 30'
+        },
+        {
+          name: 'File activity trend per device',
+          description: 'Track file operation volume over time to spot sustained spikes',
+          query: 'dataset="$DATASET" ActionType in ("FileCreated", "FileModified") earliest=-48h\n| timestats span=2h count() by DeviceName'
+        },
+        {
+          name: 'Account driving file activity',
+          description: 'Determine which accounts are responsible for high file volume',
+          query: 'dataset="$DATASET" ActionType in ("FileCreated", "FileModified") earliest=-4h\n| summarize FileOps=count(), Devices=dcount(DeviceName) by AccountName\n| order by FileOps desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-006',
+      name: 'Device Reporting Frequency Degradation',
+      objective: 'Detect when specific devices reduce their telemetry reporting frequency, indicating sensor health degradation, resource constraints, or connectivity issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'sensor-health', 'coverage'],
+      requiredFields: ['DeviceName', 'Timestamp', 'ActionType', 'SHA256'],
+      detectionLogic: 'Alert when a device event rate drops below 30% of its 7-day average without going completely silent. This catches degraded sensors that still report but at reduced fidelity, providing incomplete visibility.',
+      operationalValue: 'Degraded sensors provide false confidence. A device reporting at 10% normal rate appears healthy in coverage metrics but misses 90% of activity. This is worse than complete silence which is easily detected.',
+      changeMgmtRelevance: 'Sensor degradation follows endpoint resource exhaustion (disk, CPU), conflicting security tools, Defender sensor updates, or OS patches affecting kernel drivers.',
+      troubleshootingWorkflow: '1. Identify devices with reduced reporting rates\n2. Compare current event types against historical profile\n3. Check device resource utilization (CPU, disk, memory)\n4. Verify Defender sensor service status and health\n5. Check for conflicting security software\n6. Review recent OS or sensor version updates',
+      dashboardDependency: 'Sensor Health dashboard, Device Fidelity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Per-device event rate over time',
+          description: 'Track individual device reporting rates to detect degradation',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=6h count() by DeviceName\n| order by count_ asc'
+        },
+        {
+          name: 'Devices with reduced reporting (below 30% baseline)',
+          description: 'Find devices still reporting but at degraded rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize RecentEvents=count(), ActionTypes=dcount(ActionType) by DeviceName\n| where RecentEvents < 50 and RecentEvents > 0\n| order by RecentEvents asc\n| limit 30'
+        },
+        {
+          name: 'Event type diversity per device',
+          description: 'Check if devices are reporting all event types or only some',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize UniqueActions=dcount(ActionType), Total=count() by DeviceName\n| order by UniqueActions asc\n| limit 30'
+        },
+        {
+          name: 'Device reporting consistency',
+          description: 'Measure how consistently each device reports across time windows',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=4h count() by DeviceName\n| summarize AvgRate=avg(count_), MinRate=min(count_), MaxRate=max(count_) by DeviceName\n| extend Consistency=round(MinRate * 100.0 / MaxRate, 1)\n| where Consistency < 30\n| order by Consistency asc'
+        }
+      ]
+    },
+    {
+      id: 'mde-obs-007',
+      name: 'ActionType Coverage Gap',
+      objective: 'Monitor the diversity of ActionTypes being reported to ensure complete telemetry coverage and detect when specific event categories stop arriving.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'coverage', 'telemetry-completeness'],
+      requiredFields: ['ActionType', 'DeviceName', 'Timestamp', 'InitiatingProcessFileName'],
+      detectionLogic: 'Alert when the number of distinct ActionTypes seen in the last 24 hours drops below 60% of the 14-day average. Also alert when specific critical ActionTypes (ProcessCreated, ConnectionSuccess, FileCreated) are absent for more than 1 hour.',
+      operationalValue: 'ActionType diversity reflects detection capability breadth. Missing event categories mean specific attack techniques cannot be detected, creating gaps in threat coverage.',
+      changeMgmtRelevance: 'ActionType coverage changes after Defender policy modifications, sensor version updates, or Cribl filtering rule changes that may inadvertently drop event categories.',
+      troubleshootingWorkflow: '1. Identify which ActionTypes disappeared or reduced\n2. Check if this is fleet-wide or device-specific\n3. Review Defender advanced features and sensor configuration\n4. Verify Cribl pipeline is not filtering specific ActionTypes\n5. Check if sensor version changes affected event collection\n6. Review Microsoft documentation for deprecated ActionTypes',
+      dashboardDependency: 'Telemetry Coverage dashboard, ActionType Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Distinct ActionTypes per day',
+          description: 'Track telemetry diversity over time to spot coverage gaps',
+          query: 'dataset="$DATASET" earliest=-14d\n| extend day=format_datetime(Timestamp, "yyyy-MM-dd")\n| summarize UniqueActionTypes=dcount(ActionType), Total=count() by day\n| order by day desc'
+        },
+        {
+          name: 'ActionType catalog with last seen time',
+          description: 'List all known ActionTypes and when they were last observed',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastSeen=max(Timestamp), Events=count(), Devices=dcount(DeviceName) by ActionType\n| order by LastSeen desc'
+        },
+        {
+          name: 'ActionType volume distribution',
+          description: 'Understand the proportion of each event type in the telemetry stream',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by ActionType\n| order by count_ desc'
+        },
+        {
+          name: 'Missing critical ActionTypes',
+          description: 'Check for absence of essential event categories in recent data',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ActionType in ("ProcessCreated", "ConnectionSuccess", "FileCreated", "FileModified")\n| summarize LastSeen=max(Timestamp), Count=count() by ActionType\n| order by Count asc'
+        }
+      ]
+    }
+  ],
+  'azure-activity': [
+    {
+      id: 'aza-obs-001',
+      name: 'Azure Resource Provisioning Failures',
+      objective: 'Detect sustained resource provisioning failures that indicate capacity constraints, quota limits, or misconfigured ARM templates.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'azure', 'provisioning'],
+      requiredFields: ['eventTimestamp', 'operationName', 'status', 'resourceId', 'resourceGroupName', 'subscriptionId', 'level', 'caller'],
+      detectionLogic: 'Alert when failed operations exceed 10 within a 15-minute window for a given resource group or subscription. Track status values of Failed, Canceled, and error-level events. Correlate with the operationName to identify whether failures are concentrated on specific resource types (VMs, storage, networking).',
+      operationalValue: 'Provisioning failures often signal quota exhaustion, region capacity issues, or broken infrastructure-as-code deployments. Early detection prevents deployment pipelines from stalling and teams from discovering failures hours later.',
+      changeMgmtRelevance: 'Provisioning failures that spike after a deployment indicate broken ARM templates, Terraform plans, or misconfigured parameters. Correlate with deployment timestamps to identify which change introduced the regression.',
+      troubleshootingWorkflow: '1. Identify the failing operationName and resource type\n2. Check status details and error codes in properties\n3. Verify subscription quota limits for the affected resource type\n4. Check if the failure is region-specific\n5. Review recent ARM template or Terraform changes\n6. Verify RBAC permissions for the caller identity\n7. Check Azure Service Health for region-level issues',
+      dashboardDependency: 'Azure Operations Health dashboard, Deployment Success Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Failed operations by resource group (last 4 hours)',
+          description: 'Identify which resource groups have the most provisioning failures',
+          query: 'dataset="$DATASET" status="Failed" earliest=-4h\n| summarize FailCount=count(), UniqueOps=dcount(operationName) by resourceGroupName, subscriptionId\n| order by FailCount desc'
+        },
+        {
+          name: 'Failure trend over time',
+          description: 'Track the rate of failed operations to identify spikes',
+          query: 'dataset="$DATASET" earliest=-12h\n| where status in ("Failed", "Canceled")\n| timestats span=15m count() by resourceGroupName'
+        },
+        {
+          name: 'Top failing operations',
+          description: 'Identify which specific operations are failing most frequently',
+          query: 'dataset="$DATASET" status="Failed" earliest=-4h\n| summarize FailCount=count(), UniqueResources=dcount(resourceId) by operationName, caller\n| order by FailCount desc\n| limit 20'
+        },
+        {
+          name: 'Failure vs success ratio by operation',
+          description: 'Assess the health of each operation type by comparing successes to failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Failures=countif(status == "Failed"), Successes=countif(status == "Succeeded") by operationName\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 5 and FailRate > 20\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-002',
+      name: 'Unauthorized Caller Activity Spike',
+      objective: 'Detect when a service principal or user identity triggers an abnormal volume of operations, indicating potential runaway automation or compromised credentials being used for enumeration.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'azure', 'identity'],
+      requiredFields: ['eventTimestamp', 'caller', 'operationName', 'status', 'callerIpAddress', 'subscriptionId', 'category'],
+      detectionLogic: 'Alert when a caller identity performs >3x their 7-day average operations within a 1-hour window. Separate thresholds for service principals (higher baseline) vs user identities (lower baseline). Flag callers with >50 unique operationName values as potential enumeration.',
+      operationalValue: 'Runaway automation can exhaust API rate limits, trigger throttling across the subscription, and cause cascading failures for other workloads sharing the same subscription.',
+      changeMgmtRelevance: 'Activity spikes from service principals often correlate with CI/CD pipeline runs or new automation deployments. Correlate with deployment schedules to distinguish expected from unexpected behavior.',
+      troubleshootingWorkflow: '1. Identify the caller and their normal activity baseline\n2. Determine if the spike is from a known service principal or user\n3. Check the callerIpAddress for unexpected sources\n4. Review the operationName distribution — is it normal operations or enumeration?\n5. Check if Azure API throttling has been triggered\n6. Verify CI/CD pipeline schedules and recent automation changes',
+      dashboardDependency: 'Identity Activity dashboard, API Rate Limit dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top callers by operation volume (last 4 hours)',
+          description: 'Identify which identities are most active',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize OpCount=count(), UniqueOps=dcount(operationName), UniqueResources=dcount(resourceId) by caller, callerIpAddress\n| order by OpCount desc\n| limit 25'
+        },
+        {
+          name: 'Caller activity trend over time',
+          description: 'Visualize operation volume per caller to spot spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by caller'
+        },
+        {
+          name: 'Callers with broad operation diversity',
+          description: 'Find identities performing many different operation types which may indicate enumeration',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize UniqueOps=dcount(operationName), Total=count() by caller, callerIpAddress\n| where UniqueOps > 20\n| order by UniqueOps desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-003',
+      name: 'Resource Deletion Surge',
+      objective: 'Detect when resources are being deleted at an abnormal rate, indicating potential destructive automation, accidental Terraform destroy, or malicious activity.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'azure', 'deletion'],
+      requiredFields: ['eventTimestamp', 'operationName', 'status', 'resourceId', 'resourceGroupName', 'caller', 'subscriptionId'],
+      detectionLogic: 'Alert when delete operations (operationName containing "/delete") exceed 5 per resource group within 15 minutes, or when any resource group experiences >10 deletions in an hour that deviates from historical baseline. Exclude known ephemeral resource groups.',
+      operationalValue: 'Accidental bulk deletions are catastrophic and often irreversible. Detecting early allows teams to halt automation and preserve remaining resources before blast radius expands.',
+      changeMgmtRelevance: 'Planned teardowns should be tracked in change management. Unexpected deletions outside change windows require immediate investigation and potential resource recovery.',
+      troubleshootingWorkflow: '1. Identify which resources are being deleted and by whom\n2. Determine if a Terraform destroy or ARM deletion is running\n3. Check if the deletions are in a change window\n4. Verify the caller identity and source IP\n5. Assess blast radius — how many resources remain?\n6. Initiate resource recovery if deletions are unauthorized\n7. Check Azure Activity Log for correlated lock removal events',
+      dashboardDependency: 'Resource Lifecycle dashboard, Change Impact dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Delete operations by resource group (last 4 hours)',
+          description: 'Identify which resource groups are experiencing deletions',
+          query: 'dataset="$DATASET" earliest=-4h\n| where operationName contains "/delete"\n| summarize Deletions=count(), UniqueResources=dcount(resourceId) by resourceGroupName, caller\n| order by Deletions desc'
+        },
+        {
+          name: 'Deletion timeline',
+          description: 'Visualize deletion activity over time to spot surges',
+          query: 'dataset="$DATASET" earliest=-12h\n| where operationName contains "/delete" and status == "Succeeded"\n| timestats span=15m count() by resourceGroupName'
+        },
+        {
+          name: 'Deleted resource types breakdown',
+          description: 'Understand what categories of resources are being removed',
+          query: 'dataset="$DATASET" earliest=-4h\n| where operationName contains "/delete" and status == "Succeeded"\n| extend resourceType=extract("providers/([^/]+/[^/]+)", 1, resourceId)\n| summarize count() by resourceType, resourceGroupName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-004',
+      name: 'Administrative Operation from Unusual IP',
+      objective: 'Detect administrative or write operations originating from IP addresses not seen in historical activity for that caller, indicating potential credential compromise or policy violation.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'azure', 'access-pattern'],
+      requiredFields: ['eventTimestamp', 'caller', 'callerIpAddress', 'operationName', 'status', 'subscriptionId', 'level'],
+      detectionLogic: 'Alert when a caller performs write or action-level operations from a callerIpAddress not observed in the prior 30 days for that identity. Focus on Administrative category operations and successful status. Exclude known VPN/corporate egress ranges.',
+      operationalValue: 'Unusual source IPs for administrative operations can indicate compromised credentials, unauthorized access from personal devices, or service principal keys leaked to external systems.',
+      changeMgmtRelevance: 'Legitimate IP changes occur when teams migrate to new VPN concentrators or cloud-hosted CI/CD runners. Cross-reference with known infrastructure changes.',
+      troubleshootingWorkflow: '1. Verify the callerIpAddress geolocation and ownership\n2. Check if the IP belongs to a known corporate egress or VPN range\n3. Determine if the caller recently changed roles or access patterns\n4. Review the operations performed from the unusual IP\n5. Check for concurrent sessions from the callers normal IP\n6. Escalate to security if IP is from unexpected geography',
+      dashboardDependency: 'Access Pattern dashboard, Caller IP Audit dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Caller IP distribution (last 7 days)',
+          description: 'Establish baseline of normal IP addresses per caller',
+          query: 'dataset="$DATASET" earliest=-7d\n| where level == "Information" or level == "Warning"\n| summarize FirstSeen=min(eventTimestamp), LastSeen=max(eventTimestamp), OpCount=count() by caller, callerIpAddress\n| order by caller asc, OpCount desc'
+        },
+        {
+          name: 'Administrative operations from new IPs (last 24h)',
+          description: 'Find callers operating from IPs not in their 30-day history',
+          query: 'dataset="$DATASET" category="Administrative" earliest=-24h\n| summarize OpCount=count(), Operations=makeset(operationName) by caller, callerIpAddress\n| order by OpCount desc'
+        },
+        {
+          name: 'Write operations by caller and source IP',
+          description: 'Focus on destructive or modification operations from unusual sources',
+          query: 'dataset="$DATASET" earliest=-12h\n| where operationName contains "/write" or operationName contains "/delete" or operationName contains "/action"\n| summarize count() by caller, callerIpAddress, operationName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-005',
+      name: 'Subscription-Level Event Volume Anomaly',
+      objective: 'Detect abnormal event volumes across subscriptions that may indicate logging pipeline issues, runaway automation, or service degradation.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'azure', 'pipeline-health'],
+      requiredFields: ['eventTimestamp', 'subscriptionId', 'category', 'level', 'operationName', 'status'],
+      detectionLogic: 'Alert when subscription event volume drops >60% or increases >300% compared to the same hour in the prior 7 days. Evaluate per subscription and per category. A complete drop to zero for >10 minutes triggers critical escalation.',
+      operationalValue: 'Event volume anomalies indicate either logging infrastructure failures (drops) or operational incidents generating excess activity (spikes). Both require investigation to maintain observability coverage.',
+      changeMgmtRelevance: 'Volume drops after infrastructure changes suggest broken diagnostic settings or Event Hub connectivity. Spikes may correlate with new automation or deployment pipelines.',
+      troubleshootingWorkflow: '1. Determine if the anomaly is a drop or a spike\n2. For drops: check Azure diagnostic settings and Event Hub health\n3. For spikes: identify which category and operationName increased\n4. Verify Cribl source connectivity and pipeline health\n5. Check if the subscription has been decommissioned or migrated\n6. Compare against other subscriptions to isolate the issue',
+      dashboardDependency: 'Ingestion Health dashboard, Subscription Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume per subscription over time',
+          description: 'Track ingestion rate per subscription to detect drops or spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by subscriptionId'
+        },
+        {
+          name: 'Category distribution per subscription',
+          description: 'Identify which event categories are present or missing',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize EventCount=count() by subscriptionId, category\n| order by subscriptionId asc, EventCount desc'
+        },
+        {
+          name: 'Subscriptions with zero events in last hour',
+          description: 'Find subscriptions that may have stopped sending data',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastEvent=max(eventTimestamp), EventCount=count() by subscriptionId\n| order by EventCount asc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-006',
+      name: 'Critical Resource Operation Failures',
+      objective: 'Detect when operations on critical infrastructure resources (networking, identity, databases) fail repeatedly, indicating potential outage conditions.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'azure', 'critical-infrastructure'],
+      requiredFields: ['eventTimestamp', 'operationName', 'status', 'resourceId', 'resourceGroupName', 'level', 'properties'],
+      detectionLogic: 'Alert when critical resource operations (network security groups, virtual networks, load balancers, key vaults, SQL databases) show >3 consecutive failures or >5 failures within 30 minutes. Weight by level field (Error and Critical get immediate alerting).',
+      operationalValue: 'Failures on critical infrastructure resources can cascade rapidly. Network and identity failures especially have blast radius across all dependent workloads.',
+      changeMgmtRelevance: 'Critical resource failures after changes to networking, IAM, or database configurations indicate immediate rollback candidates. Auto-correlate with deployment timestamps.',
+      troubleshootingWorkflow: '1. Identify the specific resource and operation failing\n2. Review error details in the properties field\n3. Check if the resource exists and is in a healthy state\n4. Verify dependent resources are available\n5. Check for concurrent changes to networking or RBAC\n6. Review Azure Resource Health for the resource\n7. Escalate if blast radius affects production workloads',
+      dashboardDependency: 'Critical Resource Health dashboard, Error Rate Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Critical resource failures (last 4 hours)',
+          description: 'Focus on failures in networking, identity, and database resources',
+          query: 'dataset="$DATASET" status="Failed" earliest=-4h\n| where resourceId contains "Microsoft.Network" or resourceId contains "Microsoft.KeyVault" or resourceId contains "Microsoft.Sql"\n| summarize FailCount=count() by operationName, resourceId, level\n| order by FailCount desc'
+        },
+        {
+          name: 'Error-level events by resource type',
+          description: 'Track error severity events across critical resource types',
+          query: 'dataset="$DATASET" level="Error" earliest=-12h\n| extend resourceType=extract("providers/([^/]+/[^/]+)", 1, resourceId)\n| timestats span=30m count() by resourceType'
+        },
+        {
+          name: 'Repeated failures on same resource',
+          description: 'Find resources experiencing consecutive operation failures',
+          query: 'dataset="$DATASET" status="Failed" earliest=-2h\n| summarize FailCount=count(), LastFail=max(eventTimestamp), Operations=makeset(operationName) by resourceId\n| where FailCount > 3\n| order by FailCount desc'
+        }
+      ]
+    },
+    {
+      id: 'aza-obs-007',
+      name: 'Cross-Subscription Correlation Gap',
+      objective: 'Detect when expected correlated operations across subscriptions stop occurring, indicating broken cross-subscription dependencies or peering failures.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'azure', 'correlation'],
+      requiredFields: ['eventTimestamp', 'subscriptionId', 'correlationId', 'operationName', 'status', 'resourceGroupName', 'category'],
+      detectionLogic: 'Track correlationId patterns across subscriptions. Alert when a subscription that normally generates correlated operations with other subscriptions stops doing so for >1 hour. Also detect orphaned correlationIds that start but never complete.',
+      operationalValue: 'Cross-subscription dependencies (hub-spoke networking, shared services, cross-subscription peering) require both sides to be operational. Detecting correlation gaps identifies broken dependencies before users report failures.',
+      changeMgmtRelevance: 'Cross-subscription operations break when either side changes independently. Useful for validating that changes in hub subscriptions do not break spoke dependencies.',
+      troubleshootingWorkflow: '1. Identify which subscriptions normally correlate operations\n2. Determine which side of the correlation stopped\n3. Check network peering and cross-subscription RBAC\n4. Verify shared service availability (DNS, Key Vault, etc.)\n5. Review recent changes in both subscriptions\n6. Check if subscription policies or locks changed',
+      dashboardDependency: 'Cross-Subscription Health dashboard, Correlation Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Correlation activity across subscriptions',
+          description: 'Track how operations correlate across different subscriptions',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize SubCount=dcount(subscriptionId), OpCount=count() by correlationId\n| where SubCount > 1\n| order by OpCount desc\n| limit 50'
+        },
+        {
+          name: 'Subscription pair activity over time',
+          description: 'Monitor cross-subscription operation volume for drops',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count() by subscriptionId, category\n| order by subscriptionId asc, count_ desc'
+        },
+        {
+          name: 'Orphaned operations without completion',
+          description: 'Find operations that started but never reached a terminal status',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Statuses=makeset(status), OpCount=count() by correlationId, operationName\n| where OpCount == 1\n| order by OpCount desc\n| limit 30'
+        }
+      ]
+    }
+  ],
+  'gcp-audit-logs': [
+    {
+      id: 'gcp-obs-001',
+      name: 'GCP API Error Rate Spike',
+      objective: 'Detect when GCP API calls return elevated error rates, indicating service degradation, quota exhaustion, or misconfigured applications.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'gcp', 'api-health'],
+      requiredFields: ['timestamp', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_status_code', 'protoPayload_authenticationInfo_principalEmail', 'resource_labels_project_id'],
+      detectionLogic: 'Alert when non-zero protoPayload_status_code (codes 4xx, 5xx, or non-zero gRPC codes) exceed 20% of total API calls for a service within a 15-minute window. Separate thresholds: >10% for 5xx/INTERNAL errors (service-side) vs >30% for 4xx/PERMISSION_DENIED (client-side). Evaluate per project and service.',
+      operationalValue: 'API error spikes indicate application failures, quota issues, or GCP service degradation. Early detection allows teams to implement circuit breakers, scale resources, or failover before user impact escalates.',
+      changeMgmtRelevance: 'Error rate increases after deployments indicate broken API integrations, missing IAM bindings, or quota-exceeding workloads. Correlate with deployment timestamps for rapid rollback decisions.',
+      troubleshootingWorkflow: '1. Identify which service and method has elevated errors\n2. Classify error type: permission (7), not found (5), quota (8), internal (13)\n3. Determine if errors are client-side (caller issue) or server-side (GCP issue)\n4. Check GCP Status Dashboard for known incidents\n5. Review recent IAM or quota changes\n6. Verify the calling principal has correct permissions\n7. Check if a deployment introduced the regression',
+      dashboardDependency: 'GCP API Health dashboard, Service Error Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by service (last 4 hours)',
+          description: 'Identify which GCP services have elevated error rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Errors=countif(protoPayload_status_code != 0) by protoPayload_serviceName, resource_labels_project_id\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| where Total > 10\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Error trend over time by service',
+          description: 'Track error rates over time to identify when spikes began',
+          query: 'dataset="$DATASET" earliest=-12h\n| where protoPayload_status_code != 0\n| timestats span=15m count() by protoPayload_serviceName'
+        },
+        {
+          name: 'Top failing methods',
+          description: 'Find which specific API methods are failing most',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_status_code != 0\n| summarize ErrorCount=count(), UniqueCallers=dcount(protoPayload_authenticationInfo_principalEmail) by protoPayload_methodName, protoPayload_status_code\n| order by ErrorCount desc\n| limit 25'
+        },
+        {
+          name: 'Error distribution by status code',
+          description: 'Understand the types of errors occurring across the environment',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_status_code != 0\n| summarize count() by protoPayload_status_code, protoPayload_serviceName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-002',
+      name: 'IAM Permission Denial Surge',
+      objective: 'Detect when permission-denied errors spike for a project or principal, indicating broken IAM bindings, missing roles, or application misconfiguration after IAM changes.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'gcp', 'iam'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_status_code', 'protoPayload_methodName', 'protoPayload_serviceName', 'resource_labels_project_id', 'protoPayload_authorizationInfo'],
+      detectionLogic: 'Alert when permission-denied events (status_code = 7) exceed 10 per principal within 15 minutes, or exceed 50 per project within 30 minutes. Track the denied permissions in authorizationInfo to identify which specific IAM roles are missing.',
+      operationalValue: 'Permission denials at scale indicate broken workloads that cannot function. Unlike individual denials (which may be probing), sustained denial surges indicate legitimate applications that lost required access.',
+      changeMgmtRelevance: 'IAM denials commonly spike after org policy changes, IAM condition modifications, or service account key rotations. Correlate with IAM admin activity to identify root cause.',
+      troubleshootingWorkflow: '1. Identify the affected principal(s) and their normal access pattern\n2. Determine which specific permissions are being denied\n3. Check recent IAM policy changes on the project or resource\n4. Verify organization policy constraints\n5. Check if service account keys were rotated or disabled\n6. Review VPC Service Controls for perimeter violations',
+      dashboardDependency: 'IAM Health dashboard, Permission Denial Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Permission denials by principal (last 4 hours)',
+          description: 'Identify which identities are experiencing access failures',
+          query: 'dataset="$DATASET" protoPayload_status_code="7" earliest=-4h\n| summarize DenialCount=count(), UniqueMethods=dcount(protoPayload_methodName) by protoPayload_authenticationInfo_principalEmail, resource_labels_project_id\n| order by DenialCount desc'
+        },
+        {
+          name: 'Denial trend over time',
+          description: 'Track permission denials over time to identify when the spike began',
+          query: 'dataset="$DATASET" protoPayload_status_code="7" earliest=-24h\n| timestats span=30m count() by resource_labels_project_id'
+        },
+        {
+          name: 'Denied methods by service',
+          description: 'Understand which API methods are being denied to identify missing roles',
+          query: 'dataset="$DATASET" protoPayload_status_code="7" earliest=-4h\n| summarize count() by protoPayload_methodName, protoPayload_serviceName, protoPayload_authenticationInfo_principalEmail\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-003',
+      name: 'Resource Modification Volume Anomaly',
+      objective: 'Detect abnormal volumes of create, update, or delete operations that deviate from established baselines, indicating runaway automation or bulk infrastructure changes.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'gcp', 'resource-management'],
+      requiredFields: ['timestamp', 'protoPayload_methodName', 'protoPayload_serviceName', 'protoPayload_resourceName', 'protoPayload_authenticationInfo_principalEmail', 'resource_labels_project_id', 'resource_type'],
+      detectionLogic: 'Alert when write operations (methods containing Create, Update, Delete, Insert, Patch, Set) exceed 3x the 7-day baseline for that project and hour. Flag projects with >100 write operations in 15 minutes as potential runaway automation.',
+      operationalValue: 'Bulk resource modifications can exhaust quotas, trigger rate limiting, and create configuration drift. Detecting anomalous write volumes enables teams to halt problematic automation before blast radius expands.',
+      changeMgmtRelevance: 'Expected bulk changes (Terraform applies, batch migrations) should correlate with planned maintenance windows. Unexpected volumes outside windows indicate unauthorized or accidental changes.',
+      troubleshootingWorkflow: '1. Identify the principal performing the modifications\n2. Determine if the operations are from known CI/CD pipelines\n3. Check the resource types being modified\n4. Verify against change management schedule\n5. Assess quota impact — are limits being approached?\n6. Determine if rollback is needed based on scope of changes',
+      dashboardDependency: 'Change Velocity dashboard, Resource Modification Audit dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Write operations by project (last 4 hours)',
+          description: 'Track the volume of modifications per project',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_methodName matches regex "(Create|Update|Delete|Insert|Patch|Set)"\n| summarize WriteOps=count(), UniqueMethods=dcount(protoPayload_methodName) by resource_labels_project_id, protoPayload_authenticationInfo_principalEmail\n| order by WriteOps desc'
+        },
+        {
+          name: 'Modification trend over time',
+          description: 'Visualize write operation volume to spot spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_methodName matches regex "(Create|Update|Delete|Insert|Patch|Set)"\n| timestats span=30m count() by resource_labels_project_id'
+        },
+        {
+          name: 'Resource types being modified',
+          description: 'Understand what types of infrastructure are being changed',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_methodName matches regex "(Create|Update|Delete)"\n| summarize count() by resource_type, protoPayload_methodName\n| order by count_ desc'
+        },
+        {
+          name: 'Delete operations detail',
+          description: 'Focus on destructive operations to assess risk',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_methodName contains "Delete"\n| summarize DeleteCount=count() by protoPayload_resourceName, protoPayload_authenticationInfo_principalEmail, resource_labels_project_id\n| order by DeleteCount desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-004',
+      name: 'Service Account Activity from Unexpected IP',
+      objective: 'Detect when service accounts perform operations from IP addresses outside their established baseline, indicating potential key compromise or unauthorized use.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'gcp', 'access-pattern'],
+      requiredFields: ['timestamp', 'protoPayload_authenticationInfo_principalEmail', 'protoPayload_requestMetadata_callerIp', 'protoPayload_methodName', 'protoPayload_serviceName', 'resource_labels_project_id'],
+      detectionLogic: 'Alert when a service account (@*.iam.gserviceaccount.com) performs operations from a callerIp not seen in the prior 14 days for that identity. Exclude GCP internal IPs (private.googleapis.com ranges). Flag external IPs with high priority.',
+      operationalValue: 'Service account keys used from unexpected IPs can indicate key leakage, compromised CI/CD systems, or unauthorized workload migration. Early detection prevents prolonged unauthorized access.',
+      changeMgmtRelevance: 'Legitimate IP changes occur when workloads migrate between environments, CI/CD systems change, or new GKE clusters are provisioned. Cross-reference with infrastructure changes.',
+      troubleshootingWorkflow: '1. Identify the service account and the unexpected source IP\n2. Determine if the IP belongs to GCP infrastructure (GCE, GKE, Cloud Functions)\n3. Check if a workload migration or new deployment occurred\n4. Review the operations performed from the new IP\n5. Verify key rotation history for the service account\n6. If IP is external and unexpected, rotate keys immediately',
+      dashboardDependency: 'Service Account Audit dashboard, IP Baseline dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Service account IP distribution (last 7 days)',
+          description: 'Establish baseline of normal IPs per service account',
+          query: 'dataset="$DATASET" earliest=-7d\n| where protoPayload_authenticationInfo_principalEmail contains "iam.gserviceaccount.com"\n| summarize FirstSeen=min(timestamp), LastSeen=max(timestamp), OpCount=count() by protoPayload_authenticationInfo_principalEmail, protoPayload_requestMetadata_callerIp\n| order by protoPayload_authenticationInfo_principalEmail asc, OpCount desc'
+        },
+        {
+          name: 'Recent service account activity from new IPs',
+          description: 'Find service accounts operating from unfamiliar source IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_authenticationInfo_principalEmail contains "iam.gserviceaccount.com"\n| summarize OpCount=count(), Methods=makeset(protoPayload_methodName) by protoPayload_authenticationInfo_principalEmail, protoPayload_requestMetadata_callerIp\n| order by OpCount desc'
+        },
+        {
+          name: 'Operations performed from external IPs',
+          description: 'Focus on service account activity from non-GCP IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| where protoPayload_authenticationInfo_principalEmail contains "iam.gserviceaccount.com"\n| where protoPayload_requestMetadata_callerIp !startswith "10." and protoPayload_requestMetadata_callerIp !startswith "172."\n| summarize count() by protoPayload_authenticationInfo_principalEmail, protoPayload_requestMetadata_callerIp, protoPayload_serviceName\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-005',
+      name: 'Audit Log Ingestion Gap',
+      objective: 'Detect when audit log volume drops significantly or stops entirely for a project, indicating logging pipeline failures, sink misconfigurations, or disabled audit logging.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'gcp', 'pipeline-health'],
+      requiredFields: ['timestamp', 'resource_labels_project_id', 'protoPayload_serviceName', 'severity', 'resource_type'],
+      detectionLogic: 'Alert when a project that normally generates >100 events/hour drops to <10 events/hour, or when any project shows zero events for >15 minutes during business hours. Evaluate per project and per severity level to distinguish selective filtering from complete outage.',
+      operationalValue: 'Audit log gaps create blind spots for both security and operational monitoring. Detecting gaps quickly ensures the team knows when observability coverage is degraded.',
+      changeMgmtRelevance: 'Log gaps commonly follow changes to log sinks, routing rules, exclusion filters, or organization policies. Correlate with admin activity on logging resources.',
+      troubleshootingWorkflow: '1. Determine if the gap is project-specific or global\n2. Check Cloud Logging sink configuration and health\n3. Verify log exclusion filters have not been changed\n4. Check if audit log configuration was modified\n5. Verify Cribl source connectivity to Pub/Sub or log sink\n6. Review organization policy changes affecting logging',
+      dashboardDependency: 'Log Ingestion Health dashboard, Project Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume per project over time',
+          description: 'Track audit log ingestion rate per project to detect gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by resource_labels_project_id'
+        },
+        {
+          name: 'Projects with low event volume (last hour)',
+          description: 'Find projects that may have stopped generating audit logs',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize EventCount=count(), LastEvent=max(timestamp) by resource_labels_project_id\n| order by EventCount asc'
+        },
+        {
+          name: 'Severity distribution per project',
+          description: 'Check if only certain severity levels are missing (selective filtering)',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by resource_labels_project_id, severity\n| order by resource_labels_project_id asc, count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-006',
+      name: 'Critical Service Unavailability Pattern',
+      objective: 'Detect patterns of service unavailability (gRPC UNAVAILABLE, DEADLINE_EXCEEDED) that indicate GCP service degradation or network connectivity issues.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'gcp', 'service-health'],
+      requiredFields: ['timestamp', 'protoPayload_serviceName', 'protoPayload_status_code', 'protoPayload_methodName', 'resource_labels_project_id', 'protoPayload_authenticationInfo_principalEmail'],
+      detectionLogic: 'Alert when UNAVAILABLE (14) or DEADLINE_EXCEEDED (4) status codes exceed 5% of calls for a service over 10 minutes. These errors indicate the service itself is struggling, unlike PERMISSION_DENIED which is a client issue. Escalate if multiple services show the pattern simultaneously.',
+      operationalValue: 'Service unavailability patterns often precede full outages. Detecting the early signs allows teams to implement failover, scale resources, or alert affected application owners before customer impact.',
+      changeMgmtRelevance: 'Unavailability patterns after changes may indicate networking issues, resource exhaustion from new workloads, or misconfigured service endpoints. Correlate with deployment and infrastructure changes.',
+      troubleshootingWorkflow: '1. Identify which service(s) are returning unavailability errors\n2. Check GCP Status Dashboard for known incidents\n3. Determine if the issue is project-specific or global\n4. Verify network connectivity (VPC, Private Google Access, peering)\n5. Check quota usage for the affected service\n6. Review recent changes to VPC Service Controls or firewall rules',
+      dashboardDependency: 'Service Availability dashboard, GCP Health Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unavailability errors by service (last 4 hours)',
+          description: 'Find services experiencing availability issues',
+          query: 'dataset="$DATASET" earliest=-4h\n| where protoPayload_status_code in (4, 14)\n| summarize ErrorCount=count(), UniqueMethods=dcount(protoPayload_methodName) by protoPayload_serviceName, resource_labels_project_id\n| order by ErrorCount desc'
+        },
+        {
+          name: 'Availability error trend',
+          description: 'Track unavailability patterns over time to identify onset',
+          query: 'dataset="$DATASET" earliest=-12h\n| where protoPayload_status_code in (4, 14)\n| timestats span=10m count() by protoPayload_serviceName'
+        },
+        {
+          name: 'Affected methods during unavailability',
+          description: 'Determine which specific API operations are impacted',
+          query: 'dataset="$DATASET" earliest=-2h\n| where protoPayload_status_code in (4, 14)\n| summarize count() by protoPayload_methodName, protoPayload_serviceName, protoPayload_authenticationInfo_principalEmail\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'gcp-obs-007',
+      name: 'Project Activity Baseline Drift',
+      objective: 'Track long-term changes in project operational patterns to detect gradual configuration drift, abandoned projects, or silently growing workloads.',
+      severity: 'Low',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'gcp', 'baseline'],
+      requiredFields: ['timestamp', 'resource_labels_project_id', 'protoPayload_serviceName', 'protoPayload_methodName', 'resource_type', 'severity'],
+      detectionLogic: 'Track weekly operation counts per project and service. Alert when a project shows >50% sustained increase over 4 consecutive weeks (growing workload) or >80% sustained decrease (potentially abandoned). Evaluate at the service level for granularity.',
+      operationalValue: 'Gradual drift is invisible in short-term alerting but creates capacity planning blind spots and cost overruns. Detecting drift early allows proactive capacity adjustments and project lifecycle management.',
+      changeMgmtRelevance: 'Baseline drift indicates the cumulative effect of many small changes. Useful for capacity planning reviews and identifying projects that need architectural attention.',
+      troubleshootingWorkflow: '1. Review the project growth trajectory over the past month\n2. Identify which services are driving the increase or decrease\n3. For growth: assess quota headroom and cost implications\n4. For decline: verify the project is still in active use\n5. Cross-reference with team ownership and project lifecycle\n6. Flag for capacity planning review if sustained growth',
+      dashboardDependency: 'Project Growth Trends dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Weekly project activity summary',
+          description: 'Track total operations per project per week for trend analysis',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize WeeklyOps=count(), UniqueServices=dcount(protoPayload_serviceName) by resource_labels_project_id\n| order by WeeklyOps desc'
+        },
+        {
+          name: 'Service usage trend per project',
+          description: 'Identify which services are growing or shrinking within projects',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d count() by resource_labels_project_id, protoPayload_serviceName'
+        },
+        {
+          name: 'Resource type distribution changes',
+          description: 'Track how the mix of resource types evolves over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by resource_type, resource_labels_project_id\n| order by count_ desc\n| limit 50'
+        }
+      ]
+    }
+  ],
+  'cisco-meraki': [
+    {
+      id: 'mrk-obs-001',
+      name: 'Wireless Client Connection Failure Rate',
+      objective: 'Detect when wireless client connection failures spike, indicating AP capacity issues, authentication failures, or RF interference.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'wireless', 'connectivity'],
+      requiredFields: ['timestamp', 'type', 'clientMac', 'ssid', 'network', 'mac'],
+      detectionLogic: 'Alert when connection failure events exceed 20% of total connection events per SSID per network within a 15-minute window. Track by AP (mac) to identify localized issues vs network-wide problems. Correlate with client density to distinguish capacity from configuration issues.',
+      operationalValue: 'Wireless connectivity failures directly impact user productivity and experience. Detecting AP-level or SSID-level failures allows targeted remediation before help desk ticket volume escalates.',
+      changeMgmtRelevance: 'Connection failures commonly spike after SSID configuration changes, RADIUS server modifications, firmware updates, or RF profile adjustments. Correlate with Meraki Dashboard change logs.',
+      troubleshootingWorkflow: '1. Identify affected SSID(s) and network(s)\n2. Determine if the issue is localized to specific APs or network-wide\n3. Check client density per AP — is it a capacity issue?\n4. Verify RADIUS/authentication server health\n5. Review RF environment for interference or channel changes\n6. Check for recent firmware updates or configuration pushes\n7. Verify DHCP pool availability',
+      dashboardDependency: 'Wireless Health dashboard, AP Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connection events by SSID and type (last 4 hours)',
+          description: 'Track connection successes vs failures per SSID',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "association" or type contains "disassociation" or type contains "auth"\n| summarize count() by type, ssid, network\n| order by count_ desc'
+        },
+        {
+          name: 'Client connection failures per AP',
+          description: 'Identify which access points have the highest failure rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "disassociation" or type contains "deauth"\n| summarize FailCount=count(), UniqueClients=dcount(clientMac) by mac, ssid, network\n| order by FailCount desc'
+        },
+        {
+          name: 'Connection failure trend over time',
+          description: 'Visualize connection failure patterns to identify when issues began',
+          query: 'dataset="$DATASET" earliest=-12h\n| where type contains "disassociation" or type contains "deauth" or type contains "auth"\n| timestats span=15m count() by type'
+        },
+        {
+          name: 'Affected clients by SSID',
+          description: 'Determine how many unique clients are impacted per SSID',
+          query: 'dataset="$DATASET" earliest=-2h\n| where type contains "disassociation" or type contains "deauth"\n| summarize Events=count(), UniqueClients=dcount(clientMac) by ssid, network\n| order by UniqueClients desc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-002',
+      name: 'Network Traffic Volume Anomaly',
+      objective: 'Detect abnormal traffic volume patterns across Meraki networks that may indicate DDoS activity, bandwidth saturation, or misconfigured traffic shaping.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'bandwidth', 'traffic-analysis'],
+      requiredFields: ['timestamp', 'src', 'dst', 'sport', 'dport', 'protocol', 'network', 'type'],
+      detectionLogic: 'Alert when traffic volume for a network exceeds 3x the hourly baseline for that time of day. Track by source/destination patterns to distinguish legitimate bursts from anomalous floods. Flag single-source spikes (potential DDoS or misconfiguration) differently from distributed increases (potential legitimate growth).',
+      operationalValue: 'Bandwidth saturation degrades all services sharing the same uplink. Early detection of volume anomalies allows traffic engineering responses before users experience degradation.',
+      changeMgmtRelevance: 'Traffic volume changes after network changes may indicate broken traffic shaping rules, misconfigured VLANs broadcasting where they should not, or newly deployed services consuming unexpected bandwidth.',
+      troubleshootingWorkflow: '1. Identify the network and direction (inbound vs outbound) of the anomaly\n2. Determine top talkers by src and dst\n3. Check if traffic is from a single source (potential flood) or distributed\n4. Review protocol and port distribution for unusual patterns\n5. Check traffic shaping and QoS policies\n6. Verify uplink utilization and WAN link health',
+      dashboardDependency: 'Network Traffic Overview dashboard, Bandwidth Utilization dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Traffic volume by network over time',
+          description: 'Track overall traffic patterns per network to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by network'
+        },
+        {
+          name: 'Top source IPs by volume (last 2 hours)',
+          description: 'Identify top talkers that may be driving the anomaly',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Flows=count(), UniqueDsts=dcount(dst), UniquePorts=dcount(dport) by src, network\n| order by Flows desc\n| limit 25'
+        },
+        {
+          name: 'Protocol distribution',
+          description: 'Understand what types of traffic compose the volume',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by protocol, dport, network\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-003',
+      name: 'Security Event Pattern Detection',
+      objective: 'Detect elevated security event rates (IDS alerts, content filtering, malware) that indicate active threats or misconfigured security policies generating false positives.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'security-events', 'ids'],
+      requiredFields: ['timestamp', 'type', 'pattern', 'src', 'dst', 'dport', 'protocol', 'network'],
+      detectionLogic: 'Alert when security events (IDS alerts, content filtering blocks, malware detections) exceed 5x the 7-day baseline for that network and time period. Separate thresholds: single pattern triggering >50 times in 15 minutes (likely false positive) vs diverse patterns from single source (likely true positive).',
+      operationalValue: 'High security event rates can indicate either real threats requiring response or noisy rules consuming analyst attention and system resources. Distinguishing between the two enables efficient response.',
+      changeMgmtRelevance: 'Security event spikes after policy changes often indicate overly broad IDS rules or content filters that need tuning. Correlate with Meraki security policy modifications.',
+      troubleshootingWorkflow: '1. Classify the security events — IDS, content filter, or malware\n2. Check if a single pattern dominates (likely false positive)\n3. Identify the source(s) generating the events\n4. Determine if the destination is internal or external\n5. Review recent security policy changes\n6. Tune or whitelist if confirmed false positive\n7. Escalate to security team if diverse patterns from single source',
+      dashboardDependency: 'Security Events dashboard, IDS Alert Rate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Security events by type and pattern (last 4 hours)',
+          description: 'Categorize security events to identify dominant patterns',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "security" or type contains "ids" or type contains "malware"\n| summarize count() by type, pattern, network\n| order by count_ desc'
+        },
+        {
+          name: 'Security event trend over time',
+          description: 'Track security event volume to identify rate spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type contains "security" or type contains "ids"\n| timestats span=30m count() by type'
+        },
+        {
+          name: 'Top sources triggering security events',
+          description: 'Identify which internal clients are generating the most security alerts',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "security" or type contains "ids"\n| summarize EventCount=count(), UniquePatterns=dcount(pattern), UniqueDsts=dcount(dst) by src, network\n| order by EventCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-004',
+      name: 'Client Roaming Instability',
+      objective: 'Detect when wireless clients are roaming excessively between APs, indicating RF coverage gaps, channel interference, or power level misconfigurations.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'wireless', 'roaming'],
+      requiredFields: ['timestamp', 'type', 'clientMac', 'mac', 'ssid', 'network'],
+      detectionLogic: 'Alert when a client (clientMac) associates with >3 different APs (mac) within 30 minutes, or when >10% of clients on a network show roaming behavior in a 15-minute window. Track roaming events by type field for association/disassociation patterns.',
+      operationalValue: 'Excessive roaming causes connection interruptions, poor voice/video quality, and application timeouts. Identifying roaming instability allows RF optimization before user complaints.',
+      changeMgmtRelevance: 'Roaming instability after changes indicates RF profile misconfigurations, new APs creating co-channel interference, or power level changes creating coverage gaps.',
+      troubleshootingWorkflow: '1. Identify the most affected clients and their roaming patterns\n2. Map which APs the clients are bouncing between\n3. Check AP power levels and channel assignments\n4. Look for new APs or environmental changes causing interference\n5. Verify 802.11r/k/v roaming assistance is configured\n6. Check for sticky client behavior (clients not roaming when they should)',
+      dashboardDependency: 'Wireless Roaming dashboard, Client Experience dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Client AP transitions (last 4 hours)',
+          description: 'Track how often clients change their associated AP',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "association"\n| summarize Transitions=count(), UniqueAPs=dcount(mac) by clientMac, ssid, network\n| where UniqueAPs > 2\n| order by Transitions desc\n| limit 30'
+        },
+        {
+          name: 'Roaming patterns over time',
+          description: 'Visualize association events to identify instability periods',
+          query: 'dataset="$DATASET" earliest=-12h\n| where type contains "association"\n| timestats span=15m count() by network, ssid'
+        },
+        {
+          name: 'APs involved in frequent roaming',
+          description: 'Identify which AP pairs clients are bouncing between',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "association"\n| summarize ClientCount=dcount(clientMac), Events=count() by mac, ssid, network\n| order by Events desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-005',
+      name: 'URL Content Filtering Anomaly',
+      objective: 'Detect sudden changes in content filtering patterns that may indicate policy misconfiguration, new application deployments, or emerging user behavior patterns.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'content-filtering', 'url'],
+      requiredFields: ['timestamp', 'type', 'url', 'src', 'clientMac', 'network', 'mac'],
+      detectionLogic: 'Alert when content filter block events increase >200% over baseline, or when a previously unblocked URL category suddenly generates >50 blocks in 15 minutes. Track by network and source to distinguish policy changes from user behavior changes.',
+      operationalValue: 'Sudden increases in content filter blocks indicate either over-blocking (impacting user productivity) or new applications/services trying to reach blocked destinations. Both require operational attention.',
+      changeMgmtRelevance: 'Content filter spikes after policy changes indicate rules that are too broad, blocking legitimate business traffic. Rapid detection enables quick policy adjustment.',
+      troubleshootingWorkflow: '1. Identify the most blocked URLs and their categories\n2. Determine if blocks affect specific networks or are global\n3. Check for recent content filtering policy changes\n4. Verify if blocked URLs are legitimate business services\n5. Review affected clients to understand user impact\n6. Adjust policy or add whitelists as needed',
+      dashboardDependency: 'Content Filtering dashboard, URL Category Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top blocked URLs (last 4 hours)',
+          description: 'Identify which URLs are being blocked most frequently',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "content_filter" or type contains "blocked"\n| summarize BlockCount=count(), UniqueClients=dcount(clientMac) by url, network\n| order by BlockCount desc\n| limit 25'
+        },
+        {
+          name: 'Content filter blocks over time',
+          description: 'Track blocking rate to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where type contains "content_filter" or type contains "blocked"\n| timestats span=30m count() by network'
+        },
+        {
+          name: 'Affected clients by network',
+          description: 'Determine the scope of user impact from content filtering',
+          query: 'dataset="$DATASET" earliest=-4h\n| where type contains "content_filter" or type contains "blocked"\n| summarize Blocks=count(), UniqueURLs=dcount(url) by src, clientMac, network\n| order by Blocks desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-006',
+      name: 'AP Event Log Volume Drop',
+      objective: 'Detect when individual access points stop generating events, indicating AP failure, network connectivity loss, or management plane disconnection.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'ap-health', 'monitoring'],
+      requiredFields: ['timestamp', 'mac', 'network', 'type', 'ssid'],
+      detectionLogic: 'Alert when an AP (mac) that normally generates >10 events per hour shows zero events for >15 minutes. Track per network to identify localized vs widespread outages. A single AP going silent is Medium priority; >3 APs in the same network going silent simultaneously is Critical.',
+      operationalValue: 'Silent APs indicate either device failure or upstream network issues. Detecting the gap quickly reduces mean time to repair and prevents users from experiencing dead zones without IT awareness.',
+      changeMgmtRelevance: 'AP silence after firmware updates indicates failed upgrades. After network changes, it indicates VLAN or upstream switch port issues affecting AP management connectivity.',
+      troubleshootingWorkflow: '1. Identify which AP(s) stopped generating events\n2. Check if the issue is isolated or affects multiple APs\n3. Verify upstream switch port status for the AP\n4. Check Meraki Dashboard for AP online/offline status\n5. Verify management VLAN connectivity\n6. Check for recent firmware push or configuration change\n7. If hardware failure suspected, check power (PoE) status',
+      dashboardDependency: 'AP Health dashboard, Network Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume per AP over time',
+          description: 'Track event generation rate per AP to detect silences',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m count() by mac, network'
+        },
+        {
+          name: 'APs with recent activity (last hour)',
+          description: 'Identify which APs are actively generating events',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastEvent=max(timestamp), EventCount=count(), UniqueTypes=dcount(type) by mac, network\n| order by EventCount asc'
+        },
+        {
+          name: 'Network-level AP coverage (active APs per network)',
+          description: 'Compare active AP count against expected to find gaps',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ActiveAPs=dcount(mac), TotalEvents=count() by network\n| order by ActiveAPs asc'
+        }
+      ]
+    },
+    {
+      id: 'mrk-obs-007',
+      name: 'Unusual Port and Protocol Distribution',
+      objective: 'Track changes in port and protocol distribution across the network to detect new services, shadow IT deployments, or misconfigured applications.',
+      severity: 'Low',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'traffic-analysis', 'baseline'],
+      requiredFields: ['timestamp', 'protocol', 'dport', 'src', 'dst', 'network', 'type'],
+      detectionLogic: 'Alert when a new port/protocol combination appears that was not seen in the prior 14 days and generates >100 flows in the first hour. Also alert when the proportion of traffic to a specific port shifts >30% from baseline. Focuses on non-standard ports (not 80, 443, 53).',
+      operationalValue: 'New ports and protocols appearing on the network indicate new services being deployed (often without network team awareness), shadow IT, or misconfigured applications. Tracking these ensures capacity planning accounts for new traffic patterns.',
+      changeMgmtRelevance: 'New services should be deployed through change management. Detecting new port/protocol patterns identifies services deployed outside normal processes.',
+      troubleshootingWorkflow: '1. Identify the new port/protocol combination\n2. Determine which sources and destinations are using it\n3. Verify if a new application deployment was planned\n4. Check if the traffic is business-related or shadow IT\n5. Assess bandwidth impact of the new traffic pattern\n6. Update network documentation and capacity plans if legitimate',
+      dashboardDependency: 'Protocol Distribution dashboard, New Services Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Port and protocol distribution (last 24 hours)',
+          description: 'Overview of traffic by port and protocol for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FlowCount=count(), UniqueSources=dcount(src), UniqueDests=dcount(dst) by dport, protocol, network\n| order by FlowCount desc\n| limit 30'
+        },
+        {
+          name: 'Non-standard port activity',
+          description: 'Focus on traffic using uncommon ports that may indicate new services',
+          query: 'dataset="$DATASET" earliest=-12h\n| where dport !in (80, 443, 53, 22, 25, 110, 993, 587)\n| summarize FlowCount=count(), UniqueSources=dcount(src) by dport, protocol, network\n| where FlowCount > 50\n| order by FlowCount desc'
+        },
+        {
+          name: 'Port usage trend over time',
+          description: 'Visualize how port usage evolves to detect new patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by dport, protocol\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'cisco-sdwan': [
+    {
+      id: 'sdw-obs-001',
+      name: 'SLA Violation on Critical Circuit',
+      objective: 'Detect when WAN circuits violate SLA thresholds for latency, jitter, or packet loss, indicating degraded network performance that impacts application delivery.',
+      severity: 'Critical',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'sla', 'wan'],
+      requiredFields: ['entry_time', 'vdevice_name', 'local_color', 'remote_color', 'sla_class', 'latency', 'jitter', 'loss_percentage', 'site_id'],
+      detectionLogic: 'Alert when latency >150ms, jitter >30ms, or loss_percentage >1% sustained for >5 minutes on any circuit. Critical severity when multiple metrics exceed thresholds simultaneously or when the SLA class changes to a degraded state. Evaluate per tunnel (local_color + remote_color pair) per site.',
+      operationalValue: 'SLA violations directly impact application performance. Real-time monitoring or voice/video quality degrades rapidly when latency and jitter thresholds are breached. Early detection enables traffic steering decisions before user impact.',
+      changeMgmtRelevance: 'SLA violations after circuit provisioning changes, ISP modifications, or SD-WAN policy updates indicate misconfigurations requiring immediate attention. Correlate with maintenance windows.',
+      troubleshootingWorkflow: '1. Identify the affected circuit (local_color/remote_color) and site\n2. Determine which SLA metrics are violated (latency, jitter, loss)\n3. Check if traffic has already failed over to backup circuit\n4. Verify ISP circuit status and contact provider if needed\n5. Review SD-WAN policy for traffic steering decisions\n6. Check if other sites on the same ISP are affected\n7. Verify no recent policy changes affected path selection',
+      dashboardDependency: 'WAN Performance dashboard, SLA Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'SLA metrics by circuit (last 4 hours)',
+          description: 'Track latency, jitter, and loss per WAN circuit',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgLatency=avg(latency), AvgJitter=avg(jitter), AvgLoss=avg(loss_percentage), Samples=count() by vdevice_name, local_color, remote_color, site_id\n| order by AvgLatency desc'
+        },
+        {
+          name: 'SLA violation trend over time',
+          description: 'Visualize when SLA thresholds were breached',
+          query: 'dataset="$DATASET" earliest=-12h\n| where latency > 150 or jitter > 30 or loss_percentage > 1\n| timestats span=5m count() by local_color, vdevice_name'
+        },
+        {
+          name: 'Circuits exceeding latency threshold',
+          description: 'Find circuits with sustained high latency',
+          query: 'dataset="$DATASET" earliest=-1h\n| where latency > 150\n| summarize AvgLatency=avg(latency), MaxLatency=max(latency), Samples=count() by vdevice_name, local_color, remote_color, site_id\n| where Samples > 5\n| order by AvgLatency desc'
+        },
+        {
+          name: 'SLA class transitions',
+          description: 'Track when circuits change SLA classification indicating degradation',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by sla_class, vdevice_name, local_color, remote_color\n| order by vdevice_name asc, count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-002',
+      name: 'Circuit Packet Loss Escalation',
+      objective: 'Detect when packet loss on a WAN circuit begins escalating, providing early warning before the circuit becomes unusable for real-time traffic.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'packet-loss', 'wan-health'],
+      requiredFields: ['entry_time', 'vdevice_name', 'loss_percentage', 'local_color', 'remote_color', 'site_id', 'sla_class'],
+      detectionLogic: 'Alert when loss_percentage increases from <0.5% baseline to >1% over 15 minutes (early warning), and escalate when loss exceeds 3% for >5 minutes (critical). Track the rate of change — rapidly increasing loss (doubling every 5 minutes) is more urgent than stable elevated loss.',
+      operationalValue: 'Packet loss is the most impactful WAN degradation for real-time applications (voice, video, interactive). Detecting escalation patterns before total circuit failure allows proactive failover.',
+      changeMgmtRelevance: 'Packet loss escalation after ISP maintenance, circuit augmentation, or router changes indicates hardware or configuration issues requiring immediate investigation.',
+      troubleshootingWorkflow: '1. Confirm the loss is sustained, not a single measurement spike\n2. Check if loss correlates with bandwidth utilization (congestion)\n3. Determine if loss is unidirectional or bidirectional\n4. Verify SD-WAN has steered traffic away from the degraded path\n5. Contact ISP with evidence if loss is on their circuit\n6. Check for CRC errors or interface errors on the router',
+      dashboardDependency: 'Circuit Health dashboard, Packet Loss Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Packet loss by circuit over time',
+          description: 'Visualize loss patterns to identify escalation',
+          query: 'dataset="$DATASET" earliest=-12h\n| where loss_percentage > 0\n| timestats span=5m avg(loss_percentage) by vdevice_name, local_color'
+        },
+        {
+          name: 'Circuits with escalating loss (last 2 hours)',
+          description: 'Find circuits where packet loss is increasing over time',
+          query: 'dataset="$DATASET" earliest=-2h\n| where loss_percentage > 0.5\n| summarize AvgLoss=avg(loss_percentage), MaxLoss=max(loss_percentage), Samples=count() by vdevice_name, local_color, remote_color, site_id\n| where Samples > 5\n| order by MaxLoss desc'
+        },
+        {
+          name: 'Site-level loss summary',
+          description: 'Aggregate loss across all circuits per site to assess overall site health',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgLoss=avg(loss_percentage), MaxLoss=max(loss_percentage), CircuitCount=dcount(local_color) by site_id, vdevice_name\n| order by MaxLoss desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-003',
+      name: 'Site Connectivity Loss',
+      objective: 'Detect when a site loses all WAN connectivity or when all circuits to a site go down simultaneously, indicating a complete site outage.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'site-outage', 'connectivity'],
+      requiredFields: ['entry_time', 'vdevice_name', 'site_id', 'local_color', 'remote_color', 'latency', 'loss_percentage'],
+      detectionLogic: 'Alert when a site_id that normally reports metrics every 5 minutes shows no new entries for >10 minutes. Differentiate between complete site loss (all circuits) and partial degradation (some circuits reporting). Cross-reference across all vdevice_name entries for the site.',
+      operationalValue: 'Complete site connectivity loss is the highest impact WAN event. Immediate detection reduces mean time to awareness and enables rapid incident response including ISP escalation and site dispatch.',
+      changeMgmtRelevance: 'Site outages after planned maintenance indicate failed changes. Correlate with scheduled maintenance windows for both ISP circuits and on-premises equipment.',
+      troubleshootingWorkflow: '1. Confirm the site is completely unreachable (all circuits)\n2. Check if partial connectivity exists (any circuit reporting)\n3. Verify from the hub/controller side — are tunnels down?\n4. Contact site personnel if available\n5. Check ISP status for circuits serving the site\n6. Verify power status if remote monitoring is available\n7. Initiate site dispatch if remote recovery fails',
+      dashboardDependency: 'Site Status dashboard, WAN Availability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Last seen timestamp per site',
+          description: 'Identify sites that may have gone offline',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(entry_time), Circuits=dcount(local_color), Samples=count() by site_id, vdevice_name\n| order by LastSeen asc'
+        },
+        {
+          name: 'Site connectivity over time',
+          description: 'Track which sites are reporting metrics consistently',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by site_id'
+        },
+        {
+          name: 'Sites with degraded circuit count',
+          description: 'Find sites where fewer circuits are reporting than expected',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize ActiveCircuits=dcount(local_color), TotalSamples=count() by site_id, vdevice_name\n| where ActiveCircuits < 2\n| order by ActiveCircuits asc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-004',
+      name: 'WAN Latency Baseline Deviation',
+      objective: 'Detect when WAN circuit latency deviates significantly from established baselines, indicating routing changes, congestion, or ISP path modifications.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'baseline'],
+      requiredFields: ['entry_time', 'vdevice_name', 'latency', 'local_color', 'remote_color', 'site_id', 'sla_class'],
+      detectionLogic: 'Alert when average latency for a circuit exceeds 2x its 7-day rolling average for that time of day. Use separate baselines for business hours vs off-hours. A sustained 50% increase for >30 minutes triggers Medium alert; >100% increase triggers High.',
+      operationalValue: 'Latency deviations affect application performance even when still technically within SLA. Detecting deviations early allows proactive investigation and traffic steering before applications degrade.',
+      changeMgmtRelevance: 'Latency changes after ISP maintenance or routing policy changes indicate path modifications. May be intentional (ISP optimization) or problematic (suboptimal routing).',
+      troubleshootingWorkflow: '1. Establish the normal baseline for the affected circuit\n2. Determine if the deviation is consistent or intermittent\n3. Check if the ISP performed maintenance or route changes\n4. Verify BGP path — has the AS path length changed?\n5. Check for bandwidth utilization (congestion-induced latency)\n6. Compare with other circuits on the same ISP',
+      dashboardDependency: 'Latency Trends dashboard, Circuit Baseline dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Latency trend per circuit (last 24 hours)',
+          description: 'Visualize latency patterns to identify deviations from normal',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m avg(latency) by vdevice_name, local_color, remote_color'
+        },
+        {
+          name: 'Circuits with elevated latency',
+          description: 'Find circuits currently exceeding their expected latency',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize AvgLatency=avg(latency), MaxLatency=max(latency), MinLatency=min(latency) by vdevice_name, local_color, remote_color, site_id\n| where AvgLatency > 50\n| order by AvgLatency desc'
+        },
+        {
+          name: 'Latency comparison: current hour vs same hour yesterday',
+          description: 'Compare current performance against the same period 24 hours ago',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize CurrentAvg=avg(latency), CurrentMax=max(latency) by vdevice_name, local_color, site_id\n| order by CurrentAvg desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-005',
+      name: 'Circuit Color Failover Event',
+      objective: 'Detect when traffic fails over from a primary circuit color to a secondary, indicating primary path degradation and potential capacity constraints on the backup.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'failover', 'traffic-steering'],
+      requiredFields: ['entry_time', 'vdevice_name', 'local_color', 'remote_color', 'sla_class', 'latency', 'jitter', 'loss_percentage', 'site_id'],
+      detectionLogic: 'Alert when a previously active circuit color shows degraded SLA metrics (triggering SLA class change) and traffic volume shifts to an alternate color for the same site. Detect by correlating SLA degradation on one color with increased activity on another within a 10-minute window.',
+      operationalValue: 'Failover events indicate primary path degradation and shift load to backup circuits that may have less bandwidth. Understanding failover patterns helps capacity planning and ISP accountability.',
+      changeMgmtRelevance: 'Failover during maintenance windows is expected. Unexpected failovers outside maintenance windows indicate ISP issues or hardware problems requiring investigation.',
+      troubleshootingWorkflow: '1. Identify which circuit color triggered the failover\n2. Check the SLA metrics on the primary before failover\n3. Verify the backup circuit has sufficient capacity\n4. Determine if failover was triggered by loss, latency, or jitter\n5. Check if the primary circuit has recovered or is still degraded\n6. Monitor backup circuit performance under additional load',
+      dashboardDependency: 'Failover Events dashboard, Circuit Utilization dashboard',
+      criblSearchQueries: [
+        {
+          name: 'SLA class changes by circuit (last 12 hours)',
+          description: 'Track SLA class transitions indicating failover events',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count() by sla_class, local_color, remote_color, vdevice_name, site_id\n| order by vdevice_name asc, local_color asc'
+        },
+        {
+          name: 'Circuit health comparison per site',
+          description: 'Compare metrics across all circuits at each site to identify failover conditions',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AvgLatency=avg(latency), AvgJitter=avg(jitter), AvgLoss=avg(loss_percentage) by site_id, local_color, remote_color, sla_class\n| order by site_id asc, AvgLoss desc'
+        },
+        {
+          name: 'Failover timeline per site',
+          description: 'Visualize circuit activity changes over time to see failover patterns',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m avg(latency), avg(loss_percentage) by local_color, site_id'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-006',
+      name: 'Jitter Threshold Breach on Voice Circuit',
+      objective: 'Detect when jitter on circuits carrying real-time traffic exceeds thresholds that degrade voice and video quality.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'jitter', 'real-time-traffic'],
+      requiredFields: ['entry_time', 'vdevice_name', 'jitter', 'latency', 'local_color', 'remote_color', 'site_id', 'sla_class'],
+      detectionLogic: 'Alert when jitter exceeds 20ms sustained for >5 minutes on circuits serving real-time traffic (identified by SLA class). Voice quality degrades noticeably above 30ms jitter. Track both instantaneous spikes and sustained elevation.',
+      operationalValue: 'Jitter is the primary quality metric for voice and video. Even small sustained increases cause choppy audio, frozen video, and poor user experience. Early detection enables traffic rerouting.',
+      changeMgmtRelevance: 'Jitter increases after QoS policy changes, circuit augmentation, or ISP routing changes indicate configuration issues affecting traffic prioritization.',
+      troubleshootingWorkflow: '1. Identify the affected circuit and site\n2. Verify the SLA class — is this a voice/video-priority circuit?\n3. Check if jitter correlates with high utilization (buffer bloat)\n4. Review QoS configuration for proper traffic marking\n5. Contact ISP if jitter originates in the WAN\n6. Consider enabling forward error correction if available',
+      dashboardDependency: 'Voice Quality dashboard, Jitter Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Jitter by circuit over time',
+          description: 'Track jitter patterns to identify sustained violations',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=5m avg(jitter), max(jitter) by vdevice_name, local_color'
+        },
+        {
+          name: 'Circuits exceeding jitter threshold',
+          description: 'Find circuits with jitter above voice quality thresholds',
+          query: 'dataset="$DATASET" earliest=-1h\n| where jitter > 20\n| summarize AvgJitter=avg(jitter), MaxJitter=max(jitter), Samples=count() by vdevice_name, local_color, remote_color, site_id, sla_class\n| where Samples > 5\n| order by AvgJitter desc'
+        },
+        {
+          name: 'Jitter vs latency correlation',
+          description: 'Determine if jitter correlates with latency (congestion indicator)',
+          query: 'dataset="$DATASET" earliest=-4h\n| where jitter > 10\n| summarize AvgJitter=avg(jitter), AvgLatency=avg(latency), AvgLoss=avg(loss_percentage) by vdevice_name, local_color, site_id\n| order by AvgJitter desc'
+        }
+      ]
+    },
+    {
+      id: 'sdw-obs-007',
+      name: 'SD-WAN Telemetry Ingestion Gap',
+      objective: 'Detect when SD-WAN telemetry stops arriving for devices or sites, indicating collection pipeline failures or device management plane issues.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline-health', 'telemetry'],
+      requiredFields: ['entry_time', 'vdevice_name', 'site_id', 'local_color', 'remote_color'],
+      detectionLogic: 'Alert when a vdevice_name that normally reports every 5 minutes shows no entries for >15 minutes. Differentiate between device-level gaps (single device) and site-level gaps (all devices at a site). Also detect partial gaps where only some circuits report.',
+      operationalValue: 'Telemetry gaps mean the SD-WAN fabric is operating without visibility. During gaps, SLA violations and circuit failures go undetected. Maintaining telemetry coverage is critical for operational confidence.',
+      changeMgmtRelevance: 'Telemetry gaps after vManage upgrades, API changes, or collection pipeline modifications indicate broken integrations requiring immediate attention.',
+      troubleshootingWorkflow: '1. Determine scope — single device, single site, or multiple sites\n2. Check vManage connectivity to the affected device(s)\n3. Verify the data collection pipeline (API polling or streaming)\n4. Check Cribl source health for the SD-WAN input\n5. Verify device management plane status\n6. Review recent changes to vManage or collection infrastructure',
+      dashboardDependency: 'Telemetry Coverage dashboard, Device Reporting Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Device reporting frequency (last 4 hours)',
+          description: 'Track how frequently each device reports telemetry',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by vdevice_name, site_id'
+        },
+        {
+          name: 'Devices with recent gaps',
+          description: 'Find devices that have stopped reporting telemetry',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(entry_time), Samples=count(), Circuits=dcount(local_color) by vdevice_name, site_id\n| order by LastSeen asc'
+        },
+        {
+          name: 'Site-level telemetry coverage',
+          description: 'Assess overall telemetry health per site',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize Devices=dcount(vdevice_name), TotalSamples=count(), Circuits=dcount(local_color) by site_id\n| order by TotalSamples asc'
+        }
+      ]
+    }
+  ],
+  'qualys-tenable': [
+    {
+      id: 'vul-obs-001',
+      name: 'Critical Vulnerability Density Spike',
+      objective: 'Detect when the density of critical and high-severity vulnerabilities increases significantly across the environment, indicating new vulnerability disclosures, scan coverage expansion, or patch regression.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'vulnerability-density', 'risk-posture'],
+      requiredFields: ['timestamp', 'host_ip', 'severity', 'cvss_score', 'title', 'cve_id', 'status', 'first_found', 'last_found'],
+      detectionLogic: 'Alert when the count of severity 4-5 (critical) or cvss_score >9.0 vulnerabilities increases >25% compared to the prior scan cycle. Track by first_found to distinguish new discoveries from persistent findings. Flag when >10 new critical vulnerabilities appear in a single scan cycle.',
+      operationalValue: 'Critical vulnerability spikes require immediate patch prioritization and may indicate new zero-days, expanded scan coverage finding previously hidden assets, or patch failures allowing known vulnerabilities to return.',
+      changeMgmtRelevance: 'Vulnerability spikes after patch deployments indicate failed patches. Spikes after infrastructure changes indicate new unpatched systems entering the environment.',
+      troubleshootingWorkflow: '1. Determine if the spike is new vulnerabilities or resurfaced known issues\n2. Check first_found dates — are these newly discovered?\n3. Identify if specific CVEs account for the spike (new disclosure)\n4. Check if scan scope was expanded (new hosts)\n5. Verify recent patch cycles completed successfully\n6. Prioritize by CVSS score and exploitability\n7. Cross-reference with threat intelligence for active exploitation',
+      dashboardDependency: 'Vulnerability Posture dashboard, Critical Risk Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Critical vulnerabilities by host (last scan)',
+          description: 'Identify hosts with the highest critical vulnerability density',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity >= 4 or cvss_score > 9\n| summarize CritCount=count(), UniqueCVEs=dcount(cve_id) by host_ip, host_fqdn, host_os\n| order by CritCount desc\n| limit 25'
+        },
+        {
+          name: 'New critical vulnerabilities (first_found in last 7 days)',
+          description: 'Find recently discovered critical vulnerabilities',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity >= 4 and status == "Active"\n| summarize AffectedHosts=dcount(host_ip), FirstDiscovered=min(first_found) by cve_id, title, cvss_score\n| order by AffectedHosts desc'
+        },
+        {
+          name: 'Vulnerability count trend over time',
+          description: 'Track total vulnerability counts per severity level over scan cycles',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status == "Active"\n| timestats span=1d count() by severity'
+        },
+        {
+          name: 'CVSS score distribution',
+          description: 'Understand the severity distribution of active vulnerabilities',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status == "Active"\n| summarize VulnCount=count(), UniqueHosts=dcount(host_ip) by severity, cvss_score\n| order by cvss_score desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-002',
+      name: 'Patch Cycle Effectiveness Degradation',
+      objective: 'Detect when vulnerability remediation rates decline, indicating broken patch management processes, failed patch deployments, or expanding unpatched asset populations.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'patch-management', 'remediation'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'severity', 'status', 'first_found', 'last_found', 'title', 'cve_id'],
+      detectionLogic: 'Alert when the ratio of Active to Fixed vulnerabilities increases >20% compared to prior month baseline, or when vulnerabilities with status Active and first_found >30 days ago exceed 40% of total findings. Track mean time to remediation (last_found - first_found for Fixed status) for degradation.',
+      operationalValue: 'Declining patch effectiveness indicates process breakdown, resource constraints, or compatibility issues preventing patches. Detecting trends early allows remediation process correction before risk accumulates.',
+      changeMgmtRelevance: 'Patch cycle effectiveness should improve or remain stable after process improvements. Degradation correlates with staffing changes, tool issues, or infrastructure complexity growth.',
+      troubleshootingWorkflow: '1. Compare current remediation rate against prior months\n2. Identify which vulnerability types are aging (OS patches, application, third-party)\n3. Check if specific hosts or groups are falling behind\n4. Verify patch management tool health and deployment success rates\n5. Identify blocking issues (reboot requirements, application conflicts)\n6. Assess if team capacity matches vulnerability volume',
+      dashboardDependency: 'Patch Cycle Metrics dashboard, Remediation SLA dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Vulnerability age distribution',
+          description: 'Understand how long vulnerabilities remain unpatched',
+          query: 'dataset="$DATASET" status="Active" earliest=-30d\n| summarize VulnCount=count(), UniqueHosts=dcount(host_ip) by severity, title\n| order by VulnCount desc\n| limit 30'
+        },
+        {
+          name: 'Remediation rate by severity',
+          description: 'Track how quickly vulnerabilities are being fixed by severity level',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize Active=countif(status == "Active"), Fixed=countif(status == "Fixed") by severity\n| extend RemediationRate=round(Fixed * 100.0 / (Active + Fixed), 1)\n| order by severity desc'
+        },
+        {
+          name: 'Hosts with oldest unpatched vulnerabilities',
+          description: 'Find hosts with the longest-standing unpatched vulnerabilities',
+          query: 'dataset="$DATASET" status="Active" earliest=-90d\n| summarize OldestVuln=min(first_found), VulnCount=count(), CritCount=countif(severity >= 4) by host_ip, host_fqdn, host_os\n| order by OldestVuln asc\n| limit 25'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-003',
+      name: 'Scan Coverage Gap Detection',
+      objective: 'Detect when vulnerability scan coverage decreases, indicating scan infrastructure issues, network segmentation changes, or decommissioned scanner appliances.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'scan-coverage', 'asset-inventory'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'host_os', 'last_found', 'first_found', 'status'],
+      detectionLogic: 'Alert when the count of unique hosts scanned in the current cycle drops >10% compared to the prior 4-week average. Also detect hosts where last_found is >14 days old (no recent scan data). Track by subnet or host_os to identify systematic coverage gaps.',
+      operationalValue: 'Scan coverage gaps create blind spots in the vulnerability posture. Assets not being scanned may harbor critical vulnerabilities without the team awareness. Maintaining coverage is foundational to the vulnerability management program.',
+      changeMgmtRelevance: 'Coverage drops after network changes indicate scan infrastructure cannot reach new segments. After scanner maintenance, verify coverage returns to baseline.',
+      troubleshootingWorkflow: '1. Identify which hosts or subnets stopped appearing in scans\n2. Check scanner appliance health and connectivity\n3. Verify network ACLs and firewall rules allow scanner access\n4. Check if assets were decommissioned vs lost from scan scope\n5. Review scan schedules and credential configurations\n6. Verify CMDB against scan results for asset completeness',
+      dashboardDependency: 'Scan Coverage dashboard, Asset Inventory Completeness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Hosts by last scan date',
+          description: 'Identify hosts that have not been scanned recently',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize LastScanned=max(last_found), VulnCount=count() by host_ip, host_fqdn, host_os\n| order by LastScanned asc\n| limit 30'
+        },
+        {
+          name: 'Unique hosts scanned per week',
+          description: 'Track scan coverage over time to detect drops',
+          query: 'dataset="$DATASET" earliest=-30d\n| timestats span=7d UniqueHosts=dcount(host_ip), TotalFindings=count()'
+        },
+        {
+          name: 'Coverage by OS type',
+          description: 'Identify if certain OS types are losing scan coverage',
+          query: 'dataset="$DATASET" earliest=-14d\n| summarize Hosts=dcount(host_ip), Findings=count(), LastScan=max(last_found) by host_os\n| order by Hosts desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-004',
+      name: 'High-Risk Service Exposure',
+      objective: 'Detect when vulnerabilities are found on services exposed on commonly targeted ports, indicating internet-facing risk that requires priority remediation.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'exposure', 'service-risk'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'port', 'protocol', 'severity', 'cvss_score', 'title', 'cve_id', 'status'],
+      detectionLogic: 'Alert when critical or high vulnerabilities (severity >= 4 or cvss_score >= 7.0) are found on high-risk ports (22, 80, 443, 3389, 8080, 8443, 3306, 5432, 1433, 27017). Prioritize by combining CVSS score with port exposure risk. Track new findings on these ports specifically.',
+      operationalValue: 'Vulnerabilities on exposed services represent the highest exploitation risk. Prioritizing remediation of internet-facing high-risk port vulnerabilities reduces the most critical attack surface.',
+      changeMgmtRelevance: 'New service exposure vulnerabilities after deployments indicate security review gaps. After port changes or firewall rule additions, vulnerability scans should validate the new exposure.',
+      troubleshootingWorkflow: '1. Identify the affected host, port, and vulnerability\n2. Determine if the port is internet-facing or internal only\n3. Check if compensating controls exist (WAF, IPS, network segmentation)\n4. Prioritize by CVSS score and known exploitation\n5. Coordinate emergency patching for exposed critical vulnerabilities\n6. Consider temporary port blocking if patch is not immediately available',
+      dashboardDependency: 'Service Exposure Risk dashboard, Internet-Facing Vulnerability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Critical vulnerabilities on high-risk ports',
+          description: 'Find critical vulnerabilities on commonly exploited services',
+          query: 'dataset="$DATASET" status="Active" earliest=-7d\n| where severity >= 4 and port in (22, 80, 443, 3389, 8080, 8443, 3306, 5432, 1433)\n| summarize VulnCount=count(), CVEs=makeset(cve_id) by host_ip, host_fqdn, port, protocol\n| order by VulnCount desc'
+        },
+        {
+          name: 'Port vulnerability density',
+          description: 'Track which ports have the highest vulnerability density',
+          query: 'dataset="$DATASET" status="Active" earliest=-7d\n| where severity >= 3\n| summarize VulnCount=count(), UniqueHosts=dcount(host_ip), AvgCVSS=avg(cvss_score) by port, protocol\n| order by VulnCount desc\n| limit 20'
+        },
+        {
+          name: 'New high-risk port vulnerabilities (last 7 days)',
+          description: 'Find recently discovered vulnerabilities on critical services',
+          query: 'dataset="$DATASET" earliest=-7d\n| where severity >= 4 and port in (22, 80, 443, 3389, 8080, 8443)\n| summarize AffectedHosts=dcount(host_ip), FirstSeen=min(first_found) by title, cve_id, cvss_score, port\n| order by cvss_score desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-005',
+      name: 'Vulnerability Recurrence Pattern',
+      objective: 'Detect when previously remediated vulnerabilities reappear on hosts, indicating patch rollbacks, system rebuilds without hardening, or configuration drift.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-detection', 'recurrence', 'patch-regression'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'qid', 'title', 'status', 'first_found', 'last_found', 'severity'],
+      detectionLogic: 'Alert when a QID that was previously in Fixed status for a host reappears with Active status. Track by comparing current Active findings against historical Fixed findings for the same host+QID combination. Flag hosts with >3 recurring vulnerabilities as having systemic remediation issues.',
+      operationalValue: 'Recurring vulnerabilities indicate broken processes — patches being rolled back, golden images not hardened, or configuration management drift. Identifying patterns prevents wasted remediation effort on issues that will return.',
+      changeMgmtRelevance: 'Vulnerability recurrence after system changes indicates the change reintroduced security gaps. After OS rebuilds, image deployments, or configuration changes, scan results should be compared against pre-change baseline.',
+      troubleshootingWorkflow: '1. Identify which vulnerabilities recurred and on which hosts\n2. Check if the host was recently rebuilt or reimaged\n3. Verify patch management history — was the patch rolled back?\n4. Check configuration management for drift from hardened baseline\n5. Determine if golden images include the required patches\n6. Update build processes to prevent future recurrence',
+      dashboardDependency: 'Vulnerability Recurrence dashboard, Patch Regression Tracker dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Recurring vulnerabilities by host',
+          description: 'Find hosts where previously fixed vulnerabilities have returned',
+          query: 'dataset="$DATASET" status="Active" earliest=-14d\n| summarize Occurrences=count(), LastSeen=max(last_found), FirstSeen=min(first_found) by host_ip, host_fqdn, qid, title\n| where Occurrences > 1\n| order by Occurrences desc\n| limit 25'
+        },
+        {
+          name: 'Most commonly recurring QIDs',
+          description: 'Identify which vulnerabilities recur most frequently across hosts',
+          query: 'dataset="$DATASET" status="Active" earliest=-30d\n| summarize AffectedHosts=dcount(host_ip), TotalOccurrences=count() by qid, title, severity\n| order by AffectedHosts desc\n| limit 20'
+        },
+        {
+          name: 'Hosts with systemic recurrence issues',
+          description: 'Find hosts that repeatedly have vulnerabilities return after remediation',
+          query: 'dataset="$DATASET" status="Active" earliest=-30d\n| summarize RecurringQIDs=dcount(qid), TotalFindings=count() by host_ip, host_fqdn, host_os\n| where RecurringQIDs > 3\n| order by RecurringQIDs desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-006',
+      name: 'Operating System End-of-Life Risk',
+      objective: 'Track hosts running end-of-life operating systems that will no longer receive security patches, representing permanent unmitigatable vulnerability risk.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'lifecycle', 'eol-risk'],
+      requiredFields: ['timestamp', 'host_ip', 'host_fqdn', 'host_os', 'severity', 'status', 'first_found', 'last_found'],
+      detectionLogic: 'Alert when hosts running known EOL operating systems (identified via host_os field matching EOL OS patterns) have active high-severity vulnerabilities. Track the count of EOL hosts over time to detect growth. Flag new EOL hosts appearing in scan results.',
+      operationalValue: 'EOL systems cannot be patched through normal processes and represent permanent risk. Tracking their inventory and vulnerability exposure helps prioritize decommissioning or compensating control deployment.',
+      changeMgmtRelevance: 'EOL host count should only decrease over time as systems are decommissioned. New EOL hosts appearing indicates unauthorized deployments or systems missing from lifecycle management.',
+      troubleshootingWorkflow: '1. Identify EOL hosts and their business function\n2. Determine if compensating controls are in place (network isolation, IPS)\n3. Check decommissioning timeline with asset owners\n4. Verify no critical services depend on the EOL system\n5. Document accepted risk if decommissioning is delayed\n6. Ensure monitoring coverage is enhanced for EOL systems',
+      dashboardDependency: 'OS Lifecycle dashboard, EOL Risk Tracker dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Hosts by operating system with vulnerability counts',
+          description: 'Inventory hosts by OS to identify EOL systems and their risk',
+          query: 'dataset="$DATASET" status="Active" earliest=-7d\n| summarize VulnCount=count(), CritCount=countif(severity >= 4), AvgCVSS=avg(cvss_score) by host_ip, host_fqdn, host_os\n| order by CritCount desc'
+        },
+        {
+          name: 'OS distribution across scanned environment',
+          description: 'Overview of operating systems to identify EOL patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize UniqueHosts=dcount(host_ip), TotalVulns=count(), CritVulns=countif(severity >= 4) by host_os\n| order by UniqueHosts desc'
+        },
+        {
+          name: 'High-severity vulnerabilities on legacy OS',
+          description: 'Focus on critical findings on systems that cannot be patched',
+          query: 'dataset="$DATASET" status="Active" earliest=-7d\n| where severity >= 4\n| where host_os contains "2008" or host_os contains "2012" or host_os contains "XP" or host_os contains "7 " or host_os contains "CentOS 6"\n| summarize VulnCount=count(), UniqueCVEs=dcount(cve_id) by host_ip, host_fqdn, host_os\n| order by VulnCount desc'
+        }
+      ]
+    },
+    {
+      id: 'vul-obs-007',
+      name: 'Scan Result Data Quality Validation',
+      objective: 'Detect anomalies in vulnerability scan data quality including duplicate findings, missing fields, or scan result counts that deviate significantly from expected baselines.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'scan-validation', 'pipeline-health'],
+      requiredFields: ['timestamp', 'host_ip', 'qid', 'severity', 'status', 'first_found', 'last_found', 'title'],
+      detectionLogic: 'Alert when scan result volume deviates >40% from the 4-week rolling average (either direction). Detect duplicate QID+host_ip combinations that may indicate ingestion issues. Flag records where first_found > last_found (data integrity error) or where severity and cvss_score are inconsistent.',
+      operationalValue: 'Scan data quality issues undermine the entire vulnerability management program. Duplicate findings inflate metrics, missing data creates blind spots, and inconsistencies erode team confidence in the data.',
+      changeMgmtRelevance: 'Data quality issues after scanner upgrades, API changes, or pipeline modifications indicate broken integrations. After changes to the scan-to-SIEM pipeline, validate data quality.',
+      troubleshootingWorkflow: '1. Identify the type of data quality issue (volume, duplicates, integrity)\n2. Check scanner configuration and scan completion status\n3. Verify the data ingestion pipeline (API, file transfer, syslog)\n4. Check for duplicate scan schedules or overlapping scan windows\n5. Validate field mappings in the Cribl pipeline\n6. Compare raw scanner output against ingested data for discrepancies',
+      dashboardDependency: 'Data Quality dashboard, Scan Pipeline Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Scan volume trend (last 30 days)',
+          description: 'Track overall scan result volume for anomaly detection',
+          query: 'dataset="$DATASET" earliest=-30d\n| timestats span=1d count(), dcount(host_ip) as UniqueHosts, dcount(qid) as UniqueQIDs'
+        },
+        {
+          name: 'Potential duplicate findings',
+          description: 'Identify host+QID combinations that appear more than expected',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Occurrences=count() by host_ip, qid, title, status\n| where Occurrences > 2\n| order by Occurrences desc\n| limit 25'
+        },
+        {
+          name: 'Data completeness check',
+          description: 'Verify key fields are populated across scan results',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Total=count(), HasCVE=countif(cve_id != ""), HasPort=countif(port != ""), HasOS=countif(host_os != ""), HasFQDN=countif(host_fqdn != "") by severity\n| extend CVEPct=round(HasCVE * 100.0 / Total, 1), PortPct=round(HasPort * 100.0 / Total, 1)\n| order by severity desc'
+        }
+      ]
+    }
+  ],
+  'sap-hana-audit': [
+    {
+      id: 'sha-obs-001',
+      name: 'SAP HANA Database Connection Failures',
+      objective: 'Monitors for spikes in failed connection attempts that may indicate authentication infrastructure issues, network problems, or database availability degradation.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'sap-hana', 'availability', 'connections', 'authentication'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'ACTION'],
+      detectionLogic: 'Tracks CONNECT actions that result in failure by aggregating audit events where ACTION contains connection-related failures. Triggers when failed connection count exceeds baseline by 3x within a 5-minute window, or when more than 50 unique CLIENT_IP addresses experience failures simultaneously.',
+      operationalValue: 'Connection failures directly impact application availability. A spike indicates potential database overload, network segmentation issues, or authentication service degradation that requires immediate attention.',
+      changeMgmtRelevance: 'Network changes, firewall rule updates, certificate rotations, or LDAP/authentication provider changes commonly cause connection failure spikes. Correlate with recent change tickets.',
+      troubleshootingWorkflow: '1. Check if failures are isolated to specific CLIENT_IP ranges or all clients\n2. Verify database service status and listener health\n3. Check authentication provider connectivity (LDAP/SAML)\n4. Review recent network or firewall changes\n5. Examine database connection pool limits and current utilization',
+      dashboardDependency: 'SAP HANA Availability Overview, Connection Health Dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connection Failure Spike Detection',
+          description: 'Identifies periods where connection failures exceed normal thresholds',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION == "CONNECT" AND AUDIT_LEVEL == "EMERGENCY" OR AUDIT_LEVEL == "ALERT"\n| timestats count() by span=5m\n| where count_ > 50'
+        },
+        {
+          name: 'Failed Connections by Source IP',
+          description: 'Breaks down connection failures by client IP to identify affected segments',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ACTION == "CONNECT"\n| summarize failure_count=count() by CLIENT_IP, CLIENT_HOST\n| where failure_count > 10\n| order by failure_count desc'
+        },
+        {
+          name: 'Connection Failure Trend',
+          description: 'Shows connection failure trend over 24 hours for baseline comparison',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION == "CONNECT"\n| timestats count() by span=15m, AUDIT_LEVEL\n| order by _time asc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-002',
+      name: 'SAP HANA Schema Change Detection',
+      objective: 'Detects DDL changes to database schemas including table creation, modification, and deletion that may impact dependent applications or data pipelines.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'sap-hana', 'change-detection', 'schema', 'ddl'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'SCHEMA_NAME', 'OBJECT_NAME', 'ACTION', 'STATEMENT_STRING'],
+      detectionLogic: 'Monitors for DDL actions (CREATE, ALTER, DROP, RENAME) against schema objects. Alerts on any schema modification outside of approved maintenance windows, or when changes are made by non-service accounts. Correlates SCHEMA_NAME and OBJECT_NAME to identify blast radius.',
+      operationalValue: 'Unplanned schema changes break ETL pipelines, reporting queries, and application integrations. Early detection enables proactive notification to downstream consumers before SLA violations occur.',
+      changeMgmtRelevance: 'All schema changes should correlate to approved change requests. Unmatched changes indicate either emergency fixes or unauthorized modifications requiring immediate review.',
+      troubleshootingWorkflow: '1. Identify the USER_NAME who made the change and verify authorization\n2. Review STATEMENT_STRING to understand the exact modification\n3. Check if change correlates to an approved change ticket\n4. Identify downstream dependencies on the affected SCHEMA_NAME.OBJECT_NAME\n5. Notify affected pipeline and application owners',
+      dashboardDependency: 'SAP HANA Change Audit Dashboard, Schema Drift Tracker',
+      criblSearchQueries: [
+        {
+          name: 'Recent Schema Changes',
+          description: 'Lists all DDL operations in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("CREATE", "ALTER", "DROP", "RENAME")\n| summarize change_count=count() by USER_NAME, SCHEMA_NAME, OBJECT_NAME, ACTION\n| order by change_count desc'
+        },
+        {
+          name: 'Schema Changes Outside Maintenance Window',
+          description: 'Identifies changes made outside approved maintenance windows (weekdays 2-6 AM)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION in ("CREATE", "ALTER", "DROP", "RENAME")\n| extend hour=hourofday(TIMESTAMP)\n| where hour < 2 OR hour > 6\n| summarize count() by USER_NAME, SCHEMA_NAME, ACTION, bin(TIMESTAMP, 1h)\n| order by TIMESTAMP desc'
+        },
+        {
+          name: 'Drop Operations Audit',
+          description: 'Tracks all destructive DROP operations for compliance and recovery planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION == "DROP"\n| summarize count() by SCHEMA_NAME, OBJECT_NAME, USER_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'Schema Change Velocity',
+          description: 'Monitors rate of schema changes to detect abnormal modification patterns',
+          query: 'dataset="$DATASET" earliest=-48h\n| where ACTION in ("CREATE", "ALTER", "DROP", "RENAME")\n| timestats count() by span=1h, ACTION\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-003',
+      name: 'SAP HANA Long-Running Statement Detection',
+      objective: 'Identifies SQL statements that may indicate performance degradation, missing indexes, or runaway queries consuming excessive database resources.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'sap-hana', 'performance', 'queries', 'slow-statements'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'STATEMENT_STRING', 'ACTION', 'SCHEMA_NAME'],
+      detectionLogic: 'Monitors audit entries for SELECT and EXECUTE actions targeting large schemas. Detects patterns in STATEMENT_STRING that indicate full table scans (SELECT * without WHERE), cross-joins, or nested subqueries. Correlates frequency of repeated expensive operations by USER_NAME and SCHEMA_NAME.',
+      operationalValue: 'Poorly performing queries consume CPU, memory, and I/O resources, degrading performance for all database consumers. Early identification prevents cascading performance failures across dependent applications.',
+      changeMgmtRelevance: 'New application deployments or report modifications commonly introduce expensive queries. Correlate detection time with recent deployment windows to identify root cause.',
+      troubleshootingWorkflow: '1. Review STATEMENT_STRING to identify query pattern\n2. Check SCHEMA_NAME to determine which application or pipeline is affected\n3. Identify if query is ad-hoc or part of scheduled workload\n4. Review execution plan for missing indexes or inefficient joins\n5. Contact USER_NAME owner to optimize or schedule during off-peak hours',
+      dashboardDependency: 'SAP HANA Query Performance Dashboard, Resource Utilization Monitor',
+      criblSearchQueries: [
+        {
+          name: 'Potential Full Table Scans',
+          description: 'Identifies SELECT statements without filtering that may cause full scans',
+          query: 'dataset="$DATASET" earliest=-12h\n| where ACTION == "SELECT"\n| where STATEMENT_STRING matches regex "SELECT\\s+\\*"\n| summarize count() by USER_NAME, SCHEMA_NAME, OBJECT_NAME\n| where count_ > 5\n| order by count_ desc'
+        },
+        {
+          name: 'High-Frequency Repeated Statements',
+          description: 'Detects the same expensive statement being executed repeatedly',
+          query: 'dataset="$DATASET" earliest=-6h\n| where ACTION in ("SELECT", "EXECUTE")\n| summarize exec_count=count() by STATEMENT_STRING, USER_NAME\n| where exec_count > 100\n| order by exec_count desc'
+        },
+        {
+          name: 'Statement Activity by Schema',
+          description: 'Shows query volume distribution across schemas to identify hotspots',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("SELECT", "EXECUTE", "UPDATE", "INSERT")\n| timestats count() by span=1h, SCHEMA_NAME\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-004',
+      name: 'SAP HANA Audit Policy Coverage Gap',
+      objective: 'Monitors audit policy health to ensure critical database activities remain under audit coverage, detecting gaps that could hide operational or security issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'sap-hana', 'data-quality', 'audit-policy', 'compliance'],
+      requiredFields: ['TIMESTAMP', 'AUDIT_POLICY_NAME', 'AUDIT_LEVEL', 'ACTION'],
+      detectionLogic: 'Tracks the distribution of events across AUDIT_POLICY_NAME values over time. Alerts when a previously active audit policy stops generating events for more than 2 hours, or when the ratio of events by AUDIT_LEVEL shifts significantly (e.g., sudden drop in ALERT-level events). Detects audit policy modifications via ACTION monitoring.',
+      operationalValue: 'Audit coverage gaps mean operational issues go undetected. If a policy is disabled or misconfigured, critical database activities become invisible to monitoring, creating blind spots in incident detection.',
+      changeMgmtRelevance: 'Database upgrades, security policy changes, or administrative actions may inadvertently disable audit policies. This detection ensures audit continuity through change windows.',
+      troubleshootingWorkflow: '1. Identify which AUDIT_POLICY_NAME stopped generating events\n2. Verify policy is still enabled in HANA audit configuration\n3. Check if recent administrative changes affected audit settings\n4. Validate that audit trail storage has not reached capacity\n5. Re-enable or recreate affected policies and verify event flow resumes',
+      dashboardDependency: 'Audit Health Monitor, Data Quality Dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Audit Policy Event Distribution',
+          description: 'Shows event volume per audit policy to identify coverage gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize event_count=count() by AUDIT_POLICY_NAME\n| order by event_count desc'
+        },
+        {
+          name: 'Audit Policy Activity Over Time',
+          description: 'Tracks policy event generation over time to detect dropoffs',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats count() by span=2h, AUDIT_POLICY_NAME\n| order by _time desc'
+        },
+        {
+          name: 'Audit Level Distribution',
+          description: 'Monitors the severity distribution of audit events for anomalies',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by AUDIT_LEVEL, AUDIT_POLICY_NAME\n| order by AUDIT_POLICY_NAME, AUDIT_LEVEL'
+        },
+        {
+          name: 'Audit Configuration Changes',
+          description: 'Detects modifications to audit policies themselves',
+          query: 'dataset="$DATASET" earliest=-7d\n| where OBJECT_NAME matches regex "AUDIT" OR ACTION in ("CREATE AUDIT POLICY", "ALTER AUDIT POLICY", "DROP AUDIT POLICY")\n| summarize count() by USER_NAME, ACTION, OBJECT_NAME, TIMESTAMP\n| order by TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-005',
+      name: 'SAP HANA User Activity Anomaly',
+      objective: 'Detects unusual user activity patterns that may indicate account misuse, application malfunction, or unexpected workload changes affecting database performance.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'sap-hana', 'user-activity', 'anomaly', 'workload'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'ACTION', 'CLIENT_IP', 'SCHEMA_NAME'],
+      detectionLogic: 'Establishes per-user baseline activity by ACTION type and time-of-day. Alerts when a USER_NAME generates more than 5x their normal event volume, operates from a previously unseen CLIENT_IP, or accesses schemas outside their normal working set. Tracks error-producing actions per user to detect application issues.',
+      operationalValue: 'Abnormal user activity often indicates broken automation, misconfigured applications, or runaway batch jobs. Early detection prevents resource exhaustion and enables rapid identification of misbehaving application components.',
+      changeMgmtRelevance: 'Application deployments may change service account behavior patterns. New integrations or modified batch schedules naturally alter user activity profiles and should be baselined after approved changes.',
+      troubleshootingWorkflow: '1. Identify the USER_NAME exhibiting anomalous behavior\n2. Determine if user is a service account or interactive user\n3. Check if activity correlates to a new deployment or configuration change\n4. Review ACTION types to understand what operations are being performed\n5. If service account, contact application owner; if interactive, verify legitimate activity',
+      dashboardDependency: 'User Activity Analytics, Application Health Dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top Active Users',
+          description: 'Identifies users generating the most audit events',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize event_count=count() by USER_NAME\n| order by event_count desc\n| limit 20'
+        },
+        {
+          name: 'User Activity Pattern by Hour',
+          description: 'Shows hourly activity distribution per user to identify anomalous timing',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend hour=hourofday(TIMESTAMP)\n| summarize count() by USER_NAME, hour\n| order by USER_NAME, hour'
+        },
+        {
+          name: 'User Schema Access Patterns',
+          description: 'Maps which users access which schemas to detect scope changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize distinct_schemas=dcount(SCHEMA_NAME), actions=count() by USER_NAME\n| where distinct_schemas > 5\n| order by distinct_schemas desc'
+        },
+        {
+          name: 'User Source IP Changes',
+          description: 'Detects users connecting from new or unusual client IPs',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize ip_count=dcount(CLIENT_IP), ips=make_set(CLIENT_IP) by USER_NAME\n| where ip_count > 3\n| order by ip_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-006',
+      name: 'SAP HANA Data Modification Volume Spike',
+      objective: 'Monitors INSERT, UPDATE, and DELETE operation volumes to detect unusual data modification patterns that may indicate bulk load failures, data corruption, or capacity concerns.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'sap-hana', 'capacity', 'data-modification', 'bulk-operations'],
+      requiredFields: ['TIMESTAMP', 'USER_NAME', 'ACTION', 'SCHEMA_NAME', 'OBJECT_NAME'],
+      detectionLogic: 'Tracks data modification operations (INSERT, UPDATE, DELETE) by volume over time. Alerts when modification rate exceeds 3 standard deviations from the rolling 7-day average, when DELETE volume exceeds INSERT volume by 2x (potential data loss), or when modifications target system schemas unexpectedly.',
+      operationalValue: 'Unusual data modification volumes indicate ETL failures, bulk data issues, or storage capacity risks. DELETE spikes may signal accidental data purges. INSERT spikes may forecast storage exhaustion.',
+      changeMgmtRelevance: 'Data migration projects, ETL schedule changes, and retention policy modifications directly impact modification volumes. Expected spikes should correlate with approved change records.',
+      troubleshootingWorkflow: '1. Identify which SCHEMA_NAME and OBJECT_NAME are experiencing the spike\n2. Determine the USER_NAME driving the modifications\n3. Check if this correlates to a known batch job or data migration\n4. Verify storage capacity and growth projections\n5. If unexpected, pause the operation and investigate data integrity',
+      dashboardDependency: 'Data Volume Trends, Capacity Planning Dashboard, ETL Health Monitor',
+      criblSearchQueries: [
+        {
+          name: 'Data Modification Volume Trend',
+          description: 'Tracks INSERT/UPDATE/DELETE volumes over time',
+          query: 'dataset="$DATASET" earliest=-48h\n| where ACTION in ("INSERT", "UPDATE", "DELETE")\n| timestats count() by span=1h, ACTION\n| order by _time desc'
+        },
+        {
+          name: 'Top Modified Objects',
+          description: 'Identifies which database objects receive the most modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("INSERT", "UPDATE", "DELETE")\n| summarize mod_count=count() by SCHEMA_NAME, OBJECT_NAME, ACTION\n| order by mod_count desc\n| limit 25'
+        },
+        {
+          name: 'Delete vs Insert Ratio',
+          description: 'Compares DELETE and INSERT volumes to detect potential data loss scenarios',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION in ("INSERT", "DELETE")\n| summarize count() by ACTION, bin(TIMESTAMP, 1h)\n| order by TIMESTAMP desc'
+        },
+        {
+          name: 'Bulk Operation Detection',
+          description: 'Identifies users performing high-volume modifications indicating bulk operations',
+          query: 'dataset="$DATASET" earliest=-12h\n| where ACTION in ("INSERT", "UPDATE", "DELETE")\n| summarize op_count=count() by USER_NAME, SCHEMA_NAME, ACTION\n| where op_count > 1000\n| order by op_count desc'
+        }
+      ]
+    },
+    {
+      id: 'sha-obs-007',
+      name: 'SAP HANA Client Host Diversity Monitor',
+      objective: 'Tracks the diversity and distribution of client hosts connecting to the database to detect infrastructure changes, load balancer issues, or application topology shifts.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'sap-hana', 'topology', 'client-hosts', 'infrastructure'],
+      requiredFields: ['TIMESTAMP', 'CLIENT_HOST', 'CLIENT_IP', 'USER_NAME', 'ACTION'],
+      detectionLogic: 'Maintains a baseline of known CLIENT_HOST values and their typical connection frequency. Alerts when previously active hosts stop connecting for more than 1 hour, when new hosts appear that are not in the known baseline, or when the total unique host count drops below expected minimum indicating infrastructure loss.',
+      operationalValue: 'Changes in client host patterns reveal application server failures, load balancer misconfigurations, or infrastructure scaling events. A sudden drop in connecting hosts may indicate an outage in the application tier.',
+      changeMgmtRelevance: 'Infrastructure scaling events, application deployments to new hosts, and decommissioning of old servers naturally change the client host profile. Expected topology changes should be baselined.',
+      troubleshootingWorkflow: '1. Compare current CLIENT_HOST list against known application topology\n2. Identify which hosts stopped connecting and check their health\n3. Verify load balancer configuration and health checks\n4. Check if new hosts correspond to planned infrastructure changes\n5. Validate application deployment status across all expected hosts',
+      dashboardDependency: 'Infrastructure Topology Map, Application Tier Health Dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active Client Hosts',
+          description: 'Lists all client hosts that connected in the last 24 hours',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize last_seen=max(TIMESTAMP), connection_count=count() by CLIENT_HOST, CLIENT_IP\n| order by connection_count desc'
+        },
+        {
+          name: 'Client Host Activity Over Time',
+          description: 'Shows when each client host was active to detect dropoffs',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats dcount(CLIENT_HOST) by span=1h\n| order by _time desc'
+        },
+        {
+          name: 'New Client Hosts',
+          description: 'Identifies client hosts seen in the last hour but not in the prior 7 days',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize count() by CLIENT_HOST\n| join kind=leftanti (dataset="$DATASET" earliest=-7d latest=-1h | summarize count() by CLIENT_HOST) on CLIENT_HOST\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+
+  'servicenow': [
+    {
+      id: 'snw-obs-001',
+      name: 'Incident Resolution Time Degradation',
+      objective: 'Detect when average incident resolution times increase significantly, indicating process bottlenecks, staffing issues, or systemic problems affecting service delivery.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'incident-management', 'sla'],
+      requiredFields: ['sys_created_on', 'sys_updated_on', 'number', 'state', 'priority', 'assignment_group', 'impact', 'urgency'],
+      detectionLogic: 'Alert when the average time between sys_created_on and sys_updated_on for state transitions to resolved/closed exceeds the 7-day rolling average by more than 50%. Evaluate per assignment_group and priority combination on 4-hour windows.',
+      operationalValue: 'Identifies when teams are falling behind on incident resolution, enabling proactive resource reallocation before SLA breaches occur.',
+      changeMgmtRelevance: 'Resolution time spikes often follow major changes that introduce new failure modes or increase ticket complexity. Correlate with change deployment windows.',
+      troubleshootingWorkflow: '1. Identify which assignment_group(s) are experiencing degradation\n2. Check if degradation is across all priorities or concentrated in specific levels\n3. Look for a spike in new incident volume that could overwhelm the team\n4. Check for recent staffing changes or OOO patterns\n5. Correlate with recent change deployments that may have introduced new issues\n6. Review whether incidents are being reassigned multiple times (ping-pong)',
+      dashboardDependency: 'Incident SLA Performance dashboard, Team Workload dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Average resolution time by assignment group',
+          description: 'Track how long each group takes to resolve incidents',
+          query: 'dataset="$DATASET" earliest=-7d\n| where state == "resolved" or state == "closed"\n| summarize AvgResolution=avg(todouble(sys_updated_on) - todouble(sys_created_on)), IncidentCount=count() by assignment_group\n| order by AvgResolution desc'
+        },
+        {
+          name: 'Resolution time trend over time',
+          description: 'Visualize resolution time trends to spot degradation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where state == "resolved" or state == "closed"\n| timestats span=4h AvgResolution=avg(todouble(sys_updated_on) - todouble(sys_created_on)) by assignment_group'
+        },
+        {
+          name: 'Incidents breaching resolution targets by priority',
+          description: 'Find incidents that exceeded expected resolution times',
+          query: 'dataset="$DATASET" earliest=-24h\n| where state == "resolved" or state == "closed"\n| extend resolution_hours=(todouble(sys_updated_on) - todouble(sys_created_on)) / 3600\n| where (priority == "1" and resolution_hours > 4) or (priority == "2" and resolution_hours > 8) or (priority == "3" and resolution_hours > 24)\n| summarize Breaches=count() by priority, assignment_group\n| order by Breaches desc'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-002',
+      name: 'Incident Volume Spike',
+      objective: 'Detect abnormal increases in incident creation rate that may indicate a widespread outage, failed deployment, or emerging systemic issue.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'incident-volume', 'outage-detection'],
+      requiredFields: ['sys_created_on', 'number', 'category', 'priority', 'impact', 'urgency', 'assignment_group', 'short_description'],
+      detectionLogic: 'Alert when incident creation rate exceeds 3x the normal hourly rate for the same day-of-week and time-of-day window. Apply additional weight to P1/P2 incidents. Evaluate in 30-minute sliding windows.',
+      operationalValue: 'A sudden spike in incidents is often the first signal of a major outage or widespread service degradation. Early detection enables faster major incident declaration and coordinated response.',
+      changeMgmtRelevance: 'Incident spikes within 60 minutes of a change deployment strongly suggest the change caused user-impacting issues requiring immediate rollback evaluation.',
+      troubleshootingWorkflow: '1. Determine if incidents share a common category, CI, or description pattern\n2. Check if a major incident should be declared (multiple related P1/P2s)\n3. Identify the impacted service(s) and blast radius\n4. Correlate with recent change deployments\n5. Check if auto-generated incidents from monitoring are flooding the queue\n6. Engage appropriate resolver groups based on affected category',
+      dashboardDependency: 'Incident Trending dashboard, Major Incident Detection dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Incident creation rate over time',
+          description: 'Track the rate of new incidents to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by category'
+        },
+        {
+          name: 'High priority incidents in the last hour',
+          description: 'Focus on P1 and P2 incidents that signal major issues',
+          query: 'dataset="$DATASET" earliest=-1h\n| where priority == "1" or priority == "2"\n| summarize count() by category, assignment_group, short_description\n| order by count_ desc'
+        },
+        {
+          name: 'Incident volume comparison (current vs same window last week)',
+          description: 'Compare current incident rate against normal baseline',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize CurrentCount=count() by category, priority\n| order by CurrentCount desc\n| limit 20'
+        },
+        {
+          name: 'Common short_description patterns in spike',
+          description: 'Find recurring incident descriptions that indicate a systemic problem',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize count() by short_description, category\n| where count_ > 3\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-003',
+      name: 'Assignment Group Queue Saturation',
+      objective: 'Detect when a team queue grows beyond capacity, indicating staffing gaps, skill mismatches, or process failures in ticket routing.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'workload', 'staffing'],
+      requiredFields: ['sys_created_on', 'state', 'assignment_group', 'assigned_to', 'priority', 'number'],
+      detectionLogic: 'Alert when the count of open incidents (state not in resolved/closed/cancelled) per assignment_group exceeds 2x the 30-day average, or when the ratio of unassigned to total open incidents exceeds 40%.',
+      operationalValue: 'Queue saturation leads to SLA breaches, increased MTTR, and poor customer experience. Early detection allows managers to redistribute work or escalate for additional resources.',
+      changeMgmtRelevance: 'Queue growth often follows poorly planned changes that generate unexpected incidents, or organizational changes that shifted responsibilities without adjusting capacity.',
+      troubleshootingWorkflow: '1. Identify which assignment_group(s) are saturated\n2. Check the ratio of assigned vs unassigned tickets\n3. Determine if volume increased or throughput decreased\n4. Look for tickets stuck in a particular state (e.g., pending vendor)\n5. Check if tickets are being routed correctly or mis-categorized\n6. Evaluate whether workload can be redistributed to other teams',
+      dashboardDependency: 'Team Workload dashboard, Queue Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Open incidents per assignment group',
+          description: 'Show current queue depth for each team',
+          query: 'dataset="$DATASET" earliest=-30d\n| where state != "resolved" and state != "closed" and state != "cancelled"\n| summarize OpenCount=count(), Unassigned=countif(assigned_to == "") by assignment_group\n| extend UnassignedPct=round(Unassigned * 100.0 / OpenCount, 1)\n| order by OpenCount desc'
+        },
+        {
+          name: 'Queue growth trend by team',
+          description: 'Track how team queues are growing or shrinking over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where state != "resolved" and state != "closed"\n| timestats span=12h count() by assignment_group'
+        },
+        {
+          name: 'Stale incidents per group (no update in 48+ hours)',
+          description: 'Find incidents that may be stuck or abandoned',
+          query: 'dataset="$DATASET" earliest=-30d\n| where state != "resolved" and state != "closed" and state != "cancelled"\n| summarize LastUpdate=max(sys_updated_on), count() by assignment_group, state\n| order by LastUpdate asc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-004',
+      name: 'Priority Escalation Pattern',
+      objective: 'Detect when incidents are being escalated in priority at an abnormal rate, signaling initial triage failures or worsening conditions.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'triage', 'escalation'],
+      requiredFields: ['sys_created_on', 'sys_updated_on', 'number', 'priority', 'impact', 'urgency', 'assignment_group', 'category'],
+      detectionLogic: 'Alert when more than 25% of incidents in a category or assignment_group are escalated in priority within 4 hours of creation. Compare escalation rate against 14-day baseline. Also detect bulk re-prioritization events.',
+      operationalValue: 'High escalation rates indicate triage quality issues, inaccurate initial priority assignment, or conditions that are worsening faster than expected. Enables process improvement and training.',
+      changeMgmtRelevance: 'Escalation spikes after changes suggest the initial impact assessment underestimated the change risk or that unforeseen side effects are materializing.',
+      troubleshootingWorkflow: '1. Identify which categories or groups have high escalation rates\n2. Determine if escalations are from P3→P2 or P2→P1 (severity matters)\n3. Check if specific callers or CIs are driving escalations\n4. Review whether initial triage was done by the correct team\n5. Look for correlation with change windows or outage events\n6. Assess if escalation criteria documentation needs updating',
+      dashboardDependency: 'Triage Quality dashboard, Escalation Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Priority changes by category',
+          description: 'Track how often incidents get re-prioritized per category',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by category, priority, assignment_group\n| order by count_ desc'
+        },
+        {
+          name: 'Incidents updated within 4 hours of creation',
+          description: 'Find incidents that were quickly escalated after initial triage',
+          query: 'dataset="$DATASET" earliest=-48h\n| extend hours_to_update=(todouble(sys_updated_on) - todouble(sys_created_on)) / 3600\n| where hours_to_update < 4 and hours_to_update > 0\n| summarize QuickUpdates=count() by assignment_group, priority\n| order by QuickUpdates desc'
+        },
+        {
+          name: 'High-priority incident creation trend',
+          description: 'Monitor whether P1/P2 creation rate is increasing (may indicate escalation)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where priority == "1" or priority == "2"\n| timestats span=6h count() by priority, category'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-005',
+      name: 'Configuration Item Incident Clustering',
+      objective: 'Detect when a single CI accumulates multiple incidents, indicating a persistent or recurring infrastructure problem that needs root cause analysis.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'cmdb', 'recurring-issues'],
+      requiredFields: ['sys_created_on', 'number', 'cmdb_ci', 'category', 'priority', 'state', 'short_description', 'assignment_group'],
+      detectionLogic: 'Alert when a single cmdb_ci receives 3+ incidents within 24 hours, or 5+ within 7 days. Weight by priority — a single P1 plus any additional incident triggers immediately. Exclude known problem records.',
+      operationalValue: 'Recurring incidents on the same CI waste resolver time and impact users repeatedly. Identifying clustering enables problem management and permanent fixes rather than repeated break/fix.',
+      changeMgmtRelevance: 'CI clustering after a change to that CI or its dependencies strongly indicates the change introduced or exposed a defect requiring permanent resolution.',
+      troubleshootingWorkflow: '1. Identify the affected CI and its recent incident history\n2. Check for an existing problem record — if not, create one\n3. Review incident descriptions for common patterns\n4. Check recent changes to the CI or its dependencies\n5. Determine if a workaround exists that should be documented\n6. Engage problem management for root cause investigation',
+      dashboardDependency: 'CI Health dashboard, Problem Management Candidate dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Incidents per CI (last 7 days)',
+          description: 'Find CIs with multiple incidents indicating recurring problems',
+          query: 'dataset="$DATASET" earliest=-7d\n| where cmdb_ci != ""\n| summarize IncidentCount=count(), P1Count=countif(priority == "1"), P2Count=countif(priority == "2") by cmdb_ci, category\n| where IncidentCount >= 3\n| order by IncidentCount desc'
+        },
+        {
+          name: 'CI incident clustering timeline',
+          description: 'Visualize when incidents hit the same CI to identify burst patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where cmdb_ci != ""\n| timestats span=6h count() by cmdb_ci\n| order by count_ desc'
+        },
+        {
+          name: 'CIs with P1 incidents plus additional tickets',
+          description: 'Priority-weighted clustering — CIs with critical incidents and follow-on tickets',
+          query: 'dataset="$DATASET" earliest=-48h\n| where cmdb_ci != ""\n| summarize Total=count(), HasP1=countif(priority == "1"), HasP2=countif(priority == "2") by cmdb_ci, short_description\n| where HasP1 > 0 and Total > 1\n| order by Total desc'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-006',
+      name: 'Incident Categorization Drift',
+      objective: 'Detect shifts in incident categorization patterns that may indicate new failure modes, miscategorization, or changes in reporting behavior.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'categorization', 'trending'],
+      requiredFields: ['sys_created_on', 'category', 'number', 'assignment_group', 'caller_id', 'priority'],
+      detectionLogic: 'Alert when a category that historically represents less than 5% of total volume suddenly exceeds 15%, or when a normally dominant category drops by more than 40%. Evaluate on 24-hour windows against 30-day baseline.',
+      operationalValue: 'Category distribution shifts reveal emerging problem areas, broken self-service workflows, or training gaps. Enables proactive resource planning and process adjustment.',
+      changeMgmtRelevance: 'Category shifts after service catalog changes, portal updates, or organizational restructuring indicate that routing rules or categorization logic needs adjustment.',
+      troubleshootingWorkflow: '1. Identify which category is growing or shrinking abnormally\n2. Determine if growth is organic (new issues) or routing (miscategorization)\n3. Check if specific callers are driving the shift\n4. Review whether category definitions or self-service options changed\n5. Validate that assignment_group routing is correct for shifted categories\n6. Update documentation or routing rules as needed',
+      dashboardDependency: 'Incident Category Trends dashboard, Data Quality dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Category distribution (last 30 days)',
+          description: 'Baseline view of how incidents are categorized over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| summarize count() by category\n| extend Pct=round(count_ * 100.0 / sum(count_), 1)\n| order by count_ desc'
+        },
+        {
+          name: 'Category trend over time',
+          description: 'Track how category proportions shift week over week',
+          query: 'dataset="$DATASET" earliest=-30d\n| timestats span=1d count() by category'
+        },
+        {
+          name: 'New or unusual categories in the last 48 hours',
+          description: 'Find categories seeing abnormal growth recently',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize RecentCount=count() by category, assignment_group\n| order by RecentCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'snw-obs-007',
+      name: 'Ticket Reassignment Churn',
+      objective: 'Detect incidents that bounce between assignment groups multiple times, indicating unclear ownership, skill gaps, or routing rule failures.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'process-efficiency', 'routing', 'reassignment'],
+      requiredFields: ['sys_created_on', 'sys_updated_on', 'number', 'assignment_group', 'assigned_to', 'state', 'category', 'priority'],
+      detectionLogic: 'Alert when an incident has its assignment_group changed 3+ times, or when more than 20% of incidents in a 24-hour window experience at least one reassignment. Track time spent in each group before reassignment.',
+      operationalValue: 'Reassignment churn increases MTTR, frustrates resolvers, and signals broken routing logic. Reducing churn directly improves resolution speed and team satisfaction.',
+      changeMgmtRelevance: 'Routing churn increases after organizational changes, new service introductions, or assignment rule modifications that create ambiguity.',
+      troubleshootingWorkflow: '1. Identify tickets with high reassignment counts\n2. Map the reassignment path — which groups are in the loop?\n3. Determine if the category/CI combination has clear ownership\n4. Check if auto-routing rules are conflicting\n5. Review whether the incident was properly categorized initially\n6. Update routing rules or escalation paths to prevent recurrence',
+      dashboardDependency: 'Routing Efficiency dashboard, Reassignment Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Incidents with multiple assignment group changes',
+          description: 'Find tickets bouncing between teams',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize GroupChanges=dcount(assignment_group), Groups=make_set(assignment_group) by number, category, priority\n| where GroupChanges >= 3\n| order by GroupChanges desc'
+        },
+        {
+          name: 'Reassignment rate by category',
+          description: 'Which categories experience the most routing churn',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize AssignmentChanges=dcount(assignment_group), Total=count() by category\n| extend ChurnRate=round(AssignmentChanges * 100.0 / Total, 1)\n| order by ChurnRate desc'
+        },
+        {
+          name: 'Most common reassignment paths',
+          description: 'Identify which group-to-group transfers happen most frequently',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize count() by assignment_group, category, state\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    }
+  ],
+  'vmware-vsphere': [
+    {
+      id: 'vmw-obs-001',
+      name: 'VM Unexpected Power State Change',
+      objective: 'Detect when virtual machines experience unexpected power-off, reset, or suspension events that indicate host failures, resource contention, or unauthorized actions.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'vm-lifecycle', 'outage'],
+      requiredFields: ['timestamp', 'vm_name', 'host_name', 'event_type', 'user_name', 'datacenter', 'cluster', 'message'],
+      detectionLogic: 'Alert when event_type matches power-off, reset, or suspend events that were not initiated by known automation accounts or during scheduled maintenance windows. Exclude vMotion-related temporary power state changes.',
+      operationalValue: 'Unexpected VM power state changes directly impact application availability. Immediate detection enables rapid restart and root cause investigation before users report outages.',
+      changeMgmtRelevance: 'Power state changes outside change windows indicate either unauthorized activity or infrastructure failures. Changes during maintenance windows should be validated against the change record.',
+      troubleshootingWorkflow: '1. Confirm the VM power state change and current status\n2. Check if the event correlates with a host failure or HA event\n3. Verify if the change was initiated by automation or an authorized user\n4. Check host_name for resource issues (CPU/memory overcommit)\n5. Review cluster HA events for correlated failures\n6. Restart the VM if unplanned and verify application recovery',
+      dashboardDependency: 'VM Availability dashboard, Host Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'VM power state events (last 24 hours)',
+          description: 'Track all power-related events across the environment',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type has "power" or event_type has "reset" or event_type has "suspend"\n| summarize count() by vm_name, event_type, user_name, host_name\n| order by count_ desc'
+        },
+        {
+          name: 'Power events by user and datacenter',
+          description: 'Identify who is triggering power state changes and where',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type has "power" or event_type has "reset"\n| timestats span=1h count() by user_name, datacenter'
+        },
+        {
+          name: 'Unexpected power events (non-automation users)',
+          description: 'Filter out known automation to find potentially unauthorized or failure-driven events',
+          query: 'dataset="$DATASET" earliest=-12h\n| where (event_type has "power" or event_type has "reset") and user_name != "vpxuser" and user_name != "automation"\n| summarize count() by vm_name, event_type, user_name, host_name, cluster\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-002',
+      name: 'Host Connection State Failure',
+      objective: 'Detect when ESXi hosts lose connectivity to vCenter or become unresponsive, indicating network failures, host crashes, or management plane issues.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'host-health', 'infrastructure'],
+      requiredFields: ['timestamp', 'host_name', 'event_type', 'datacenter', 'cluster', 'message', 'severity'],
+      detectionLogic: 'Alert when event_type indicates host disconnection, not-responding, or connection-lost events. Trigger immediately for any host disconnection. Escalate if multiple hosts in the same cluster disconnect within 5 minutes.',
+      operationalValue: 'Host connectivity failures affect all VMs on that host. HA may restart VMs on other hosts, but detection enables proactive capacity validation and root cause investigation.',
+      changeMgmtRelevance: 'Host disconnections during maintenance windows may be expected (firmware updates, network changes). Outside windows, they indicate failures requiring immediate attention.',
+      troubleshootingWorkflow: '1. Verify host connection state in vCenter\n2. Check if HA has triggered VM restarts on other hosts\n3. Determine if the issue is network (management NIC) or host crash\n4. Check if multiple hosts are affected (storage/network fabric issue)\n5. Verify physical connectivity and switch port status\n6. Check for correlating storage events on the same host',
+      dashboardDependency: 'Host Connectivity dashboard, Cluster Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Host connection events over time',
+          description: 'Track host connectivity state changes across the infrastructure',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "disconnect" or event_type has "connection" or event_type has "not responding"\n| timestats span=1h count() by host_name, cluster'
+        },
+        {
+          name: 'Hosts with repeated connectivity issues',
+          description: 'Find hosts experiencing recurring connection problems',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "disconnect" or event_type has "not responding"\n| summarize Disconnections=count(), LastEvent=max(timestamp) by host_name, datacenter, cluster\n| where Disconnections > 1\n| order by Disconnections desc'
+        },
+        {
+          name: 'Multi-host disconnection events (cluster-wide impact)',
+          description: 'Detect correlated failures affecting multiple hosts simultaneously',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type has "disconnect" or event_type has "not responding"\n| summarize AffectedHosts=dcount(host_name), Hosts=make_set(host_name) by cluster, datacenter\n| where AffectedHosts > 1\n| order by AffectedHosts desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-003',
+      name: 'Datastore Capacity Warning',
+      objective: 'Detect datastore space consumption events and warnings before they cause VM provisioning failures, snapshot growth issues, or disk-full conditions.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'storage', 'datastore'],
+      requiredFields: ['timestamp', 'event_type', 'datastore', 'datacenter', 'cluster', 'message', 'severity'],
+      detectionLogic: 'Alert when event_type or message indicates datastore capacity warnings (>80% utilized), out-of-space errors, or thin-provisioning overcommit alerts. Escalate to Critical if any datastore reports <5% free space.',
+      operationalValue: 'Datastore exhaustion causes VM pauses, failed provisioning, snapshot failures, and potential data loss. Early capacity warnings enable proactive expansion or cleanup.',
+      changeMgmtRelevance: 'Capacity warnings after new VM deployments or snapshot creation indicate that change planning did not account for storage growth. Helps validate change resource estimates.',
+      troubleshootingWorkflow: '1. Identify the affected datastore and current utilization\n2. Check for runaway snapshots consuming space\n3. Identify the largest VMs on the datastore\n4. Determine if thin-provisioned VMs are growing unexpectedly\n5. Check for orphaned VMDK files consuming space\n6. Plan expansion or vMotion migration to free space',
+      dashboardDependency: 'Storage Capacity dashboard, Datastore Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Datastore capacity events',
+          description: 'Track all storage capacity warnings and errors',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "datastore" or message has "space" or message has "capacity"\n| summarize count() by datastore, datacenter, severity, event_type\n| order by count_ desc'
+        },
+        {
+          name: 'Datastore event trend',
+          description: 'Visualize capacity warning frequency to identify worsening datastores',
+          query: 'dataset="$DATASET" earliest=-14d\n| where message has "space" or message has "capacity" or message has "thin"\n| timestats span=1d count() by datastore'
+        },
+        {
+          name: 'Critical severity storage events',
+          description: 'Find datastores in critical state requiring immediate action',
+          query: 'dataset="$DATASET" earliest=-48h\n| where severity == "critical" or severity == "error"\n| where event_type has "datastore" or message has "space"\n| summarize count(), LastSeen=max(timestamp) by datastore, datacenter, message\n| order by LastSeen desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-004',
+      name: 'vMotion Failure Rate Increase',
+      objective: 'Detect when vMotion operations are failing at an elevated rate, indicating network issues, resource constraints, or compatibility problems.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'vmotion', 'migration'],
+      requiredFields: ['timestamp', 'vm_name', 'host_name', 'event_type', 'user_name', 'cluster', 'message', 'severity'],
+      detectionLogic: 'Alert when vMotion failure rate exceeds 10% of attempted migrations in a 1-hour window, or when 3+ consecutive vMotion attempts fail for the same VM. Also detect vMotion operations taking longer than 120 seconds.',
+      operationalValue: 'vMotion failures prevent DRS load balancing, maintenance mode evacuations, and HA recovery. Sustained failures degrade cluster flexibility and can prevent planned maintenance.',
+      changeMgmtRelevance: 'vMotion failures during host maintenance windows prevent clean evacuations. Network changes, CPU compatibility issues, or EVC mode mismatches introduced by changes cause failures.',
+      troubleshootingWorkflow: '1. Identify which VMs are failing to vMotion and between which hosts\n2. Check for CPU compatibility (EVC mode) between source and destination\n3. Verify vMotion network connectivity and bandwidth\n4. Check if the VM has devices preventing migration (USB, raw disk)\n5. Verify destination host has sufficient resources\n6. Check for network MTU mismatches on vMotion VMkernel ports',
+      dashboardDependency: 'Migration Health dashboard, Cluster Operations dashboard',
+      criblSearchQueries: [
+        {
+          name: 'vMotion events by outcome',
+          description: 'Track successful vs failed migrations to calculate failure rate',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event_type has "vmotion" or event_type has "migrate" or event_type has "relocate"\n| summarize count() by event_type, severity, cluster\n| order by count_ desc'
+        },
+        {
+          name: 'Failed vMotion operations with details',
+          description: 'Examine specific failure messages to identify root causes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where (event_type has "vmotion" or event_type has "migrate") and (severity == "error" or message has "fail")\n| summarize Failures=count() by vm_name, host_name, cluster, message\n| order by Failures desc'
+        },
+        {
+          name: 'vMotion failure trend over time',
+          description: 'Track whether migration failures are increasing or isolated',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "vmotion" or event_type has "migrate"\n| extend is_failure=iif(severity == "error" or message has "fail", 1, 0)\n| timestats span=4h Total=count(), Failures=sum(is_failure) by cluster'
+        },
+        {
+          name: 'VMs with repeated migration failures',
+          description: 'Find VMs that consistently fail to migrate, indicating VM-specific issues',
+          query: 'dataset="$DATASET" earliest=-48h\n| where (event_type has "vmotion" or event_type has "migrate") and (severity == "error" or message has "fail")\n| summarize FailCount=count(), Hosts=make_set(host_name) by vm_name, cluster\n| where FailCount >= 3\n| order by FailCount desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-005',
+      name: 'VM Snapshot Age and Growth',
+      objective: 'Detect snapshots that are aging beyond acceptable thresholds or growing excessively, preventing storage exhaustion and performance degradation.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'snapshots', 'storage-management'],
+      requiredFields: ['timestamp', 'vm_name', 'event_type', 'user_name', 'datastore', 'message', 'severity'],
+      detectionLogic: 'Alert when snapshot-related events indicate creation without subsequent deletion within 72 hours. Also detect events indicating snapshot disk growth exceeding 50GB or snapshot consolidation requirements.',
+      operationalValue: 'Aged snapshots degrade VM performance, consume datastore space exponentially, and can cause outages when datastores fill. Proactive detection prevents emergency storage remediation.',
+      changeMgmtRelevance: 'Snapshots are commonly created before changes as rollback points. Failure to delete post-change snapshots is a common operational gap that this detection catches.',
+      troubleshootingWorkflow: '1. Identify VMs with snapshot events and last creation time\n2. Determine who created the snapshot and for what purpose\n3. Check if a change record exists that should have triggered cleanup\n4. Estimate snapshot size growth rate\n5. Coordinate with VM owner for consolidation or deletion\n6. Monitor datastore capacity impact',
+      dashboardDependency: 'Snapshot Management dashboard, Storage Capacity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Snapshot creation and deletion events',
+          description: 'Track snapshot lifecycle to identify orphaned snapshots',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "snapshot"\n| summarize count() by vm_name, event_type, user_name\n| order by count_ desc'
+        },
+        {
+          name: 'Snapshot events without corresponding deletions',
+          description: 'Find VMs where snapshots were created but never removed',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event_type has "snapshot"\n| summarize Creates=countif(event_type has "create"), Deletes=countif(event_type has "remove" or event_type has "delete") by vm_name\n| extend Orphaned=Creates - Deletes\n| where Orphaned > 0\n| order by Orphaned desc'
+        },
+        {
+          name: 'Snapshot consolidation warnings',
+          description: 'Identify VMs requiring snapshot consolidation (performance impact)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where message has "consolidat" or message has "snapshot" and severity != "info"\n| summarize count(), LastSeen=max(timestamp) by vm_name, datastore, message\n| order by LastSeen desc'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-006',
+      name: 'Cluster Event Storm',
+      objective: 'Detect when a cluster generates an abnormally high volume of events, indicating infrastructure instability, configuration churn, or cascading failures.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'cluster-health', 'event-storm'],
+      requiredFields: ['timestamp', 'event_type', 'host_name', 'datacenter', 'cluster', 'severity', 'message'],
+      detectionLogic: 'Alert when event volume from a single cluster exceeds 5x the hourly baseline, or when error/warning severity events exceed 50% of total events for a cluster in a 30-minute window.',
+      operationalValue: 'Event storms indicate infrastructure instability that may cascade into outages. Early detection enables proactive investigation before users are impacted.',
+      changeMgmtRelevance: 'Event storms following changes indicate the change destabilized the environment. Correlating event spike timing with change windows accelerates rollback decisions.',
+      troubleshootingWorkflow: '1. Identify the cluster generating excessive events\n2. Categorize events by type — are they uniform or diverse?\n3. Check if events correlate with a single host or are cluster-wide\n4. Look for HA/DRS thrashing (repeated migrations, restarts)\n5. Check storage events for underlying connectivity issues\n6. Stabilize the environment (consider disabling DRS temporarily if thrashing)',
+      dashboardDependency: 'Cluster Health dashboard, Event Volume Trending dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by cluster over time',
+          description: 'Identify clusters experiencing event storms',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by cluster, datacenter'
+        },
+        {
+          name: 'Error and warning distribution during storm',
+          description: 'Break down event severity during high-volume periods',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), Errors=countif(severity == "error"), Warnings=countif(severity == "warning") by cluster, host_name\n| extend ErrorPct=round(Errors * 100.0 / Total, 1)\n| where Total > 50\n| order by ErrorPct desc'
+        },
+        {
+          name: 'Top event types during storm period',
+          description: 'Identify what is generating the bulk of events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize count() by event_type, cluster, severity\n| order by count_ desc\n| limit 30'
+        },
+        {
+          name: 'Host contribution to event storm',
+          description: 'Determine if one host or all hosts are generating events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize EventCount=count(), UniqueTypes=dcount(event_type) by host_name, cluster\n| order by EventCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'vmw-obs-007',
+      name: 'VM Event Log Ingestion Gap',
+      objective: 'Detect when vSphere event logs stop arriving or show significant volume drops, indicating collection failures or vCenter connectivity issues.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'log-collection'],
+      requiredFields: ['timestamp', 'event_type', 'datacenter', 'cluster', 'host_name', 'severity'],
+      detectionLogic: 'Alert when no events are received from a datacenter or cluster for more than 10 minutes during business hours, or when event volume drops below 20% of the 7-day baseline for that time window.',
+      operationalValue: 'Without event data, all vSphere detections are blind. Detecting ingestion gaps ensures monitoring coverage is maintained and issues are identified during the gap period after restoration.',
+      changeMgmtRelevance: 'Log gaps often follow vCenter upgrades, network changes affecting syslog, or Cribl pipeline modifications. Validates that changes did not break observability.',
+      troubleshootingWorkflow: '1. Identify which datacenter(s) or cluster(s) stopped sending events\n2. Verify vCenter is accessible and operational\n3. Check the log forwarding configuration in vCenter\n4. Verify network path from vCenter to log collector\n5. Check Cribl source health for the vSphere input\n6. After restoration, review what events occurred during the gap',
+      dashboardDependency: 'Log Ingestion Health dashboard, Source Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by datacenter over time',
+          description: 'Track log ingestion rate to detect drops or gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m count() by datacenter'
+        },
+        {
+          name: 'Last event timestamp per cluster',
+          description: 'Find clusters that may have stopped sending events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(timestamp), EventCount=count() by datacenter, cluster\n| order by LastSeen asc'
+        },
+        {
+          name: 'Event type diversity check',
+          description: 'Verify that all expected event types are still being received',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count(), LastSeen=max(timestamp) by event_type, datacenter\n| order by LastSeen asc'
+        }
+      ]
+    }
+  ],
+  'hashicorp-vault': [
+    {
+      id: 'vlt-obs-001',
+      name: 'Vault Request Error Rate Spike',
+      objective: 'Detect when Vault API error rates increase significantly, indicating configuration issues, backend failures, or capacity problems affecting secret retrieval.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'api-health', 'secrets-management'],
+      requiredFields: ['time', 'type', 'request_operation', 'request_path', 'response_error', 'request_remote_address'],
+      detectionLogic: 'Alert when the ratio of requests with response_error to total requests exceeds 10% in a 5-minute window, or when total error count exceeds 3x the hourly baseline. Differentiate between client errors (403, 404) and server errors (500+).',
+      operationalValue: 'Vault errors directly impact application deployments, secret rotation, and authentication flows. Elevated error rates indicate systemic issues affecting all dependent services.',
+      changeMgmtRelevance: 'Error spikes after Vault policy changes, backend reconfigurations, or infrastructure changes indicate the change broke access patterns or backend connectivity.',
+      troubleshootingWorkflow: '1. Categorize errors — are they auth failures, path not found, or server errors?\n2. Identify the most common response_error messages\n3. Check if errors are from specific request_remote_address (single client) or widespread\n4. Verify Vault backend health (storage, HA status)\n5. Check if recent policy changes removed access\n6. Review Vault seal status and cluster health',
+      dashboardDependency: 'Vault Health dashboard, API Error Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate over time',
+          description: 'Track the ratio of errors to total requests',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend has_error=iif(response_error != "", 1, 0)\n| timestats span=5m Total=count(), Errors=sum(has_error) by request_operation'
+        },
+        {
+          name: 'Top error messages',
+          description: 'Identify the most common error types affecting Vault operations',
+          query: 'dataset="$DATASET" earliest=-4h\n| where response_error != ""\n| summarize count() by response_error, request_operation, request_path\n| order by count_ desc\n| limit 20'
+        },
+        {
+          name: 'Errors by source address',
+          description: 'Determine if errors are concentrated from specific clients',
+          query: 'dataset="$DATASET" earliest=-4h\n| where response_error != ""\n| summarize ErrorCount=count(), UniqueErrors=dcount(response_error) by request_remote_address\n| order by ErrorCount desc\n| limit 20'
+        },
+        {
+          name: 'Error spike correlation with request paths',
+          description: 'Find which secret paths or auth methods are generating errors',
+          query: 'dataset="$DATASET" earliest=-2h\n| where response_error != ""\n| summarize count() by request_path\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-002',
+      name: 'Authentication Method Failure Surge',
+      objective: 'Detect when authentication failures spike for specific auth methods, indicating credential issues, LDAP/OIDC backend problems, or misconfigured client applications.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'authentication', 'access'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'response_error', 'request_remote_address'],
+      detectionLogic: 'Alert when authentication-related errors on paths matching auth/* exceed 20% failure rate or when a specific auth_display_name that normally succeeds starts failing consistently. Evaluate in 10-minute windows.',
+      operationalValue: 'Auth method failures prevent applications from retrieving secrets, blocking deployments, certificate renewals, and dynamic credential generation. Rapid detection prevents cascading service failures.',
+      changeMgmtRelevance: 'Auth failures after LDAP configuration changes, certificate rotations, or OIDC provider updates indicate the change broke authentication integration.',
+      troubleshootingWorkflow: '1. Identify which auth method(s) are failing\n2. Check if failures are for all clients or specific identities\n3. Verify backend connectivity (LDAP server, OIDC provider)\n4. Check if certificates or credentials for the auth backend expired\n5. Review recent policy changes that may have removed auth method access\n6. Test authentication manually with vault login command',
+      dashboardDependency: 'Authentication Health dashboard, Auth Method Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Auth failures by method and identity',
+          description: 'Break down authentication failures to identify impacted methods',
+          query: 'dataset="$DATASET" earliest=-12h\n| where request_path has "auth/" and response_error != ""\n| summarize Failures=count() by auth_display_name, request_path, response_error\n| order by Failures desc'
+        },
+        {
+          name: 'Auth success vs failure trend',
+          description: 'Track authentication health over time per method',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_path has "auth/"\n| extend is_failure=iif(response_error != "", 1, 0)\n| timestats span=15m Total=count(), Failures=sum(is_failure) by request_path'
+        },
+        {
+          name: 'Failed auth sources',
+          description: 'Identify which client IPs are experiencing auth failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_path has "auth/" and response_error != ""\n| summarize count() by request_remote_address, auth_display_name, response_error\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-003',
+      name: 'Secret Engine Request Latency',
+      objective: 'Detect when Vault operations on specific secret engines slow down, indicating backend storage issues, seal/unseal problems, or resource exhaustion.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'secret-engines'],
+      requiredFields: ['time', 'type', 'request_operation', 'request_path', 'request_id', 'request_remote_address', 'response_error'],
+      detectionLogic: 'Alert when the request volume for a specific path prefix drops significantly (indicating timeouts) or when error messages contain timeout-related keywords. Track request_id density per time window as a proxy for throughput degradation.',
+      operationalValue: 'Vault latency directly impacts application startup times, secret rotation schedules, and CI/CD pipelines. Performance degradation can cascade into deployment failures and secret expiration.',
+      changeMgmtRelevance: 'Latency increases after storage backend changes, Vault version upgrades, or network infrastructure modifications indicate performance regression requiring investigation.',
+      troubleshootingWorkflow: '1. Identify which secret engine paths are experiencing slowness\n2. Check Vault server resource utilization (CPU, memory, disk I/O)\n3. Verify storage backend health (Consul, Raft, DynamoDB)\n4. Check if Vault is partially sealed or in standby failover\n5. Review recent configuration changes to the affected engine\n6. Check network latency between Vault and storage backend',
+      dashboardDependency: 'Vault Performance dashboard, Secret Engine Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request throughput by path prefix',
+          description: 'Track operations per secret engine to detect throughput drops',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend path_prefix=extract("^([^/]+/[^/]+)", 1, request_path)\n| timestats span=10m count() by path_prefix'
+        },
+        {
+          name: 'Timeout-related errors',
+          description: 'Find requests experiencing timeout or deadline exceeded errors',
+          query: 'dataset="$DATASET" earliest=-4h\n| where response_error has "timeout" or response_error has "deadline" or response_error has "unavailable"\n| summarize count() by request_path, request_operation, response_error\n| order by count_ desc'
+        },
+        {
+          name: 'Request volume comparison (current vs baseline)',
+          description: 'Compare current throughput against expected levels to detect degradation',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize RequestCount=count(), UniqueClients=dcount(request_remote_address) by request_operation, request_path\n| order by RequestCount desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-004',
+      name: 'Token Renewal Failure Pattern',
+      objective: 'Detect when token renewal operations fail at an elevated rate, indicating token expiration cascades that will cause widespread application authentication failures.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'tokens', 'renewal'],
+      requiredFields: ['time', 'type', 'auth_client_token', 'auth_accessor', 'auth_display_name', 'request_operation', 'request_path', 'response_error'],
+      detectionLogic: 'Alert when token renewal requests (request_path contains "renew") generate errors exceeding 15% failure rate, or when the volume of renewal attempts spikes indicating clients are retrying. Track by auth_display_name to identify affected service accounts.',
+      operationalValue: 'Token renewal failures lead to expired tokens, which block all subsequent Vault operations for affected applications. Detecting early prevents a cascade of auth failures across services.',
+      changeMgmtRelevance: 'Token TTL policy changes, max_ttl adjustments, or orphan token cleanup operations can trigger mass renewal failures if not coordinated with application teams.',
+      troubleshootingWorkflow: '1. Identify which tokens (auth_display_name) are failing to renew\n2. Check if the token has exceeded max_ttl (cannot be renewed)\n3. Verify the token policy still allows renewal\n4. Check if the parent token was revoked\n5. Determine blast radius — how many applications use this token?\n6. Issue new tokens for affected applications if renewal is impossible',
+      dashboardDependency: 'Token Health dashboard, Renewal Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Token renewal outcomes',
+          description: 'Track renewal success vs failure rates',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_path has "renew"\n| extend is_failure=iif(response_error != "", 1, 0)\n| timestats span=30m Total=count(), Failures=sum(is_failure) by auth_display_name'
+        },
+        {
+          name: 'Failed renewal details',
+          description: 'Examine specific renewal failures and their causes',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_path has "renew" and response_error != ""\n| summarize count() by auth_display_name, auth_accessor, response_error\n| order by count_ desc'
+        },
+        {
+          name: 'Renewal attempt spikes (retry storms)',
+          description: 'Detect clients retrying renewals at elevated rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_path has "renew"\n| summarize Attempts=count() by request_remote_address, auth_display_name\n| where Attempts > 50\n| order by Attempts desc'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-005',
+      name: 'Lease Expiration Surge',
+      objective: 'Detect when an abnormal number of leases are expiring simultaneously, indicating potential credential rotation storms that can overwhelm Vault and downstream systems.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'leases', 'credential-rotation'],
+      requiredFields: ['time', 'type', 'request_operation', 'request_path', 'auth_display_name', 'auth_policies', 'request_remote_address'],
+      detectionLogic: 'Alert when revoke operations (request_operation = "revoke" or request_path contains "revoke") spike to 3x the hourly baseline, indicating mass lease expiration. Also detect when new lease creation rate spikes correspondingly.',
+      operationalValue: 'Mass lease expirations cause credential rotation storms that can overwhelm Vault, database backends, and dependent services. Detecting the surge enables throttling and proactive scaling.',
+      changeMgmtRelevance: 'Lease TTL policy changes, bulk secret rotation schedules, or max_lease_ttl modifications can trigger synchronized expirations. Proper change planning should stagger lease lifecycles.',
+      troubleshootingWorkflow: '1. Identify the scope of lease expirations by path/engine\n2. Check if Vault performance is degraded from revocation load\n3. Verify downstream systems (databases, PKI) can handle rotation rate\n4. Check if a TTL policy change triggered synchronized expirations\n5. Consider temporarily extending leases if rotation is overwhelming backends\n6. Plan lease lifecycle staggering to prevent future synchronized expiry',
+      dashboardDependency: 'Lease Management dashboard, Credential Rotation dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Revocation operations over time',
+          description: 'Track lease revocations to detect expiration storms',
+          query: 'dataset="$DATASET" earliest=-24h\n| where request_operation == "revoke" or request_path has "revoke"\n| timestats span=15m count() by request_path'
+        },
+        {
+          name: 'Lease revocation vs creation ratio',
+          description: 'Compare new credential requests against revocations to spot imbalance',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_revoke=iif(request_operation == "revoke" or request_path has "revoke", 1, 0)\n| extend is_create=iif(request_operation == "read" or request_operation == "update", 1, 0)\n| timestats span=10m Revocations=sum(is_revoke), Creates=sum(is_create)'
+        },
+        {
+          name: 'Top paths experiencing lease churn',
+          description: 'Identify which secret engines have the most lease activity',
+          query: 'dataset="$DATASET" earliest=-4h\n| where request_operation == "revoke" or request_path has "revoke"\n| summarize RevocationCount=count() by request_path, auth_display_name\n| order by RevocationCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-006',
+      name: 'Policy-Denied Request Pattern',
+      objective: 'Detect elevated rates of permission-denied errors that indicate misconfigured policies, broken automation, or applications accessing paths they should not need.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change', 'policy', 'access-control'],
+      requiredFields: ['time', 'type', 'auth_display_name', 'auth_policies', 'request_operation', 'request_path', 'response_error', 'request_remote_address'],
+      detectionLogic: 'Alert when permission-denied errors from a specific auth_display_name or request_remote_address exceed 5 occurrences in 15 minutes, or when a path that previously had no denials starts generating them consistently.',
+      operationalValue: 'Permission denials indicate broken automation, policy drift, or applications that were silently degraded. Detecting patterns enables proactive policy correction before SLAs are breached.',
+      changeMgmtRelevance: 'Policy-denied surges after Vault policy updates confirm the change restricted access that applications depend on. Enables rapid policy rollback or targeted corrections.',
+      troubleshootingWorkflow: '1. Identify which identity (auth_display_name) is being denied\n2. Determine which path and operation is being requested\n3. Check auth_policies attached to the token — what policies does it have?\n4. Compare against the ACL policy to identify the gap\n5. Determine if the path access is legitimate and policy needs updating\n6. If intentional restriction, notify the application team to update their integration',
+      dashboardDependency: 'Policy Compliance dashboard, Access Denied Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Permission denied events by identity',
+          description: 'Find which identities are being denied access',
+          query: 'dataset="$DATASET" earliest=-24h\n| where response_error has "permission denied" or response_error has "403"\n| summarize Denials=count() by auth_display_name, request_path, request_operation\n| order by Denials desc'
+        },
+        {
+          name: 'Denial trend over time',
+          description: 'Track whether policy denials are increasing (potential post-change regression)',
+          query: 'dataset="$DATASET" earliest=-7d\n| where response_error has "permission denied" or response_error has "403"\n| timestats span=1h count() by auth_display_name'
+        },
+        {
+          name: 'New denial patterns (paths with recent first-denial)',
+          description: 'Find paths that recently started generating denials for the first time',
+          query: 'dataset="$DATASET" earliest=-48h\n| where response_error has "permission denied"\n| summarize FirstDenial=min(time), Count=count() by request_path, auth_display_name\n| order by FirstDenial desc\n| limit 20'
+        },
+        {
+          name: 'Denied requests by source IP',
+          description: 'Identify client machines generating the most policy violations',
+          query: 'dataset="$DATASET" earliest=-12h\n| where response_error has "permission denied"\n| summarize count() by request_remote_address, auth_display_name\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'vlt-obs-007',
+      name: 'Vault Audit Log Ingestion Health',
+      objective: 'Detect when Vault audit logs stop arriving or show volume anomalies, ensuring continuous visibility into secrets management operations.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'audit-integrity'],
+      requiredFields: ['time', 'type', 'request_id', 'request_operation', 'request_path'],
+      detectionLogic: 'Alert when no audit events are received for more than 3 minutes, or when event volume drops below 30% of the hourly baseline. Also detect gaps in request_id sequence or unexpected type distribution shifts.',
+      operationalValue: 'Vault audit logs are mandatory for compliance and security visibility. Any gap means operations occurred without observability. Immediate detection ensures audit continuity.',
+      changeMgmtRelevance: 'Log gaps after Vault upgrades, audit backend configuration changes, or network modifications indicate the change broke audit delivery.',
+      troubleshootingWorkflow: '1. Check last received audit event timestamp\n2. Verify Vault audit device is enabled and healthy (vault audit list)\n3. Check if Vault is sealed (would stop all operations including audit)\n4. Verify network path from Vault to log collector\n5. Check Cribl source health for the Vault input\n6. After restoration, verify no security-relevant events occurred during gap',
+      dashboardDependency: 'Audit Log Health dashboard, Pipeline Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Audit event volume over time',
+          description: 'Track ingestion rate to detect drops or gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=5m count() by type'
+        },
+        {
+          name: 'Last event by operation type',
+          description: 'Verify all expected operation types are still being received',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastSeen=max(time), EventCount=count() by request_operation\n| order by LastSeen asc'
+        },
+        {
+          name: 'Request volume per source IP',
+          description: 'Validate that all known Vault clients are still generating audit events',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count(), LastSeen=max(time) by request_remote_address\n| order by LastSeen asc'
+        }
+      ]
+    }
+  ],
+  'github-audit': [
+    {
+      id: 'gha-obs-001',
+      name: 'Repository Visibility Change',
+      objective: 'Detect when repositories change visibility settings (public/private/internal), which can indicate accidental exposure or intentional access modifications requiring validation.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change', 'repository', 'visibility'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'data_visibility'],
+      detectionLogic: 'Alert on any action containing "visibility" or "publicize" or when data_visibility field changes. Immediate alert for any private-to-public change. Track all visibility modifications regardless of direction.',
+      operationalValue: 'Repository visibility changes have immediate security and compliance implications. Accidental public exposure of private repos can leak source code, secrets, and intellectual property.',
+      changeMgmtRelevance: 'Visibility changes should always correlate with approved change requests. Any unplanned visibility modification requires immediate investigation and potential reversal.',
+      troubleshootingWorkflow: '1. Confirm the visibility change and current state of the repository\n2. Identify the actor and verify they have authorization\n3. Check if a change request exists for this modification\n4. If made public — immediately scan for exposed secrets\n5. Assess what content is in the repository (sensitive data?)\n6. Revert if unauthorized and notify the repository owner',
+      dashboardDependency: 'Repository Governance dashboard, Change Audit dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Repository visibility change events',
+          description: 'Track all visibility modifications across the organization',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "visibility" or action has "publicize" or action has "privatize"\n| summarize count() by repo, actor, action, data_visibility, org\n| order by count_ desc'
+        },
+        {
+          name: 'Visibility changes over time',
+          description: 'Trend visibility modifications to detect unusual activity',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "visibility" or action has "publicize"\n| timestats span=1d count() by action, org'
+        },
+        {
+          name: 'Actors making visibility changes',
+          description: 'Identify who is modifying repository visibility settings',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "visibility" or action has "publicize" or action has "privatize"\n| summarize Changes=count(), Repos=make_set(repo) by actor, org\n| order by Changes desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-002',
+      name: 'Organization Membership Churn',
+      objective: 'Detect abnormal rates of member additions and removals that may indicate automation issues, compromised admin accounts, or organizational restructuring requiring coordination.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change', 'membership', 'organization'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'user', 'team'],
+      detectionLogic: 'Alert when member additions or removals exceed 3x the daily baseline for an organization, or when a single actor adds/removes more than 10 members in one hour. Track team membership changes separately.',
+      operationalValue: 'Abnormal membership changes affect access control across all repositories. Bulk changes without coordination can break CI/CD pipelines, code review workflows, and access permissions.',
+      changeMgmtRelevance: 'Membership changes should align with onboarding/offboarding processes. Bulk unplanned changes indicate either process failures or potential account compromise.',
+      troubleshootingWorkflow: '1. Identify the scope of membership changes (adds vs removes)\n2. Verify the actor is authorized for bulk membership management\n3. Check if changes align with HR onboarding/offboarding batches\n4. Verify team assignments are correct for added members\n5. Check if removed members still need access (accidental removal)\n6. Validate CI/CD and automated workflows are not impacted',
+      dashboardDependency: 'Organization Membership dashboard, Access Governance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Membership change events over time',
+          description: 'Track the rate of member additions and removals',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "member" or action has "team"\n| timestats span=1d count() by action, org'
+        },
+        {
+          name: 'Bulk membership changes by actor',
+          description: 'Identify actors making many membership modifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "member"\n| summarize Changes=count(), Users=dcount(user) by actor, org, action\n| where Changes > 5\n| order by Changes desc'
+        },
+        {
+          name: 'Team membership modifications',
+          description: 'Track team-level access changes that affect repository permissions',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "team" and team != ""\n| summarize count() by team, action, actor, org\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-003',
+      name: 'GitHub Actions Workflow Failure Rate',
+      objective: 'Detect when CI/CD workflow failure rates increase, indicating broken builds, infrastructure issues, or dependency problems affecting developer productivity.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'ci-cd', 'workflows'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'programmatic_access_type'],
+      detectionLogic: 'Alert when actions related to workflow failures or completions show a failure ratio exceeding 30% in a 1-hour window, or when a repository that normally has >90% success rate drops below 70%. Track by repo and workflow.',
+      operationalValue: 'CI/CD failures block developer productivity, delay releases, and can indicate infrastructure degradation. Early detection enables rapid remediation of shared infrastructure issues.',
+      changeMgmtRelevance: 'Workflow failure spikes after infrastructure changes (runner updates, network modifications, dependency registry changes) indicate the change impacted build systems.',
+      troubleshootingWorkflow: '1. Identify which repos and workflows are experiencing elevated failures\n2. Determine if failures are concentrated in specific workflow steps\n3. Check for shared infrastructure issues (runners, registries, networks)\n4. Verify dependency availability (npm, PyPI, Docker Hub)\n5. Check if a recent workflow or action version update caused regression\n6. Notify affected teams and provide workaround if available',
+      dashboardDependency: 'CI/CD Health dashboard, Workflow Performance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Workflow-related actions over time',
+          description: 'Track workflow execution events to identify failure patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "workflow" or action has "actions"\n| timestats span=4h count() by action, repo'
+        },
+        {
+          name: 'Workflow events by repository',
+          description: 'Identify repositories with the most workflow activity and potential failures',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action has "workflow" or action has "actions"\n| summarize count() by repo, action, org\n| order by count_ desc\n| limit 30'
+        },
+        {
+          name: 'Programmatic access patterns',
+          description: 'Track automation and bot activity that drives CI/CD workflows',
+          query: 'dataset="$DATASET" earliest=-7d\n| where programmatic_access_type != ""\n| summarize count() by programmatic_access_type, repo, actor\n| order by count_ desc'
+        },
+        {
+          name: 'Workflow activity by actor (bot vs human)',
+          description: 'Distinguish automated workflow triggers from manual ones',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action has "workflow"\n| summarize count() by actor, repo\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-004',
+      name: 'API Rate Limit and Access Throttling',
+      objective: 'Detect when GitHub API access patterns suggest rate limiting or throttling that could impact automation, CI/CD, and developer tooling.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'api', 'rate-limiting'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'programmatic_access_type', 'actor_ip'],
+      detectionLogic: 'Alert when a single actor or programmatic_access_type generates more than 1000 events per hour, or when transport_protocol or access patterns suggest automated bulk operations that may trigger rate limits.',
+      operationalValue: 'Rate-limited integrations silently degrade — PRs stop being checked, deployments stall, and notifications stop. Detecting patterns before limits hit enables proactive throttling.',
+      changeMgmtRelevance: 'New integrations, updated automation scripts, or misconfigured CI/CD loops can accidentally flood the API. Correlate with recently deployed automation changes.',
+      troubleshootingWorkflow: '1. Identify the actor or integration approaching rate limits\n2. Determine if the request pattern is intentional or a runaway loop\n3. Check for misconfigured webhooks or polling intervals\n4. Verify pagination is implemented correctly in API clients\n5. Evaluate if request caching can reduce API calls\n6. Contact integration owner to optimize or throttle requests',
+      dashboardDependency: 'API Usage dashboard, Integration Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by actor (top consumers)',
+          description: 'Identify actors generating the most API activity',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize EventCount=count(), UniqueRepos=dcount(repo) by actor, programmatic_access_type\n| order by EventCount desc\n| limit 20'
+        },
+        {
+          name: 'Programmatic access volume over time',
+          description: 'Track automated access patterns that could hit rate limits',
+          query: 'dataset="$DATASET" earliest=-7d\n| where programmatic_access_type != ""\n| timestats span=1h count() by programmatic_access_type, actor'
+        },
+        {
+          name: 'High-frequency actors by IP',
+          description: 'Find IPs generating excessive requests that may trigger throttling',
+          query: 'dataset="$DATASET" earliest=-12h\n| where actor_ip != ""\n| summarize count() by actor_ip, actor, org\n| where count_ > 100\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-005',
+      name: 'Repository Transfer and Deletion Events',
+      objective: 'Detect repository transfers between organizations and deletions that affect code availability, CI/CD pipelines, and team workflows.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'repository', 'data-loss'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'user'],
+      detectionLogic: 'Alert immediately on any repository deletion (action contains "delete") or transfer (action contains "transfer") event. These are irreversible or disruptive operations requiring immediate validation.',
+      operationalValue: 'Repository deletions can cause permanent code loss if not backed up. Transfers break existing CI/CD configurations, webhook URLs, and team access patterns.',
+      changeMgmtRelevance: 'Repository lifecycle changes should always be planned. Unplanned deletions or transfers indicate either accidents or malicious activity requiring immediate response.',
+      troubleshootingWorkflow: '1. Confirm the deletion/transfer event and identify the repository\n2. Verify the actor had proper authorization\n3. For deletions — check if backup/archive exists, evaluate recovery options\n4. For transfers — verify destination org and update dependent systems\n5. Notify affected development teams immediately\n6. Update CI/CD pipelines, webhooks, and documentation',
+      dashboardDependency: 'Repository Lifecycle dashboard, Critical Events dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Repository deletion and transfer events',
+          description: 'Track all irreversible repository operations',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "delete" or action has "transfer" or action has "archive"\n| summarize count() by action, repo, actor, org\n| order by count_ desc'
+        },
+        {
+          name: 'Repository lifecycle events trend',
+          description: 'Monitor deletion and transfer rates for anomalies',
+          query: 'dataset="$DATASET" earliest=-90d\n| where action has "repo" and (action has "delete" or action has "transfer" or action has "create")\n| timestats span=7d count() by action'
+        },
+        {
+          name: 'Actors performing destructive operations',
+          description: 'Identify who is deleting or transferring repositories',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "delete" or action has "transfer"\n| summarize Destructive=count(), Repos=make_set(repo) by actor, org\n| order by Destructive desc'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-006',
+      name: 'Transport Protocol and Access Method Anomaly',
+      objective: 'Detect shifts in how repositories are accessed (HTTPS vs SSH, token types) that may indicate tooling changes, credential issues, or access method deprecation impact.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'access-methods', 'protocol'],
+      requiredFields: ['created_at', 'action', 'actor', 'org', 'repo', 'transport_protocol', 'programmatic_access_type'],
+      detectionLogic: 'Alert when the distribution of transport_protocol or programmatic_access_type shifts significantly from the 30-day baseline. Detect when a protocol that represented <5% suddenly exceeds 20%, or a dominant protocol drops below 50%.',
+      operationalValue: 'Access method shifts indicate tooling changes that may not be coordinated, credential migration issues, or impending deprecation impacts. Enables proactive developer communication.',
+      changeMgmtRelevance: 'Protocol shifts after credential rotation policies, SSH key deprecation announcements, or token type migrations validate that transitions are proceeding as planned.',
+      troubleshootingWorkflow: '1. Identify which access methods are shifting\n2. Determine if the shift is intentional (migration) or unintentional\n3. Check for recent announcements about protocol deprecation\n4. Verify affected users/bots have updated credentials\n5. Monitor for access failures correlating with the shift\n6. Update documentation and communication for affected teams',
+      dashboardDependency: 'Access Method Trends dashboard, Developer Tooling dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Transport protocol distribution',
+          description: 'Baseline view of how repositories are being accessed',
+          query: 'dataset="$DATASET" earliest=-30d\n| where transport_protocol != ""\n| summarize count() by transport_protocol, org\n| order by count_ desc'
+        },
+        {
+          name: 'Protocol usage trend over time',
+          description: 'Track how access methods are shifting week over week',
+          query: 'dataset="$DATASET" earliest=-30d\n| where transport_protocol != ""\n| timestats span=1d count() by transport_protocol'
+        },
+        {
+          name: 'Programmatic access type breakdown',
+          description: 'Understand the mix of token types and automation patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| where programmatic_access_type != ""\n| summarize count() by programmatic_access_type, actor\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'gha-obs-007',
+      name: 'Audit Log Ingestion Completeness',
+      objective: 'Detect gaps in GitHub audit log delivery that would leave organizational activity unmonitored and create compliance blind spots.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'completeness'],
+      requiredFields: ['created_at', 'action', 'org', 'actor'],
+      detectionLogic: 'Alert when no audit events are received from an organization for more than 15 minutes during business hours, when event volume drops below 40% of the hourly baseline, or when expected periodic events (like scheduled workflow runs) stop appearing.',
+      operationalValue: 'Audit log gaps mean security events, access changes, and operational issues go undetected. Ensuring continuous delivery is critical for compliance and incident response.',
+      changeMgmtRelevance: 'Log gaps after streaming configuration changes, webhook modifications, or API token rotations indicate the change broke audit delivery.',
+      troubleshootingWorkflow: '1. Identify which organization(s) stopped delivering events\n2. Check GitHub audit log streaming configuration\n3. Verify API token used for log collection has not expired\n4. Check webhook delivery status if using push-based collection\n5. Verify Cribl source health for the GitHub input\n6. After restoration, query GitHub API directly to backfill missed events',
+      dashboardDependency: 'Audit Log Health dashboard, Source Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Audit event volume by organization',
+          description: 'Track ingestion rates to detect gaps in delivery',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by org'
+        },
+        {
+          name: 'Last event timestamp per organization',
+          description: 'Find organizations that may have stopped sending audit logs',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(created_at), EventCount=count() by org\n| order by LastSeen asc'
+        },
+        {
+          name: 'Action type diversity check',
+          description: 'Verify all expected audit event types are being received',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count(), LastSeen=max(created_at) by action, org\n| order by count_ desc'
+        },
+        {
+          name: 'Event delivery lag analysis',
+          description: 'Check if events are arriving with increasing delay',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize EventCount=count(), EarliestEvent=min(created_at), LatestEvent=max(created_at) by org\n| order by EventCount asc'
+        }
+      ]
+    }
+  ],
+  'atlassian-audit': [
+    {
+      id: 'atl-obs-001',
+      name: 'Bulk Permission and Access Changes',
+      objective: 'Detect when large numbers of permission modifications occur in a short period, indicating automation issues, admin errors, or unauthorized bulk access grants.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change', 'permissions', 'access-control'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'container_name', 'result'],
+      detectionLogic: 'Alert when a single actor_email performs more than 20 permission-related actions within 30 minutes, or when total permission change volume exceeds 3x the daily baseline for the organization.',
+      operationalValue: 'Bulk permission changes affect team access to projects, pages, and repositories. Unauthorized or erroneous changes can block productivity for entire teams.',
+      changeMgmtRelevance: 'Permission restructuring should be planned and communicated. Detecting bulk changes enables validation that they match the approved change scope.',
+      troubleshootingWorkflow: '1. Identify the actor performing bulk permission changes\n2. Determine which objects and containers are affected\n3. Verify if a change request exists for this modification\n4. Check if an automation script or integration is responsible\n5. Validate the result field — are changes succeeding or failing?\n6. If unauthorized, revert changes and notify security team',
+      dashboardDependency: 'Permission Change Audit dashboard, Admin Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Permission-related actions by actor',
+          description: 'Identify who is making the most permission changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "permission" or action has "access" or action has "grant"\n| summarize count() by actor_displayName, actor_email, action\n| order by count_ desc'
+        },
+        {
+          name: 'Permission change volume over time',
+          description: 'Track permission modification rates to detect spikes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "permission" or action has "access" or action has "grant" or action has "role"\n| timestats span=4h count() by action'
+        },
+        {
+          name: 'Bulk changes in short time windows',
+          description: 'Find actors making many changes rapidly',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action has "permission" or action has "access"\n| summarize Changes=count(), UniqueObjects=dcount(objectItem_name) by actor_email, container_name\n| where Changes > 10\n| order by Changes desc'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-002',
+      name: 'Space and Project Configuration Drift',
+      objective: 'Detect when Confluence spaces or Jira projects have their configuration modified, potentially affecting workflows, permissions, and integrations.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change', 'configuration', 'governance'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'container_name', 'extraAttributes'],
+      detectionLogic: 'Alert when configuration-related actions (scheme changes, workflow modifications, space settings) occur for production spaces or projects. Track by container_name and alert on changes to containers that have not been modified in 30+ days.',
+      operationalValue: 'Configuration drift in production projects affects team workflows, notification routing, and integration behavior. Detecting changes enables rapid validation and rollback if issues emerge.',
+      changeMgmtRelevance: 'Production project configurations should be stable. Changes should correlate with approved requests. Unexpected modifications require investigation.',
+      troubleshootingWorkflow: '1. Identify which space/project configuration was modified\n2. Determine what specifically changed (permissions, workflow, scheme)\n3. Verify the actor had appropriate admin permissions\n4. Check if the change matches a planned modification request\n5. Validate that integrations and automations still function correctly\n6. Document the change and notify affected team members',
+      dashboardDependency: 'Configuration Governance dashboard, Change History dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Configuration changes by container',
+          description: 'Track which spaces and projects are being modified',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "config" or action has "scheme" or action has "workflow" or action has "setting"\n| summarize count() by container_name, action, actor_displayName\n| order by count_ desc'
+        },
+        {
+          name: 'Configuration change trend',
+          description: 'Visualize configuration modification frequency over time',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "config" or action has "scheme" or action has "setting"\n| timestats span=1d count() by container_name'
+        },
+        {
+          name: 'Rarely-modified containers with recent changes',
+          description: 'Find stable projects that suddenly received configuration modifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "config" or action has "scheme" or action has "setting"\n| summarize RecentChanges=count(), LastChange=max(time) by container_name, actor_email\n| order by RecentChanges desc\n| limit 20'
+        },
+        {
+          name: 'Extra attributes on configuration changes',
+          description: 'Examine the details of what was modified in each configuration change',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "config" or action has "scheme" or action has "setting"\n| summarize count() by action, objectItem_typeName, container_name, extraAttributes\n| order by count_ desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-003',
+      name: 'Admin Action Concentration',
+      objective: 'Detect when administrative actions are concentrated in a single actor beyond normal patterns, indicating potential account compromise or unauthorized admin activity.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'admin-activity', 'governance', 'accountability'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'result', 'sourceIP'],
+      detectionLogic: 'Alert when a single actor_email accounts for more than 60% of all admin actions in a 4-hour window, or when admin actions occur from unusual sourceIP addresses compared to the actors historical pattern.',
+      operationalValue: 'Concentrated admin activity suggests either a process gap (single point of failure for administration) or potential unauthorized use of admin credentials.',
+      changeMgmtRelevance: 'Admin action spikes during change windows are expected. Outside change windows, concentration indicates unplanned maintenance or potential compromise.',
+      troubleshootingWorkflow: '1. Identify the actor with concentrated admin activity\n2. Verify the sourceIP matches their known location/VPN\n3. Check if the activity aligns with a scheduled maintenance window\n4. Review the specific actions taken — are they consistent with their role?\n5. Verify no other admin accounts show signs of lockout or compromise\n6. If suspicious, escalate to security and consider temporary account suspension',
+      dashboardDependency: 'Admin Activity dashboard, User Behavior dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Admin actions by actor',
+          description: 'Identify concentration of administrative operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action has "admin" or objectItem_typeName has "admin" or action has "global"\n| summarize AdminActions=count(), UniqueActions=dcount(action) by actor_displayName, actor_email\n| order by AdminActions desc'
+        },
+        {
+          name: 'Admin activity by source IP',
+          description: 'Track where admin actions originate from',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "admin" or action has "global" or action has "permission"\n| summarize count() by actor_email, sourceIP\n| order by count_ desc'
+        },
+        {
+          name: 'Admin action timeline',
+          description: 'Visualize admin activity patterns to detect unusual hours',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action has "admin" or action has "global"\n| timestats span=4h count() by actor_email'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-004',
+      name: 'Failed Operation Rate Increase',
+      objective: 'Detect when the rate of failed operations increases, indicating permission issues, system errors, or integration failures affecting user productivity.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'failures', 'system-health'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'result', 'objectItem_name', 'objectItem_typeName', 'container_name'],
+      detectionLogic: 'Alert when the result field shows failure/error states exceeding 15% of total operations in a 30-minute window, or when a specific actor or action type that normally succeeds starts failing consistently.',
+      operationalValue: 'Rising failure rates indicate system issues, permission misconfigurations, or integration breakdowns that block user workflows. Early detection prevents widespread productivity loss.',
+      changeMgmtRelevance: 'Failure rate increases after permission changes, plugin updates, or infrastructure modifications confirm the change had unintended consequences.',
+      troubleshootingWorkflow: '1. Identify which actions and actors are experiencing failures\n2. Categorize failures by type — permission denied, system error, rate limit\n3. Check if failures affect specific containers or are system-wide\n4. Verify recent permission or configuration changes\n5. Check Atlassian system status for known incidents\n6. Validate integrations and plugins are functioning correctly',
+      dashboardDependency: 'System Health dashboard, Error Rate Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Operation results distribution',
+          description: 'Track success vs failure rates across all operations',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by result, action\n| order by count_ desc'
+        },
+        {
+          name: 'Failure rate trend over time',
+          description: 'Visualize whether failure rates are increasing',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend is_failure=iif(result != "success" and result != "SUCCESS", 1, 0)\n| timestats span=4h Total=count(), Failures=sum(is_failure)'
+        },
+        {
+          name: 'Failed operations by actor and container',
+          description: 'Identify who and what is affected by failures',
+          query: 'dataset="$DATASET" earliest=-24h\n| where result != "success" and result != "SUCCESS"\n| summarize Failures=count() by actor_email, action, container_name, result\n| order by Failures desc\n| limit 30'
+        },
+        {
+          name: 'Actors with high failure rates',
+          description: 'Find users experiencing disproportionate failures (potential permission issues)',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count(), Failures=countif(result != "success" and result != "SUCCESS") by actor_email\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 10 and FailRate > 20\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-005',
+      name: 'Integration and App Installation Changes',
+      objective: 'Detect when marketplace apps or integrations are installed, removed, or modified, which can affect workflows, data flows, and security posture.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change', 'integrations', 'marketplace'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_name', 'objectItem_typeName', 'container_name', 'result'],
+      detectionLogic: 'Alert on any action related to app installation, removal, or configuration changes. Track by objectItem_typeName containing "app" or "integration" or "addon". Immediate alert for removals of previously stable integrations.',
+      operationalValue: 'App changes affect automation workflows, data synchronization, and team processes. Unplanned removals can silently break integrations that teams depend on daily.',
+      changeMgmtRelevance: 'Integration changes should be coordinated with affected teams. Installing new apps introduces third-party code access. Removals break dependent workflows.',
+      troubleshootingWorkflow: '1. Identify which app/integration was modified and the type of change\n2. Verify the actor had authority to modify integrations\n3. For removals — identify dependent workflows and notify affected teams\n4. For installations — verify the app is approved and review its permissions\n5. Check if automation rules or workflows reference the changed integration\n6. Validate data synchronization continues working after the change',
+      dashboardDependency: 'Integration Governance dashboard, App Lifecycle dashboard',
+      criblSearchQueries: [
+        {
+          name: 'App and integration lifecycle events',
+          description: 'Track all marketplace app and integration changes',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "app" or action has "integration" or action has "addon" or action has "install"\n| summarize count() by action, objectItem_name, actor_displayName, result\n| order by count_ desc'
+        },
+        {
+          name: 'Integration changes over time',
+          description: 'Monitor the frequency of integration modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action has "app" or action has "integration" or action has "addon"\n| timestats span=1d count() by action'
+        },
+        {
+          name: 'Recently removed integrations',
+          description: 'Identify integrations that were recently removed and may need restoration',
+          query: 'dataset="$DATASET" earliest=-14d\n| where (action has "remove" or action has "uninstall" or action has "delete") and (objectItem_typeName has "app" or objectItem_typeName has "integration")\n| summarize count(), LastRemoved=max(time) by objectItem_name, actor_email, container_name\n| order by LastRemoved desc'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-006',
+      name: 'User Activity Volume Anomaly',
+      objective: 'Detect unusual spikes or drops in overall user activity that may indicate system availability issues, adoption problems, or automated abuse.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'user-activity', 'baseline'],
+      requiredFields: ['time', 'action', 'actor_displayName', 'actor_email', 'objectItem_typeName', 'container_name', 'sourceIP'],
+      detectionLogic: 'Alert when total audit event volume drops below 40% of the day-of-week adjusted baseline (indicating system issues) or spikes above 300% (indicating automated activity or abuse). Evaluate in 1-hour windows.',
+      operationalValue: 'Activity drops indicate system unavailability that may not trigger traditional uptime monitors. Spikes indicate automated processes that may be overwhelming the platform.',
+      changeMgmtRelevance: 'Activity changes after infrastructure updates, SSO configuration modifications, or licensing changes indicate user access was impacted by the change.',
+      troubleshootingWorkflow: '1. Determine if the anomaly is a drop (availability issue) or spike (abuse)\n2. For drops — check Atlassian system status and SSO health\n3. For spikes — identify the source (single actor/IP vs distributed)\n4. Check if licensing changes affected user access\n5. Verify authentication systems are functioning\n6. Review automation rules that may have been triggered',
+      dashboardDependency: 'Platform Activity dashboard, System Availability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Overall activity volume trend',
+          description: 'Baseline user activity to detect anomalous drops or spikes',
+          query: 'dataset="$DATASET" earliest=-14d\n| timestats span=1h count() by objectItem_typeName'
+        },
+        {
+          name: 'Activity by actor (top users)',
+          description: 'Identify users generating the most audit events',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize EventCount=count(), UniqueActions=dcount(action) by actor_email, sourceIP\n| order by EventCount desc\n| limit 20'
+        },
+        {
+          name: 'Activity volume comparison by day of week',
+          description: 'Compare current activity against same-day baselines',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize DailyCount=count() by container_name\n| order by DailyCount desc'
+        }
+      ]
+    },
+    {
+      id: 'atl-obs-007',
+      name: 'Atlassian Audit Log Delivery Gap',
+      objective: 'Detect when Atlassian audit logs stop arriving, ensuring continuous visibility into platform administration and user activity.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'pipeline', 'audit-integrity'],
+      requiredFields: ['time', 'action', 'actor_email', 'objectItem_typeName', 'container_name'],
+      detectionLogic: 'Alert when no audit events are received for more than 20 minutes during business hours, when event volume drops below 30% of the hourly baseline, or when expected action types stop appearing.',
+      operationalValue: 'Audit log gaps mean administrative changes, permission modifications, and security events go unmonitored. Continuous delivery ensures compliance and operational visibility.',
+      changeMgmtRelevance: 'Log delivery gaps after API token rotations, webhook changes, or network modifications indicate the change broke audit collection.',
+      troubleshootingWorkflow: '1. Check last received audit event timestamp\n2. Verify the audit log API token has not expired\n3. Check Atlassian admin console for audit log streaming status\n4. Verify network connectivity to Atlassian API endpoints\n5. Check Cribl source health for the Atlassian input\n6. After restoration, backfill any missed events via API',
+      dashboardDependency: 'Audit Log Health dashboard, Pipeline Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Audit event volume over time',
+          description: 'Track ingestion rate to detect drops or complete gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by container_name'
+        },
+        {
+          name: 'Last event per container',
+          description: 'Find containers that may have stopped sending audit events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastSeen=max(time), EventCount=count() by container_name\n| order by LastSeen asc'
+        },
+        {
+          name: 'Action type diversity over time',
+          description: 'Verify all expected action types are still being received',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count(), LastSeen=max(time) by action, objectItem_typeName\n| order by LastSeen asc'
+        },
+        {
+          name: 'Ingestion volume by source IP',
+          description: 'Check if specific collection endpoints are failing',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by sourceIP, actor_email\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    }
+  ],
+  'paloalto-cortex-xdr': [
+    {
+      id: 'xdr-obs-001',
+      name: 'Alert Storm Detection',
+      objective: 'Detect when XDR generates an abnormally high volume of alerts in a short window, indicating a noisy rule, misconfiguration, or active incident overwhelming the SOC queue.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'alert-fatigue', 'capacity', 'xdr'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'severity', 'host_name', 'category'],
+      detectionLogic: 'Alert when total XDR alerts exceed 500% of the 7-day hourly baseline within a 15-minute window, or when a single alert_name fires more than 100 times in 10 minutes. Evaluate per alert_name and globally.',
+      operationalValue: 'Alert storms degrade SOC effectiveness by burying real incidents in noise. Early detection enables rapid tuning or suppression to maintain operational readiness.',
+      changeMgmtRelevance: 'Alert storms frequently follow detection rule deployments or policy changes. Correlate timing with XDR rule updates to identify misconfigured detections.',
+      troubleshootingWorkflow: '1. Identify which alert_name(s) are responsible for the spike\n2. Determine if the alerts are true positives (real incident) or noise\n3. Check if a new detection rule was deployed recently\n4. Evaluate scope — single host or many hosts affected?\n5. If noise: suppress or tune the rule, notify SOC\n6. If real: escalate as potential active incident',
+      dashboardDependency: 'XDR Alert Volume dashboard, SOC Queue Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Alert volume per alert name (last 4 hours)',
+          description: 'Identify which alert rules are generating the most volume',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize AlertCount=count() by alert_name, severity\n| order by AlertCount desc\n| limit 25'
+        },
+        {
+          name: 'Alert rate over time',
+          description: 'Visualize alert generation rate to spot storms',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by alert_name'
+        },
+        {
+          name: 'Hosts generating the most alerts',
+          description: 'Find endpoints that are the source of alert storms',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize AlertCount=count(), UniqueAlerts=dcount(alert_name) by host_name, host_ip\n| order by AlertCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-002',
+      name: 'Endpoint Coverage Gap Detection',
+      objective: 'Detect when known endpoints stop reporting alerts or telemetry to XDR, indicating agent health issues, connectivity loss, or decommissioned hosts still expected.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'coverage', 'agent-health', 'xdr'],
+      requiredFields: ['detection_timestamp', 'host_name', 'host_ip', 'alert_name', 'category'],
+      detectionLogic: 'Alert when a host_name that has been consistently active (at least 1 alert per day for the past 7 days) goes silent for more than 24 hours. Evaluate per host_name with daily activity baseline.',
+      operationalValue: 'Coverage gaps mean endpoints are unmonitored. If an agent goes offline, that host becomes a blind spot for both security and operational observability.',
+      changeMgmtRelevance: 'Agent connectivity losses often follow OS patches, network changes, or endpoint management policy updates. Correlate with patching and deployment schedules.',
+      troubleshootingWorkflow: '1. Identify hosts that have gone silent\n2. Check if the host is still online via other telemetry sources\n3. Verify XDR agent status via management console\n4. Check network connectivity between endpoint and XDR cloud\n5. Review recent OS patches or policy changes on the endpoint\n6. Determine if the host was intentionally decommissioned',
+      dashboardDependency: 'Endpoint Coverage dashboard, Agent Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Last alert timestamp per host',
+          description: 'Find hosts that have not generated alerts recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastSeen=max(detection_timestamp), TotalAlerts=count() by host_name, host_ip\n| order by LastSeen asc\n| limit 30'
+        },
+        {
+          name: 'Active hosts per day trend',
+          description: 'Track the number of unique reporting hosts over time to spot coverage drops',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d UniqueHosts=dcount(host_name)'
+        },
+        {
+          name: 'Hosts active last week but silent today',
+          description: 'Compare recent activity against historical presence',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize RecentAlerts=count() by host_name\n| where RecentAlerts < 2\n| order by RecentAlerts asc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-003',
+      name: 'Severity Distribution Shift',
+      objective: 'Detect when the proportion of Critical and High severity alerts increases significantly, indicating either a widespread incident or a detection tuning problem.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'severity', 'tuning', 'alert-quality'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'severity', 'host_name', 'category'],
+      detectionLogic: 'Alert when Critical+High severity alerts exceed 40% of total alert volume over a 1-hour window, compared to a normal baseline of <15%. Also alert on any single hour with >50 Critical alerts.',
+      operationalValue: 'A sudden shift toward high-severity alerts may indicate a real incident requiring immediate response, or a detection rule miscategorizing severity levels.',
+      changeMgmtRelevance: 'Severity shifts after rule updates indicate misconfigured severity levels. Compare distribution before and after detection policy changes.',
+      troubleshootingWorkflow: '1. Compare current severity distribution against 7-day baseline\n2. Identify which alert_name(s) are driving the shift\n3. Determine if the alerts are true positives or miscategorized\n4. Check if new detection rules were deployed with incorrect severity\n5. If real incident: escalate for coordinated response\n6. If tuning issue: adjust severity levels in detection policy',
+      dashboardDependency: 'Alert Severity Trends dashboard, Detection Quality dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Severity distribution over time',
+          description: 'Track the ratio of alert severities to detect shifts',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by severity'
+        },
+        {
+          name: 'Critical alerts breakdown by alert name',
+          description: 'See which detection rules are generating critical alerts',
+          query: 'dataset="$DATASET" severity="Critical" earliest=-24h\n| summarize count() by alert_name, host_name\n| order by count_ desc'
+        },
+        {
+          name: 'Severity ratio per hour',
+          description: 'Calculate the percentage of high-severity alerts per hour',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend is_high=iif(severity in ("Critical", "High"), 1, 0)\n| timestats span=1h Total=count(), HighSev=sum(is_high)\n| extend HighPct=round(HighSev * 100.0 / Total, 1)'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-004',
+      name: 'MITRE ATT&CK Technique Clustering',
+      objective: 'Detect when multiple MITRE techniques fire on the same host in rapid succession, indicating either a sophisticated attack chain or a noisy endpoint generating correlated false positives.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'mitre', 'correlation', 'attack-chain'],
+      requiredFields: ['detection_timestamp', 'host_name', 'host_ip', 'mitre_tactic_id_and_name', 'mitre_technique_id_and_name', 'alert_name', 'user_name'],
+      detectionLogic: 'Alert when a single host_name triggers 3 or more distinct mitre_technique_id_and_name values within a 30-minute window. Escalate to Critical if 5+ techniques across 2+ tactics are observed.',
+      operationalValue: 'Technique clustering helps differentiate between isolated false positives and coordinated attack sequences requiring immediate investigation.',
+      changeMgmtRelevance: 'Software deployments and admin tooling often trigger multiple MITRE techniques. Correlate with deployment schedules to filter expected activity.',
+      troubleshootingWorkflow: '1. Identify the host and user involved in technique clustering\n2. Map the techniques to the MITRE kill chain — is there logical progression?\n3. Check if the activity correlates with known admin tools or deployments\n4. Review the process tree (action_process_command_line) for context\n5. Determine if this is a real attack chain or expected automation\n6. If suspicious: isolate the endpoint and escalate',
+      dashboardDependency: 'MITRE ATT&CK Coverage dashboard, Host Risk Score dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Techniques per host in last 4 hours',
+          description: 'Find hosts with multiple technique detections indicating possible attack chain',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Techniques=dcount(mitre_technique_id_and_name), Tactics=dcount(mitre_tactic_id_and_name), Alerts=count() by host_name, user_name\n| where Techniques >= 3\n| order by Techniques desc'
+        },
+        {
+          name: 'Technique timeline for a specific host',
+          description: 'Show the sequence of MITRE techniques detected on a host',
+          query: 'dataset="$DATASET" host_name="$HOST" earliest=-24h\n| summarize FirstSeen=min(detection_timestamp), AlertCount=count() by mitre_tactic_id_and_name, mitre_technique_id_and_name, alert_name\n| order by FirstSeen asc'
+        },
+        {
+          name: 'Tactic progression analysis',
+          description: 'Identify hosts showing kill-chain progression across multiple tactics',
+          query: 'dataset="$DATASET" earliest=-12h\n| where isnotempty(mitre_tactic_id_and_name)\n| summarize Tactics=dcount(mitre_tactic_id_and_name), Techniques=dcount(mitre_technique_id_and_name) by host_name, host_ip\n| where Tactics >= 2\n| order by Tactics desc'
+        },
+        {
+          name: 'Most commonly co-occurring techniques',
+          description: 'Find technique combinations that frequently appear together',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Hosts=dcount(host_name), Occurrences=count() by mitre_technique_id_and_name\n| order by Hosts desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-005',
+      name: 'Detection Category Blind Spot',
+      objective: 'Monitor for gaps in detection category coverage — periods where expected categories (malware, exploit, behavioral) go silent, suggesting sensor or rule issues.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'coverage', 'detection-health', 'category'],
+      requiredFields: ['detection_timestamp', 'category', 'alert_name', 'severity', 'host_name'],
+      detectionLogic: 'Alert when a detection category that normally generates at least 10 alerts per day goes silent for more than 6 hours during business hours. Evaluate per category with day-of-week baseline adjustment.',
+      operationalValue: 'If an entire detection category goes silent, it may indicate disabled rules, broken data feeds, or sensor failures affecting detection coverage.',
+      changeMgmtRelevance: 'Detection category silence after XDR policy updates indicates rules were inadvertently disabled or scoped incorrectly.',
+      troubleshootingWorkflow: '1. Identify which categories have gone silent\n2. Check if detection rules in that category are still enabled\n3. Verify data feeds powering those detections are healthy\n4. Review recent XDR policy or rule changes\n5. Check if endpoint agents are reporting telemetry (even without alerts)\n6. Validate with a test trigger if possible',
+      dashboardDependency: 'Detection Coverage dashboard, Rule Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Alert volume by category over time',
+          description: 'Track category coverage to spot silent periods',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=6h count() by category'
+        },
+        {
+          name: 'Categories active today vs 7-day average',
+          description: 'Compare current category activity against baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize TodayCount=count() by category\n| order by TodayCount asc'
+        },
+        {
+          name: 'Alert names per category',
+          description: 'See which specific rules are firing within each category',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize AlertCount=count(), LastFired=max(detection_timestamp) by category, alert_name\n| order by category asc, AlertCount desc'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-006',
+      name: 'Process Execution Anomaly Rate',
+      objective: 'Track the rate of process-based detections to identify endpoints with unusual execution patterns that may indicate performance issues or compromised systems.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'process', 'performance', 'endpoint'],
+      requiredFields: ['detection_timestamp', 'host_name', 'host_ip', 'action_process_image_name', 'action_process_command_line', 'user_name', 'alert_name'],
+      detectionLogic: 'Alert when process-related alerts on a single host exceed 3x the fleet average for that host type. Baseline per host role (server vs workstation) using 7-day rolling averages.',
+      operationalValue: 'Endpoints generating excessive process alerts may have performance issues (runaway services, automation loops) or be compromised. Either case requires investigation.',
+      changeMgmtRelevance: 'New software deployments, automation scripts, or GPO changes often cause process detection spikes. Correlate with deployment windows.',
+      troubleshootingWorkflow: '1. Identify the affected host and top processes generating alerts\n2. Review action_process_command_line for suspicious or unexpected patterns\n3. Check if the processes are legitimate software (deployment, updates)\n4. Compare process activity to other hosts of the same role\n5. Check system resource utilization on the endpoint\n6. Determine if the activity started after a specific change',
+      dashboardDependency: 'Endpoint Activity dashboard, Process Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top processes by alert volume per host',
+          description: 'Identify which processes are generating the most detections',
+          query: 'dataset="$DATASET" earliest=-24h\n| where isnotempty(action_process_image_name)\n| summarize AlertCount=count() by host_name, action_process_image_name, user_name\n| order by AlertCount desc\n| limit 30'
+        },
+        {
+          name: 'Process alert rate by host over time',
+          description: 'Track detection rate per host to find anomalous spikes',
+          query: 'dataset="$DATASET" earliest=-48h\n| where isnotempty(action_process_image_name)\n| timestats span=2h count() by host_name'
+        },
+        {
+          name: 'Command line analysis for top offenders',
+          description: 'Review the actual commands being detected for suspicious patterns',
+          query: 'dataset="$DATASET" host_name="$HOST" earliest=-24h\n| where isnotempty(action_process_command_line)\n| summarize count() by action_process_image_name, action_process_command_line\n| order by count_ desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'xdr-obs-007',
+      name: 'XDR Data Ingestion Latency',
+      objective: 'Monitor the delay between alert generation and ingestion into the search platform to ensure near-real-time visibility for incident response.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'latency', 'pipeline', 'data-freshness'],
+      requiredFields: ['detection_timestamp', 'alert_name', 'host_name', 'severity', 'category'],
+      detectionLogic: 'Alert when the gap between detection_timestamp and _time (ingestion time) exceeds 15 minutes for more than 10% of alerts in a 30-minute window. Also alert if any alerts arrive with >1 hour latency.',
+      operationalValue: 'High ingestion latency means incidents are detected but not visible to analysts in near-real-time, degrading mean-time-to-respond.',
+      changeMgmtRelevance: 'Latency increases after pipeline changes, API credential rotations, or XDR cloud maintenance. Useful as a pipeline health indicator.',
+      troubleshootingWorkflow: '1. Measure the gap between detection_timestamp and _time\n2. Determine if latency is consistent or bursty\n3. Check Cribl pipeline queue depth and processing latency\n4. Verify XDR API connectivity and rate limits\n5. Check for backpressure in the collection pipeline\n6. Review recent changes to collection schedules or credentials',
+      dashboardDependency: 'Pipeline Latency dashboard, Data Freshness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Ingestion latency distribution',
+          description: 'Measure the delay between alert creation and search availability',
+          query: 'dataset="$DATASET" earliest=-12h\n| extend latency_min=round(todouble(_time) - todouble(detection_timestamp) / 60, 1)\n| summarize AvgLatency=avg(latency_min), MaxLatency=max(latency_min), P95=percentile(latency_min, 95) by category'
+        },
+        {
+          name: 'Latency trend over time',
+          description: 'Track ingestion delay to detect pipeline slowdowns',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend latency_min=round(todouble(_time) - todouble(detection_timestamp) / 60, 1)\n| timestats span=30m AvgLatency=avg(latency_min), MaxLatency=max(latency_min)'
+        },
+        {
+          name: 'Alerts with excessive latency',
+          description: 'Find specific alerts that arrived significantly late',
+          query: 'dataset="$DATASET" earliest=-6h\n| extend latency_min=round(todouble(_time) - todouble(detection_timestamp) / 60, 1)\n| where latency_min > 15\n| summarize count() by alert_name, host_name, severity\n| order by count_ desc'
+        }
+      ]
+    }
+  ],
+  'mongodb-audit': [
+    {
+      id: 'mdb-obs-001',
+      name: 'Database Connection Saturation',
+      objective: 'Detect when MongoDB is receiving an abnormally high number of connection attempts, indicating potential connection pool exhaustion or application scaling issues.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'connections', 'mongodb'],
+      requiredFields: ['timestamp', 'atype', 'remote_ip', 'remote_port', 'result', 'users'],
+      detectionLogic: 'Alert when authenticate events exceed 300% of the 7-day hourly baseline within a 10-minute window. Also alert when failed authentication attempts (result != 0) exceed 20% of total auth attempts.',
+      operationalValue: 'Connection saturation leads to application timeouts and service degradation. Early detection allows scaling connection pools or identifying misbehaving clients before full outage.',
+      changeMgmtRelevance: 'Connection spikes after application deployments indicate misconfigured connection pools, leaked connections, or new services overwhelming the database.',
+      troubleshootingWorkflow: '1. Identify top source IPs driving connection volume\n2. Check if connections are succeeding or failing (result code)\n3. Review MongoDB connection pool metrics (current, available, totalCreated)\n4. Determine if a new application or scaling event caused the spike\n5. Check for connection leaks — same source with rapidly growing connections\n6. Verify maxIncomingConnections limit and consider temporary increase',
+      dashboardDependency: 'MongoDB Connection Health dashboard, Application Database Metrics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Authentication attempts over time',
+          description: 'Track connection attempt rate to identify saturation',
+          query: 'dataset="$DATASET" atype="authenticate" earliest=-12h\n| timestats span=5m count() by result'
+        },
+        {
+          name: 'Top connecting clients',
+          description: 'Identify which application hosts are generating the most connections',
+          query: 'dataset="$DATASET" atype="authenticate" earliest=-4h\n| summarize Connections=count(), Failures=countif(result != 0) by remote_ip\n| extend FailRate=round(Failures * 100.0 / Connections, 1)\n| order by Connections desc\n| limit 20'
+        },
+        {
+          name: 'Failed authentication rate trend',
+          description: 'Monitor auth failure rate to detect credential or capacity issues',
+          query: 'dataset="$DATASET" atype="authenticate" earliest=-24h\n| extend is_failed=iif(result != 0, 1, 0)\n| timestats span=15m Total=count(), Failed=sum(is_failed)'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-002',
+      name: 'Slow Query Pattern Detection',
+      objective: 'Identify sustained periods of slow-running commands that indicate performance degradation, missing indexes, or resource contention.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'slow-queries', 'mongodb'],
+      requiredFields: ['timestamp', 'atype', 'param_command', 'param_ns', 'users', 'remote_ip', 'result'],
+      detectionLogic: 'Alert when command audit events for the same param_ns show repeated failures (result != 0) or when command volume for a namespace drops significantly while other namespaces remain healthy (indicating blocking operations).',
+      operationalValue: 'Slow queries degrade application response times and can cascade into connection pool exhaustion. Early detection enables query optimization before user impact.',
+      changeMgmtRelevance: 'Performance degradation after schema changes, index drops, or application deployments indicates regression requiring immediate investigation.',
+      troubleshootingWorkflow: '1. Identify affected namespace (param_ns) and command type\n2. Check if specific users/applications are affected\n3. Review MongoDB slow query log for query plans\n4. Check for missing or recently dropped indexes\n5. Verify shard distribution and chunk balance\n6. Check system resources (CPU, memory, disk I/O) on mongod nodes',
+      dashboardDependency: 'Query Performance dashboard, Namespace Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Command volume by namespace',
+          description: 'Identify namespaces with unusual activity patterns',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize CommandCount=count(), Failures=countif(result != 0) by param_ns, param_command\n| extend FailRate=round(Failures * 100.0 / CommandCount, 1)\n| order by Failures desc'
+        },
+        {
+          name: 'Command rate over time per namespace',
+          description: 'Visualize command throughput to spot bottlenecks or drops',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by param_ns'
+        },
+        {
+          name: 'Failed commands by user and source',
+          description: 'Identify which applications are experiencing the most failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where result != 0\n| summarize FailCount=count() by users, remote_ip, param_ns, param_command\n| order by FailCount desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-003',
+      name: 'Schema Change Detection',
+      objective: 'Monitor for DDL operations (collection creates, drops, index modifications) that may impact application behavior and performance.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'schema', 'ddl'],
+      requiredFields: ['timestamp', 'atype', 'param_ns', 'users', 'roles', 'remote_ip', 'result'],
+      detectionLogic: 'Alert on any atype matching createCollection, dropCollection, createIndex, dropIndex, renameCollection, or collMod. Escalate to Critical if drop operations occur outside of change windows.',
+      operationalValue: 'Unplanned schema changes can break applications, degrade performance (dropped indexes), or cause data loss (dropped collections). Immediate awareness is essential.',
+      changeMgmtRelevance: 'All DDL operations should correlate with approved change requests. Any schema modification outside a change window is a potential incident.',
+      troubleshootingWorkflow: '1. Identify who performed the operation (users, remote_ip)\n2. Determine which namespace was affected\n3. Check if this correlates with an approved change request\n4. Assess impact — did applications start failing after the change?\n5. For dropped indexes: monitor query performance for degradation\n6. For dropped collections: verify backup availability and application impact',
+      dashboardDependency: 'Schema Change Audit dashboard, Change Management Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All DDL operations in the last 24 hours',
+          description: 'List all schema-modifying operations for change tracking',
+          query: 'dataset="$DATASET" earliest=-24h\n| where atype in ("createCollection", "dropCollection", "createIndex", "dropIndex", "renameCollection", "collMod")\n| summarize count() by atype, param_ns, users, remote_ip, result\n| order by timestamp desc'
+        },
+        {
+          name: 'DDL operations outside business hours',
+          description: 'Find schema changes that occurred outside expected windows',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("createCollection", "dropCollection", "createIndex", "dropIndex")\n| timestats span=1h count() by atype'
+        },
+        {
+          name: 'Drop operations audit trail',
+          description: 'Track destructive operations that may require recovery',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("dropCollection", "dropIndex", "dropDatabase")\n| summarize count() by atype, param_ns, users, remote_ip, result\n| order by count_ desc'
+        },
+        {
+          name: 'Schema change frequency by user',
+          description: 'Identify which users are making the most schema modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype in ("createCollection", "dropCollection", "createIndex", "dropIndex", "collMod")\n| summarize Operations=count(), Namespaces=dcount(param_ns) by users, roles\n| order by Operations desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-004',
+      name: 'Role and Permission Change Tracking',
+      objective: 'Monitor privilege escalation and role modifications that could indicate unauthorized access expansion or misconfiguration affecting database accessibility.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'access-control', 'roles', 'change-management'],
+      requiredFields: ['timestamp', 'atype', 'users', 'roles', 'param_command', 'remote_ip', 'result'],
+      detectionLogic: 'Alert on any atype matching grantRolesToUser, revokeRolesFromUser, createRole, dropRole, updateRole, or grantPrivilegesToRole. Track frequency — more than 5 role changes in an hour is unusual.',
+      operationalValue: 'Unauthorized role changes can grant excessive access leading to data exposure or enable destructive operations. Tracking ensures access control integrity.',
+      changeMgmtRelevance: 'Role changes should be part of formal access reviews. Unexpected changes indicate either unauthorized activity or undocumented operational changes.',
+      troubleshootingWorkflow: '1. Identify who made the role change and from where\n2. Determine what specific permissions were granted or revoked\n3. Verify against approved access change requests\n4. Check if the operation succeeded (result code)\n5. Assess blast radius — which databases/collections are now accessible?\n6. If unauthorized: revoke immediately and escalate',
+      dashboardDependency: 'Access Control Changes dashboard, Privilege Audit dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All role modification events',
+          description: 'Track privilege changes for audit and compliance',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("grantRolesToUser", "revokeRolesFromUser", "createRole", "dropRole", "updateRole")\n| summarize count() by atype, users, roles, remote_ip, result\n| order by count_ desc'
+        },
+        {
+          name: 'Role changes over time',
+          description: 'Visualize frequency of access control modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where atype in ("grantRolesToUser", "revokeRolesFromUser", "createRole", "dropRole", "updateRole")\n| timestats span=1d count() by atype'
+        },
+        {
+          name: 'Failed role operations',
+          description: 'Detect attempted but failed privilege changes that may indicate attack attempts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where atype in ("grantRolesToUser", "revokeRolesFromUser", "createRole", "updateRole") and result != 0\n| summarize FailedAttempts=count() by users, remote_ip, atype\n| order by FailedAttempts desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-005',
+      name: 'Replica Set Operation Failures',
+      objective: 'Detect operational failures in audit events that indicate database health issues, permission problems, or infrastructure instability.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'reliability', 'mongodb'],
+      requiredFields: ['timestamp', 'atype', 'result', 'param_ns', 'users', 'remote_ip', 'local_ip'],
+      detectionLogic: 'Alert when the overall failure rate (result != 0) exceeds 5% of all operations over a 15-minute window. Also alert when any single error code appears more than 50 times in 10 minutes.',
+      operationalValue: 'Elevated error rates indicate systemic issues — authentication failures, permission denials, or server-side errors that will cascade to application failures.',
+      changeMgmtRelevance: 'Error rate spikes after deployments indicate broken configurations, incorrect permissions, or incompatible schema changes.',
+      troubleshootingWorkflow: '1. Identify the dominant error code (result value)\n2. Map error code to MongoDB error category (auth, permission, resource)\n3. Determine if errors are concentrated on specific namespaces or users\n4. Check if errors started after a specific change event\n5. Verify MongoDB server health (rs.status(), serverStatus)\n6. Check application logs for corresponding connection or query errors',
+      dashboardDependency: 'Error Rate Trends dashboard, MongoDB Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate over time',
+          description: 'Track failure percentage to detect reliability degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| extend is_error=iif(result != 0, 1, 0)\n| timestats span=15m Total=count(), Errors=sum(is_error)'
+        },
+        {
+          name: 'Error breakdown by result code',
+          description: 'Identify the most common failure types',
+          query: 'dataset="$DATASET" earliest=-12h\n| where result != 0\n| summarize ErrorCount=count() by result, atype, param_ns\n| order by ErrorCount desc\n| limit 20'
+        },
+        {
+          name: 'Errors by source application',
+          description: 'Determine which applications are experiencing the most failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where result != 0\n| summarize Errors=count(), UniqueOps=dcount(atype) by remote_ip, users\n| order by Errors desc\n| limit 15'
+        },
+        {
+          name: 'Error rate by namespace',
+          description: 'Find namespaces with the highest failure rates',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Total=count(), Errors=countif(result != 0) by param_ns\n| extend ErrorPct=round(Errors * 100.0 / Total, 1)\n| where Total > 10\n| order by ErrorPct desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-006',
+      name: 'Client Source Diversity Change',
+      objective: 'Monitor for unexpected new client IPs connecting to MongoDB, or the disappearance of expected clients, indicating infrastructure changes or misconfigurations.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'connectivity', 'clients', 'change-detection'],
+      requiredFields: ['timestamp', 'atype', 'remote_ip', 'remote_port', 'users', 'local_ip', 'local_port'],
+      detectionLogic: 'Alert when new remote_ip addresses appear that have not been seen in the previous 7 days. Also alert when an expected client IP (seen daily for the past 7 days) goes silent for more than 2 hours during business hours.',
+      operationalValue: 'New clients may indicate unauthorized access or misconfigured applications. Missing clients may indicate application outages or connectivity failures.',
+      changeMgmtRelevance: 'Client IP changes should correlate with infrastructure deployments or scaling events. Unexpected changes may indicate DNS or routing issues.',
+      troubleshootingWorkflow: '1. For new IPs: identify the client (reverse DNS, cloud metadata)\n2. Verify if the new client is authorized\n3. For missing IPs: check if the application is still running\n4. Verify network connectivity between client and MongoDB\n5. Check if a load balancer or proxy change affected source IPs\n6. Correlate with deployment or scaling events',
+      dashboardDependency: 'Client Connectivity dashboard, Access Pattern dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unique client IPs per day',
+          description: 'Track client diversity to detect new or missing sources',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d UniqueClients=dcount(remote_ip)'
+        },
+        {
+          name: 'Client activity breakdown',
+          description: 'See which clients are most active and their operation patterns',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Operations=count(), LastSeen=max(timestamp), FirstSeen=min(timestamp) by remote_ip, users\n| order by Operations desc'
+        },
+        {
+          name: 'Clients seen today but not in previous 7 days',
+          description: 'Identify newly appearing client connections',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize TodayOps=count() by remote_ip, users\n| order by TodayOps desc'
+        }
+      ]
+    },
+    {
+      id: 'mdb-obs-007',
+      name: 'Audit Log Completeness Check',
+      objective: 'Monitor the audit log pipeline itself to ensure events are flowing consistently and no gaps exist that would compromise visibility.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'completeness', 'data-quality'],
+      requiredFields: ['timestamp', 'atype', 'local_ip', 'local_port', 'result'],
+      detectionLogic: 'Alert when audit log volume drops below 50% of the expected hourly baseline for more than 30 minutes. Also alert if any individual MongoDB node (local_ip) stops generating events for more than 15 minutes.',
+      operationalValue: 'Audit log gaps create blind spots for both security monitoring and operational observability. Detecting pipeline issues ensures continuous coverage.',
+      changeMgmtRelevance: 'Log volume drops after MongoDB configuration changes, Cribl pipeline updates, or network changes indicate broken collection paths.',
+      troubleshootingWorkflow: '1. Identify which MongoDB node(s) stopped generating logs\n2. Check if the auditLog configuration is still active on the node\n3. Verify syslog/file forwarding from the node to Cribl\n4. Check Cribl source and pipeline health for this input\n5. Verify no network issues between MongoDB and the collection layer\n6. Check MongoDB server health — is the node still operational?',
+      dashboardDependency: 'Audit Log Pipeline Health dashboard, Node Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Log volume per MongoDB node over time',
+          description: 'Track event generation rate per node to detect silent nodes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by local_ip'
+        },
+        {
+          name: 'Last event per node',
+          description: 'Find nodes that may have stopped generating audit events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastEvent=max(timestamp), EventCount=count() by local_ip, local_port\n| order by LastEvent asc'
+        },
+        {
+          name: 'Event type distribution per node',
+          description: 'Verify all nodes are generating expected event types',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count() by local_ip, atype\n| order by local_ip asc, count_ desc'
+        },
+        {
+          name: 'Hourly volume trend comparison',
+          description: 'Compare current volume against historical baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by local_ip'
+        }
+      ]
+    }
+  ],
+  'postgresql-audit': [
+    {
+      id: 'pga-obs-001',
+      name: 'Query Error Rate Spike',
+      objective: 'Detect when PostgreSQL statement failures increase significantly, indicating application bugs, schema mismatches, or permission issues after deployments.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'queries', 'postgresql'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'command_tag', 'statement', 'application_name', 'connection_from'],
+      detectionLogic: 'Alert when ERROR-level statements exceed 10% of total query volume over a 10-minute window, or when any single application_name generates more than 100 errors in 5 minutes. Baseline per application and database.',
+      operationalValue: 'Query errors directly impact application functionality and user experience. Rapid detection enables faster rollback or hotfix deployment.',
+      changeMgmtRelevance: 'Error spikes after application deployments or schema migrations indicate breaking changes. Correlate timing with deployment pipelines.',
+      troubleshootingWorkflow: '1. Identify which application(s) and database(s) are affected\n2. Check the most common error statements and command_tags\n3. Determine if errors started after a deployment or schema change\n4. Review the failing statements for schema mismatches\n5. Check if permissions were recently changed\n6. Verify database availability and connectivity',
+      dashboardDependency: 'Query Error Trends dashboard, Application Database Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by application over time',
+          description: 'Track query failure rate per application to identify degraded services',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by application_name, command_tag'
+        },
+        {
+          name: 'Top failing statements',
+          description: 'Identify the most common failing queries for debugging',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize ErrorCount=count() by statement, database_name, user_name, application_name\n| order by ErrorCount desc\n| limit 20'
+        },
+        {
+          name: 'Error distribution by command type',
+          description: 'See which types of operations are failing most',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Total=count() by command_tag, database_name\n| order by Total desc'
+        },
+        {
+          name: 'Errors by source connection',
+          description: 'Identify which application hosts are experiencing the most failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Errors=count() by connection_from, application_name, database_name\n| order by Errors desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-002',
+      name: 'Schema Migration Detection',
+      objective: 'Track DDL operations (CREATE, ALTER, DROP) to detect schema changes that may affect application behavior, performance, or data integrity.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'schema', 'ddl', 'change-management'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'command_tag', 'object_type', 'object_name', 'statement', 'application_name'],
+      detectionLogic: 'Alert on any DDL command_tag (CREATE TABLE, ALTER TABLE, DROP TABLE, CREATE INDEX, DROP INDEX). Escalate to Critical for DROP operations outside change windows. Track migration batch patterns (multiple DDL in quick succession).',
+      operationalValue: 'Unplanned schema changes can break applications, cause data loss, or degrade performance. Immediate visibility ensures quick response to unauthorized modifications.',
+      changeMgmtRelevance: 'All DDL operations should map to approved change requests. Migrations outside change windows are high-risk and require immediate validation.',
+      troubleshootingWorkflow: '1. Identify who performed the schema change (user_name, connection_from)\n2. Determine the scope — which objects were modified?\n3. Verify against approved change tickets\n4. Check application health after the change\n5. For index drops: monitor query performance for degradation\n6. For table drops: verify backup availability and application impact',
+      dashboardDependency: 'Schema Change Audit dashboard, Migration Tracking dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All DDL operations in the last 24 hours',
+          description: 'Complete audit trail of schema modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where command_tag in ("CREATE TABLE", "ALTER TABLE", "DROP TABLE", "CREATE INDEX", "DROP INDEX", "CREATE VIEW", "DROP VIEW")\n| summarize count() by command_tag, object_type, object_name, user_name, database_name\n| order by log_time desc'
+        },
+        {
+          name: 'DDL frequency over time',
+          description: 'Identify migration windows and unexpected schema changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| where command_tag in ("CREATE TABLE", "ALTER TABLE", "DROP TABLE", "CREATE INDEX", "DROP INDEX")\n| timestats span=1h count() by command_tag'
+        },
+        {
+          name: 'Destructive DDL audit',
+          description: 'Track all DROP operations for compliance and recovery planning',
+          query: 'dataset="$DATASET" earliest=-30d\n| where command_tag in ("DROP TABLE", "DROP INDEX", "DROP VIEW", "DROP SCHEMA")\n| summarize count() by command_tag, object_name, user_name, database_name, application_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-003',
+      name: 'Connection Source Anomaly',
+      objective: 'Detect unusual connection patterns including new source IPs, unexpected application names, or connection volume changes that indicate infrastructure or security issues.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'connections', 'availability', 'access-patterns'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'connection_from', 'application_name', 'session_id'],
+      detectionLogic: 'Alert when new connection_from addresses appear that have not been seen in 7 days. Alert when connection volume from a known source drops to zero for more than 15 minutes during business hours. Track unique session_id count per source.',
+      operationalValue: 'Connection anomalies are early indicators of application failures, infrastructure changes, or security incidents. Detecting changes enables proactive response.',
+      changeMgmtRelevance: 'Connection source changes should correlate with application deployments, scaling events, or network changes. Unexpected changes require investigation.',
+      troubleshootingWorkflow: '1. Identify new or missing connection sources\n2. For new sources: determine if they are authorized applications\n3. For missing sources: verify application health and network connectivity\n4. Check if connection pool configuration changed\n5. Verify DNS resolution for application hosts\n6. Correlate with recent deployments or infrastructure changes',
+      dashboardDependency: 'Connection Analytics dashboard, Client Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Unique connections per source over time',
+          description: 'Track connection diversity and identify new or missing clients',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d UniqueClients=dcount(connection_from), UniqueSessions=dcount(session_id) by database_name'
+        },
+        {
+          name: 'Connection volume by application',
+          description: 'Identify applications with abnormal connection counts',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Sessions=dcount(session_id), Operations=count() by application_name, connection_from, database_name\n| order by Sessions desc'
+        },
+        {
+          name: 'Recently active sources',
+          description: 'Find the most recent activity from each connection source',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize LastSeen=max(log_time), Operations=count() by connection_from, application_name, user_name\n| order by LastSeen asc'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-004',
+      name: 'Database Workload Distribution Shift',
+      objective: 'Monitor how query workload is distributed across databases and detect imbalances that indicate capacity issues, misrouted traffic, or application misconfiguration.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'workload', 'distribution'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'command_tag', 'application_name', 'session_id'],
+      detectionLogic: 'Alert when any single database exceeds 150% of its normal hourly query volume while others remain flat or decline. Also alert when total query volume across all databases drops below 50% of baseline.',
+      operationalValue: 'Workload shifts can indicate traffic routing issues, failover events, or application misconfiguration sending queries to wrong databases.',
+      changeMgmtRelevance: 'Workload shifts after deployments indicate application configuration errors (wrong connection strings, missing read-replica routing).',
+      troubleshootingWorkflow: '1. Identify which database(s) saw volume changes\n2. Determine which applications are driving the shift\n3. Check if traffic was rerouted (failover, DNS change, config change)\n4. Verify read-replica routing is functioning correctly\n5. Check connection pool health and saturation\n6. Review application deployment logs for configuration changes',
+      dashboardDependency: 'Database Workload dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Query volume by database over time',
+          description: 'Visualize workload distribution to detect imbalances',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by database_name'
+        },
+        {
+          name: 'Command type distribution per database',
+          description: 'Understand the workload mix for each database',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Operations=count() by database_name, command_tag\n| order by database_name asc, Operations desc'
+        },
+        {
+          name: 'Active sessions per database',
+          description: 'Track concurrent session count to identify saturation',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=15m UniqueSessions=dcount(session_id) by database_name'
+        },
+        {
+          name: 'Workload per application per database',
+          description: 'See which applications are driving load on each database',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Queries=count(), Sessions=dcount(session_id) by database_name, application_name\n| order by Queries desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-005',
+      name: 'Privilege Escalation and Role Changes',
+      objective: 'Monitor GRANT, REVOKE, and role modification operations that change access patterns and could indicate unauthorized privilege expansion.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'access-control', 'privileges', 'compliance'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'command_tag', 'object_type', 'object_name', 'statement'],
+      detectionLogic: 'Alert on any GRANT or REVOKE command_tag. Escalate when GRANT includes superuser, pg_write_all_data, or pg_read_all_data roles. Alert on CREATE ROLE and ALTER ROLE operations.',
+      operationalValue: 'Privilege changes affect who can access and modify data. Unauthorized changes could enable data theft or destructive operations. Tracking ensures access governance.',
+      changeMgmtRelevance: 'All privilege changes should follow a formal access request process. Changes not tied to approved tickets indicate process violations.',
+      troubleshootingWorkflow: '1. Identify the user who made the privilege change\n2. Determine what privileges were granted/revoked and to whom\n3. Verify against approved access requests\n4. Check if the change was made via a known migration tool\n5. Assess impact — what data is now accessible?\n6. If unauthorized: revoke immediately and investigate',
+      dashboardDependency: 'Access Control Audit dashboard, Privilege Changes dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All GRANT and REVOKE operations',
+          description: 'Complete audit trail of privilege modifications',
+          query: 'dataset="$DATASET" earliest=-7d\n| where command_tag in ("GRANT", "REVOKE", "CREATE ROLE", "ALTER ROLE", "DROP ROLE")\n| summarize count() by command_tag, user_name, object_name, database_name\n| order by count_ desc'
+        },
+        {
+          name: 'Privilege changes over time',
+          description: 'Track frequency of access control modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where command_tag in ("GRANT", "REVOKE", "CREATE ROLE", "ALTER ROLE")\n| timestats span=1d count() by command_tag'
+        },
+        {
+          name: 'High-privilege grants',
+          description: 'Identify grants of powerful roles requiring extra scrutiny',
+          query: 'dataset="$DATASET" command_tag="GRANT" earliest=-30d\n| summarize count() by statement, user_name, database_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-006',
+      name: 'Long-Running Session Detection',
+      objective: 'Identify database sessions that persist abnormally long, potentially holding locks, consuming connections, or indicating application connection leaks.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'sessions', 'connection-management'],
+      requiredFields: ['log_time', 'user_name', 'database_name', 'session_id', 'application_name', 'connection_from', 'command_tag'],
+      detectionLogic: 'Alert when a session_id appears across a time span exceeding 4 hours with ongoing activity, or when the same session generates more than 10,000 operations. Track sessions per application_name for baseline comparison.',
+      operationalValue: 'Long-running sessions can hold locks preventing other operations, exhaust connection pools, and indicate application bugs (connection leaks, uncommitted transactions).',
+      changeMgmtRelevance: 'New long-running sessions after deployments indicate application bugs (missing connection pool release, infinite loops, stuck transactions).',
+      troubleshootingWorkflow: '1. Identify the long-running session(s) and their application\n2. Check what operations the session is performing (command_tag)\n3. Determine if the session is holding locks\n4. Verify if the application has connection pool timeout configured\n5. Check if the session is idle or actively running queries\n6. Coordinate with the application team to identify the code path',
+      dashboardDependency: 'Session Analytics dashboard, Connection Pool Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Session duration analysis',
+          description: 'Find sessions with unusually long activity spans',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstActivity=min(log_time), LastActivity=max(log_time), Operations=count() by session_id, application_name, user_name\n| order by Operations desc\n| limit 20'
+        },
+        {
+          name: 'Sessions with high operation count',
+          description: 'Identify sessions generating excessive query volume',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize OperationCount=count(), CommandTypes=dcount(command_tag) by session_id, application_name, connection_from\n| where OperationCount > 1000\n| order by OperationCount desc'
+        },
+        {
+          name: 'Active sessions per application over time',
+          description: 'Track concurrent session count to detect connection pool issues',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h UniqueSessions=dcount(session_id) by application_name'
+        }
+      ]
+    },
+    {
+      id: 'pga-obs-007',
+      name: 'Audit Log Pipeline Continuity',
+      objective: 'Ensure PostgreSQL audit logs are flowing continuously without gaps that would compromise observability and compliance coverage.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'completeness', 'monitoring'],
+      requiredFields: ['log_time', 'database_name', 'user_name', 'command_tag', 'session_id'],
+      detectionLogic: 'Alert when log volume drops below 40% of the expected hourly baseline for more than 20 minutes. Alert when any database that normally generates logs goes silent for more than 30 minutes during business hours.',
+      operationalValue: 'Audit log gaps mean compliance violations and security blind spots. Pipeline health is foundational to all downstream detections and dashboards.',
+      changeMgmtRelevance: 'Log pipeline breaks after PostgreSQL configuration changes (logging parameters), Cribl pipeline updates, or network changes.',
+      troubleshootingWorkflow: '1. Identify which database(s) stopped generating logs\n2. Check PostgreSQL logging configuration (log_statement, pgaudit settings)\n3. Verify log file rotation and shipping (syslog, file forwarding)\n4. Check Cribl source health for PostgreSQL input\n5. Verify network connectivity between PostgreSQL and Cribl\n6. Check disk space on PostgreSQL hosts (full disk stops logging)',
+      dashboardDependency: 'Log Pipeline Health dashboard, Database Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Log volume per database over time',
+          description: 'Track audit event generation rate to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by database_name'
+        },
+        {
+          name: 'Last event per database',
+          description: 'Find databases that may have stopped generating audit events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastEvent=max(log_time), EventCount=count(), UniqueUsers=dcount(user_name) by database_name\n| order by LastEvent asc'
+        },
+        {
+          name: 'Event type coverage per database',
+          description: 'Verify all databases are generating expected command types',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count() by database_name, command_tag\n| order by database_name asc, count_ desc'
+        },
+        {
+          name: 'Hourly volume comparison (today vs 7-day avg)',
+          description: 'Compare current ingestion against historical baseline',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by database_name'
+        }
+      ]
+    }
+  ],
+  'snowflake-audit': [
+    {
+      id: 'sfa-obs-001',
+      name: 'Warehouse Auto-Suspend Failure',
+      objective: 'Detect warehouses that remain active beyond expected auto-suspend periods, consuming credits unnecessarily due to misconfiguration or stuck queries.',
+      severity: 'Critical',
+      category: 'Capacity',
+      tags: ['observability', 'cost', 'warehouse', 'capacity'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'EVENT_TYPE', 'IS_SUCCESS', 'WAREHOUSE_NAME', 'QUERY_TEXT'],
+      detectionLogic: 'Alert when a warehouse shows continuous query activity for more than 2x its configured auto-suspend period without a WAREHOUSE_SUSPEND event. Also alert when warehouse credit consumption exceeds 150% of daily baseline.',
+      operationalValue: 'Warehouses stuck in active state burn credits rapidly. A single XL warehouse running 24 hours unnecessarily can cost thousands of dollars. Early detection prevents budget overruns.',
+      changeMgmtRelevance: 'Auto-suspend failures often follow warehouse configuration changes, new ETL schedules, or query pattern changes that keep the warehouse from becoming idle.',
+      troubleshootingWorkflow: '1. Identify which warehouse(s) are not suspending\n2. Check for continuously running or queueing queries\n3. Review auto-suspend configuration (SHOW WAREHOUSES)\n4. Look for ETL jobs or dashboards polling at intervals shorter than auto-suspend\n5. Check for stuck queries that need to be killed\n6. Verify no configuration change disabled auto-suspend',
+      dashboardDependency: 'Warehouse Utilization dashboard, Credit Consumption dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Warehouse activity continuity',
+          description: 'Identify warehouses with constant activity that may not be suspending',
+          query: 'dataset="$DATASET" earliest=-24h\n| where isnotempty(WAREHOUSE_NAME)\n| timestats span=30m count() by WAREHOUSE_NAME'
+        },
+        {
+          name: 'Query volume per warehouse per hour',
+          description: 'Track hourly activity to identify warehouses that never go idle',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize Queries=count(), UniqueUsers=dcount(USER_NAME) by WAREHOUSE_NAME\n| order by Queries desc'
+        },
+        {
+          name: 'Long-running queries by warehouse',
+          description: 'Find queries that may be preventing warehouse suspension',
+          query: 'dataset="$DATASET" earliest=-12h\n| where isnotempty(WAREHOUSE_NAME) and IS_SUCCESS == "YES"\n| summarize QueryCount=count(), LastQuery=max(EVENT_TIMESTAMP) by WAREHOUSE_NAME, USER_NAME\n| order by QueryCount desc'
+        },
+        {
+          name: 'Warehouse suspend and resume events',
+          description: 'Track warehouse lifecycle to verify proper suspend behavior',
+          query: 'dataset="$DATASET" earliest=-48h\n| where EVENT_TYPE in ("WAREHOUSE_SUSPEND", "WAREHOUSE_RESUME")\n| summarize count() by EVENT_TYPE, WAREHOUSE_NAME\n| order by WAREHOUSE_NAME asc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-002',
+      name: 'Query Failure Rate Increase',
+      objective: 'Detect when query error rates increase significantly, indicating schema issues, permission problems, or infrastructure instability affecting data pipeline reliability.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'queries', 'reliability'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'IS_SUCCESS', 'ERROR_CODE', 'QUERY_TEXT', 'DATABASE_NAME', 'WAREHOUSE_NAME'],
+      detectionLogic: 'Alert when IS_SUCCESS = NO exceeds 10% of total queries over a 15-minute window. Also alert when any specific ERROR_CODE appears more than 50 times in 10 minutes. Evaluate per DATABASE_NAME and globally.',
+      operationalValue: 'Query failures break data pipelines, stale dashboards, and downstream analytics. Early detection enables rapid response before business impact accumulates.',
+      changeMgmtRelevance: 'Error spikes after schema changes, role modifications, or pipeline deployments indicate breaking changes requiring immediate rollback.',
+      troubleshootingWorkflow: '1. Identify the most common ERROR_CODE driving failures\n2. Determine which databases and users are affected\n3. Check if failures correlate with recent schema or permission changes\n4. Review failing QUERY_TEXT for patterns (same table, same function)\n5. Verify underlying data availability (external stages, shares)\n6. Check warehouse size and queuing — are failures timeout-related?',
+      dashboardDependency: 'Query Health dashboard, Pipeline Reliability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Failure rate over time',
+          description: 'Track query success vs failure ratio to detect degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m Total=count(), Failures=countif(IS_SUCCESS == "NO")'
+        },
+        {
+          name: 'Top error codes',
+          description: 'Identify the most common failure types',
+          query: 'dataset="$DATASET" IS_SUCCESS="NO" earliest=-12h\n| summarize ErrorCount=count() by ERROR_CODE, DATABASE_NAME, USER_NAME\n| order by ErrorCount desc\n| limit 20'
+        },
+        {
+          name: 'Failure rate by database',
+          description: 'Find which databases have the highest error rates',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Total=count(), Failures=countif(IS_SUCCESS == "NO") by DATABASE_NAME\n| extend FailPct=round(Failures * 100.0 / Total, 1)\n| where Total > 10\n| order by FailPct desc'
+        },
+        {
+          name: 'Failed queries by user',
+          description: 'Identify users experiencing the most query failures',
+          query: 'dataset="$DATASET" IS_SUCCESS="NO" earliest=-4h\n| summarize Failures=count(), UniqueErrors=dcount(ERROR_CODE) by USER_NAME, ROLE_NAME, DATABASE_NAME\n| order by Failures desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-003',
+      name: 'Role Usage Pattern Change',
+      objective: 'Monitor for significant changes in which roles are being used, indicating potential misconfiguration, unauthorized role switching, or governance drift.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'access-control', 'roles', 'governance'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'ROLE_NAME', 'EVENT_TYPE', 'IS_SUCCESS', 'DATABASE_NAME'],
+      detectionLogic: 'Alert when a user switches to a role they have not used in the past 30 days. Alert when ACCOUNTADMIN or SECURITYADMIN usage increases by more than 50% over baseline. Track daily unique role count per user.',
+      operationalValue: 'Role usage changes may indicate privilege escalation attempts, governance violations, or users circumventing least-privilege policies.',
+      changeMgmtRelevance: 'Role usage shifts after governance policy updates indicate either successful adoption or attempted workarounds that need correction.',
+      troubleshootingWorkflow: '1. Identify the user and role combination that triggered the alert\n2. Verify if the role usage is authorized for the user\n3. Check what operations were performed with the elevated role\n4. Determine if this correlates with an approved access request\n5. Review ACCOUNTADMIN/SECURITYADMIN usage for necessity\n6. If unauthorized: investigate and revoke access',
+      dashboardDependency: 'Role Usage Analytics dashboard, Governance Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Role usage distribution per user',
+          description: 'Track which roles each user is actively using',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Operations=count(), LastUsed=max(EVENT_TIMESTAMP) by USER_NAME, ROLE_NAME\n| order by USER_NAME asc, Operations desc'
+        },
+        {
+          name: 'Admin role usage over time',
+          description: 'Monitor usage of high-privilege roles for anomalies',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ROLE_NAME in ("ACCOUNTADMIN", "SECURITYADMIN", "SYSADMIN")\n| timestats span=1d count() by ROLE_NAME, USER_NAME'
+        },
+        {
+          name: 'New role-user combinations',
+          description: 'Detect users exercising roles they have not recently used',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstSeen=min(EVENT_TIMESTAMP), Operations=count() by USER_NAME, ROLE_NAME\n| order by FirstSeen desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-004',
+      name: 'Login Failure Pattern Detection',
+      objective: 'Monitor authentication failures to detect credential issues, expired passwords, network problems, or potential brute force attempts affecting service availability.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'authentication', 'availability', 'login'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'CLIENT_IP', 'EVENT_TYPE', 'IS_SUCCESS', 'ERROR_CODE'],
+      detectionLogic: 'Alert when login failures exceed 20% of total login attempts over a 10-minute window. Also alert when any single USER_NAME fails more than 10 consecutive times. Track by CLIENT_IP for distributed patterns.',
+      operationalValue: 'Login failures prevent service accounts and users from accessing data. Detecting patterns early prevents data pipeline outages and user productivity loss.',
+      changeMgmtRelevance: 'Login failures after credential rotation, SSO configuration changes, or network policy updates indicate incomplete change implementation.',
+      troubleshootingWorkflow: '1. Identify affected users and their source IPs\n2. Determine the error code — expired password, wrong password, locked account?\n3. Check if this correlates with credential rotation or SSO changes\n4. Verify network policy rules are not blocking legitimate access\n5. Check if service accounts need credential updates\n6. Review recent changes to authentication configuration',
+      dashboardDependency: 'Authentication Health dashboard, Login Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Login success vs failure over time',
+          description: 'Track authentication health to detect degradation',
+          query: 'dataset="$DATASET" EVENT_TYPE="LOGIN" earliest=-24h\n| timestats span=15m Total=count(), Failures=countif(IS_SUCCESS == "NO")'
+        },
+        {
+          name: 'Failed logins by user and IP',
+          description: 'Identify users and sources experiencing authentication issues',
+          query: 'dataset="$DATASET" EVENT_TYPE="LOGIN" IS_SUCCESS="NO" earliest=-12h\n| summarize Failures=count() by USER_NAME, CLIENT_IP, ERROR_CODE\n| order by Failures desc'
+        },
+        {
+          name: 'Login failure rate by user',
+          description: 'Find users with high failure rates indicating credential problems',
+          query: 'dataset="$DATASET" EVENT_TYPE="LOGIN" earliest=-24h\n| summarize Total=count(), Failures=countif(IS_SUCCESS == "NO") by USER_NAME\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 5\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-005',
+      name: 'Database and Schema Access Pattern Shift',
+      objective: 'Detect when query patterns shift to new databases or schemas, indicating potential misconfiguration, data discovery attempts, or broken application routing.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'access-patterns', 'data-governance', 'routing'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'DATABASE_NAME', 'SCHEMA_NAME', 'QUERY_TEXT', 'ROLE_NAME', 'IS_SUCCESS'],
+      detectionLogic: 'Alert when a user or role accesses a DATABASE_NAME/SCHEMA_NAME combination not seen in the prior 14 days. Also alert on significant volume shifts (>200%) between databases for the same user/role.',
+      operationalValue: 'Access pattern shifts can indicate broken data pipelines routing to wrong databases, or users exploring data outside their normal scope.',
+      changeMgmtRelevance: 'Access pattern shifts after pipeline deployments indicate configuration errors (wrong database references, incorrect environment targeting).',
+      troubleshootingWorkflow: '1. Identify the user/role and the new database/schema being accessed\n2. Determine if this is a legitimate new use case or misconfiguration\n3. Check if a pipeline or application was recently deployed with wrong config\n4. Verify the queries are hitting the intended environment (prod vs dev)\n5. Review data classification of the newly accessed objects\n6. Coordinate with the user or application team to validate intent',
+      dashboardDependency: 'Data Access Patterns dashboard, Database Usage Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Database access by user over time',
+          description: 'Track which databases each user is querying to detect shifts',
+          query: 'dataset="$DATASET" earliest=-14d\n| where isnotempty(DATABASE_NAME)\n| timestats span=1d UniqueDBs=dcount(DATABASE_NAME) by USER_NAME'
+        },
+        {
+          name: 'Schema access frequency',
+          description: 'Identify unusual schema access patterns',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize Queries=count(), UniqueUsers=dcount(USER_NAME) by DATABASE_NAME, SCHEMA_NAME\n| order by Queries desc'
+        },
+        {
+          name: 'New database-user combinations (last 24h)',
+          description: 'Detect users accessing databases they have not recently used',
+          query: 'dataset="$DATASET" earliest=-24h\n| where isnotempty(DATABASE_NAME)\n| summarize FirstAccess=min(EVENT_TIMESTAMP), QueryCount=count() by USER_NAME, DATABASE_NAME, SCHEMA_NAME, ROLE_NAME\n| order by FirstAccess desc'
+        },
+        {
+          name: 'Query volume shift between databases',
+          description: 'Compare recent database query distribution against baseline',
+          query: 'dataset="$DATASET" earliest=-48h\n| where isnotempty(DATABASE_NAME)\n| timestats span=4h count() by DATABASE_NAME'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-006',
+      name: 'Warehouse Queue Depth Alert',
+      objective: 'Monitor warehouse query queuing to detect capacity bottlenecks where queries are waiting instead of executing, degrading pipeline SLAs.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'warehouse', 'queuing'],
+      requiredFields: ['EVENT_TIMESTAMP', 'USER_NAME', 'WAREHOUSE_NAME', 'IS_SUCCESS', 'QUERY_TEXT', 'ROLE_NAME'],
+      detectionLogic: 'Alert when query volume per warehouse exceeds 200% of baseline within a 10-minute window (indicating potential queuing). Alert when the same warehouse serves more than 50 concurrent users. Track per-warehouse utilization patterns.',
+      operationalValue: 'Query queuing delays data pipeline completion and report generation. Identifying capacity bottlenecks enables proactive warehouse scaling before SLA violations.',
+      changeMgmtRelevance: 'Queuing spikes after new pipeline deployments or user access grants indicate insufficient warehouse capacity for the new workload.',
+      troubleshootingWorkflow: '1. Identify which warehouse(s) are experiencing queuing\n2. Check concurrent user and query count\n3. Determine if specific queries are monopolizing resources\n4. Review warehouse size and auto-scaling configuration\n5. Consider routing some workloads to different warehouses\n6. Evaluate whether warehouse size needs to be increased',
+      dashboardDependency: 'Warehouse Performance dashboard, Query Queue Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Query concurrency per warehouse',
+          description: 'Track simultaneous query load to identify capacity pressure',
+          query: 'dataset="$DATASET" earliest=-24h\n| where isnotempty(WAREHOUSE_NAME)\n| timestats span=10m Queries=count(), UniqueUsers=dcount(USER_NAME) by WAREHOUSE_NAME'
+        },
+        {
+          name: 'Heavy users per warehouse',
+          description: 'Identify users consuming the most warehouse resources',
+          query: 'dataset="$DATASET" earliest=-12h\n| where isnotempty(WAREHOUSE_NAME)\n| summarize QueryCount=count() by WAREHOUSE_NAME, USER_NAME, ROLE_NAME\n| order by QueryCount desc\n| limit 20'
+        },
+        {
+          name: 'Peak usage windows per warehouse',
+          description: 'Find when each warehouse hits peak utilization for capacity planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| where isnotempty(WAREHOUSE_NAME)\n| timestats span=1h count() by WAREHOUSE_NAME'
+        }
+      ]
+    },
+    {
+      id: 'sfa-obs-007',
+      name: 'Audit Event Pipeline Health',
+      objective: 'Ensure Snowflake audit events flow continuously to detect collection gaps that would compromise security monitoring and compliance coverage.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'audit', 'completeness'],
+      requiredFields: ['EVENT_TIMESTAMP', 'EVENT_TYPE', 'USER_NAME', 'IS_SUCCESS', 'CLIENT_IP'],
+      detectionLogic: 'Alert when total audit event volume drops below 50% of hourly baseline for more than 30 minutes. Alert when specific EVENT_TYPE categories that normally generate events go silent for more than 1 hour.',
+      operationalValue: 'Audit event gaps create compliance violations and security blind spots. Ensuring pipeline health is foundational to all downstream Snowflake monitoring.',
+      changeMgmtRelevance: 'Pipeline breaks after Snowflake account configuration changes, API credential rotations, or Cribl pipeline updates require immediate investigation.',
+      troubleshootingWorkflow: '1. Check total event volume against expected baseline\n2. Identify which EVENT_TYPEs have gone silent\n3. Verify Snowflake account event sharing configuration\n4. Check API connectivity and credential validity\n5. Review Cribl pipeline health for the Snowflake source\n6. Verify no Snowflake account-level changes affected event generation',
+      dashboardDependency: 'Audit Pipeline Health dashboard, Event Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by type over time',
+          description: 'Track audit event generation rate per type to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by EVENT_TYPE'
+        },
+        {
+          name: 'Overall ingestion rate',
+          description: 'Monitor total event throughput for pipeline health',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m TotalEvents=count(), UniqueUsers=dcount(USER_NAME), UniqueIPs=dcount(CLIENT_IP)'
+        },
+        {
+          name: 'Event type coverage check',
+          description: 'Verify all expected event types are present in recent data',
+          query: 'dataset="$DATASET" earliest=-6h\n| summarize LastSeen=max(EVENT_TIMESTAMP), Count=count() by EVENT_TYPE\n| order by LastSeen asc'
+        }
+      ]
+    }
+  ],
+  'mssql-audit': [
+    {
+      id: 'msa-obs-001',
+      name: 'Batch Statement Failure Surge',
+      objective: 'Detect when SQL Server statement failures spike, indicating application errors, schema drift, or permission changes breaking production workloads.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'errors', 'queries', 'mssql'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'database_name', 'statement', 'succeeded', 'application_name', 'client_ip'],
+      detectionLogic: 'Alert when succeeded=0 events exceed 10% of total operations over a 10-minute window. Also alert when any single application_name generates more than 200 failures in 5 minutes. Evaluate per database_name and globally.',
+      operationalValue: 'Statement failures cascade into application errors, broken ETL pipelines, and degraded user experience. Rapid detection enables sub-hour response and rollback.',
+      changeMgmtRelevance: 'Failure spikes after application deployments, schema migrations, or permission changes indicate breaking changes requiring immediate attention.',
+      troubleshootingWorkflow: '1. Identify the most common failing statements and action_ids\n2. Determine which applications and databases are affected\n3. Check if failures started after a deployment or schema change\n4. Review failing statement patterns for schema mismatches\n5. Verify permissions for affected server_principal_name accounts\n6. Check database availability and transaction log health',
+      dashboardDependency: 'Query Health dashboard, Application Error Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Failure rate over time',
+          description: 'Track statement success vs failure to detect degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m Total=count(), Failures=countif(succeeded == "0")'
+        },
+        {
+          name: 'Top failing statements by application',
+          description: 'Identify which applications and queries are failing most',
+          query: 'dataset="$DATASET" succeeded="0" earliest=-4h\n| summarize FailCount=count() by application_name, database_name, statement\n| order by FailCount desc\n| limit 20'
+        },
+        {
+          name: 'Failure rate by database',
+          description: 'Find which databases have the highest error rates',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Total=count(), Failures=countif(succeeded == "0") by database_name\n| extend FailPct=round(Failures * 100.0 / Total, 1)\n| where Total > 10\n| order by FailPct desc'
+        },
+        {
+          name: 'Error sources by client IP',
+          description: 'Identify which application servers are experiencing failures',
+          query: 'dataset="$DATASET" succeeded="0" earliest=-4h\n| summarize Failures=count(), UniqueDBs=dcount(database_name) by client_ip, application_name\n| order by Failures desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-002',
+      name: 'Schema Modification Tracking',
+      objective: 'Monitor DDL operations (CREATE, ALTER, DROP) to detect schema changes that may impact application behavior, data integrity, or query performance.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'schema', 'ddl', 'change-management'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'database_name', 'schema_name', 'object_name', 'statement'],
+      detectionLogic: 'Alert on DDL action_ids (CR = CREATE, AL = ALTER, DR = DROP). Escalate to Critical for DROP operations on production databases outside change windows. Track migration batch patterns.',
+      operationalValue: 'Unplanned DDL changes can break applications, degrade query performance, or cause data loss. Immediate detection enables rapid assessment and rollback if needed.',
+      changeMgmtRelevance: 'All DDL should correlate with approved change tickets. Schema modifications outside change windows are high-risk events requiring immediate validation.',
+      troubleshootingWorkflow: '1. Identify who made the change (server_principal_name)\n2. Determine which objects were modified (schema_name.object_name)\n3. Verify against approved change requests\n4. Check application health after the change\n5. For dropped indexes: monitor query plan regressions\n6. For dropped tables: verify backup availability',
+      dashboardDependency: 'Schema Change Audit dashboard, DDL Activity Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All DDL operations in the last 24 hours',
+          description: 'Complete audit trail of schema modifications',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_id in ("CR", "AL", "DR")\n| summarize count() by action_id, schema_name, object_name, server_principal_name, database_name\n| order by event_time desc'
+        },
+        {
+          name: 'DDL frequency over time',
+          description: 'Visualize when schema changes are occurring',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_id in ("CR", "AL", "DR")\n| timestats span=1h count() by action_id'
+        },
+        {
+          name: 'Destructive operations audit',
+          description: 'Track DROP operations requiring special attention',
+          query: 'dataset="$DATASET" action_id="DR" earliest=-30d\n| summarize count() by object_name, schema_name, server_principal_name, database_name\n| order by count_ desc'
+        },
+        {
+          name: 'Schema changes by principal',
+          description: 'Identify who is making the most schema modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action_id in ("CR", "AL", "DR")\n| summarize DDLCount=count(), UniqueObjects=dcount(object_name) by server_principal_name\n| order by DDLCount desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-003',
+      name: 'Database Workload Concentration Shift',
+      objective: 'Detect when query workload shifts unexpectedly between databases, indicating failover events, routing misconfigurations, or capacity imbalances.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'workload', 'distribution'],
+      requiredFields: ['event_time', 'server_principal_name', 'database_name', 'action_id', 'application_name', 'session_id', 'succeeded'],
+      detectionLogic: 'Alert when any database exceeds 200% of its normal hourly operation volume while others decline. Also alert when total operations across all databases drop below 40% of baseline (indicating outage).',
+      operationalValue: 'Workload concentration can overwhelm a single database while others sit idle. Detecting shifts early enables load rebalancing before performance degrades.',
+      changeMgmtRelevance: 'Workload shifts after deployments indicate connection string misconfigurations, missing read-replica routing, or failover group changes.',
+      troubleshootingWorkflow: '1. Identify which database(s) experienced the workload shift\n2. Determine which applications are driving the change\n3. Check if a failover event occurred (availability groups)\n4. Verify application connection strings point to correct instances\n5. Review recent deployment changes that may have altered routing\n6. Check if the shift is causing performance degradation',
+      dashboardDependency: 'Database Workload dashboard, Capacity Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Operation volume by database over time',
+          description: 'Visualize workload distribution to detect concentration shifts',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by database_name'
+        },
+        {
+          name: 'Application traffic by database',
+          description: 'See which applications are driving load per database',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Operations=count(), Sessions=dcount(session_id) by database_name, application_name\n| order by Operations desc'
+        },
+        {
+          name: 'Database operation rate comparison',
+          description: 'Compare current activity against baseline for each database',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize RecentOps=count(), UniqueUsers=dcount(server_principal_name) by database_name\n| order by RecentOps desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-004',
+      name: 'Permission Change Detection',
+      objective: 'Track GRANT, REVOKE, and permission modifications that alter data access patterns and may indicate unauthorized privilege escalation or governance violations.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'permissions', 'access-control', 'governance'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'database_name', 'object_name', 'statement', 'succeeded'],
+      detectionLogic: 'Alert on permission-related action_ids (G = GRANT, R = REVOKE, DAGR = Database Grant). Escalate when db_owner, sysadmin, or securityadmin roles are granted. Track frequency — more than 10 permission changes per hour is unusual.',
+      operationalValue: 'Permission changes affect data access governance. Unauthorized changes could enable data exfiltration or destructive operations. Continuous tracking ensures compliance.',
+      changeMgmtRelevance: 'All permission changes should follow formal access request processes. Changes not tied to approved tickets indicate governance failures.',
+      troubleshootingWorkflow: '1. Identify who made the permission change\n2. Determine what specific permissions were granted/revoked\n3. Verify against approved access requests\n4. Check if the change succeeded (succeeded flag)\n5. Assess blast radius — what data is now accessible?\n6. If unauthorized: revoke immediately and escalate',
+      dashboardDependency: 'Permission Audit dashboard, Access Governance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All permission change events',
+          description: 'Complete audit trail of GRANT and REVOKE operations',
+          query: 'dataset="$DATASET" earliest=-7d\n| where action_id in ("G", "R", "DAGR", "DRVK")\n| summarize count() by action_id, server_principal_name, object_name, database_name, succeeded\n| order by count_ desc'
+        },
+        {
+          name: 'Permission changes over time',
+          description: 'Track frequency of access control modifications',
+          query: 'dataset="$DATASET" earliest=-30d\n| where action_id in ("G", "R", "DAGR", "DRVK")\n| timestats span=1d count() by action_id'
+        },
+        {
+          name: 'High-privilege grants',
+          description: 'Identify grants of elevated roles requiring scrutiny',
+          query: 'dataset="$DATASET" action_id="G" earliest=-30d\n| summarize count() by statement, server_principal_name, database_name\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-005',
+      name: 'Application Connection Health',
+      objective: 'Monitor login patterns and connection behavior to detect application connectivity issues, credential problems, or infrastructure instability.',
+      severity: 'Medium',
+      category: 'Availability',
+      tags: ['observability', 'connectivity', 'authentication', 'availability'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'succeeded', 'client_ip', 'application_name', 'database_name'],
+      detectionLogic: 'Alert when login failures (action_id = LGIF) exceed 15% of total login attempts over a 10-minute window. Alert when a known application IP stops connecting for more than 15 minutes during business hours.',
+      operationalValue: 'Connection failures prevent applications from accessing data. Detecting login issues early prevents service outages and data pipeline failures.',
+      changeMgmtRelevance: 'Login failures after credential rotations, network policy changes, or Always On failovers indicate incomplete change implementation.',
+      troubleshootingWorkflow: '1. Identify affected principals and their source IPs\n2. Determine if failures are credential-based or connectivity-based\n3. Check for recent credential rotations or password expirations\n4. Verify network connectivity and firewall rules\n5. Check SQL Server error log for additional context\n6. Verify availability group listener health',
+      dashboardDependency: 'Connection Health dashboard, Authentication Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Login success vs failure over time',
+          description: 'Track authentication health to detect connection issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_id in ("LGIS", "LGIF")\n| timestats span=15m count() by action_id'
+        },
+        {
+          name: 'Failed logins by principal and source',
+          description: 'Identify accounts and IPs experiencing connection problems',
+          query: 'dataset="$DATASET" action_id="LGIF" earliest=-12h\n| summarize Failures=count() by server_principal_name, client_ip, application_name\n| order by Failures desc'
+        },
+        {
+          name: 'Application connection frequency',
+          description: 'Track how often each application connects to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-48h\n| where action_id in ("LGIS", "LGIF")\n| timestats span=1h count() by application_name, client_ip'
+        },
+        {
+          name: 'Login failure rate by principal',
+          description: 'Find service accounts with high failure rates needing attention',
+          query: 'dataset="$DATASET" earliest=-24h\n| where action_id in ("LGIS", "LGIF")\n| summarize Total=count(), Failures=countif(action_id == "LGIF") by server_principal_name\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where Total > 5\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-006',
+      name: 'Session Concurrency Monitoring',
+      objective: 'Track concurrent database sessions to detect connection pool exhaustion, runaway applications, or capacity limits approaching.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'sessions', 'concurrency'],
+      requiredFields: ['event_time', 'session_id', 'server_principal_name', 'database_name', 'application_name', 'client_ip'],
+      detectionLogic: 'Alert when unique session_id count per 15-minute window exceeds 150% of the 7-day baseline for that time period. Alert when any single application_name holds more than 200 concurrent sessions.',
+      operationalValue: 'Session exhaustion causes connection failures for all applications. Detecting approaching limits enables proactive scaling before outage.',
+      changeMgmtRelevance: 'Session spikes after deployments indicate connection pool misconfiguration, missing connection release, or new services overwhelming the database.',
+      troubleshootingWorkflow: '1. Identify which applications are holding the most sessions\n2. Check if sessions are active or idle (blocking)\n3. Review max_connections configuration vs current usage\n4. Determine if specific applications have connection pool leaks\n5. Check for blocking chains that prevent session release\n6. Consider increasing max connections or optimizing pool settings',
+      dashboardDependency: 'Session Analytics dashboard, Connection Pool Health dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active sessions per application over time',
+          description: 'Track session count by application to detect exhaustion trends',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=15m UniqueSessions=dcount(session_id) by application_name'
+        },
+        {
+          name: 'Top session consumers',
+          description: 'Identify applications holding the most concurrent sessions',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize SessionCount=dcount(session_id), Operations=count() by application_name, client_ip, database_name\n| order by SessionCount desc\n| limit 20'
+        },
+        {
+          name: 'Session growth trend',
+          description: 'Monitor total concurrent sessions for capacity planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h UniqueSessions=dcount(session_id), UniqueApps=dcount(application_name)'
+        }
+      ]
+    },
+    {
+      id: 'msa-obs-007',
+      name: 'Audit Log Pipeline Integrity',
+      objective: 'Ensure SQL Server audit events flow continuously without gaps that would compromise security monitoring and compliance requirements.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'audit', 'completeness'],
+      requiredFields: ['event_time', 'action_id', 'server_principal_name', 'database_name', 'succeeded'],
+      detectionLogic: 'Alert when audit event volume drops below 50% of hourly baseline for more than 20 minutes. Alert when specific action_id categories that normally generate events go silent for more than 30 minutes.',
+      operationalValue: 'Audit log gaps create compliance violations and security blind spots. Pipeline health is foundational to all downstream SQL Server monitoring and alerting.',
+      changeMgmtRelevance: 'Pipeline breaks after SQL Server audit configuration changes, Cribl pipeline updates, or network changes affecting log delivery require immediate investigation.',
+      troubleshootingWorkflow: '1. Check total event volume against expected baseline\n2. Identify which action_ids or databases have gone silent\n3. Verify SQL Server audit specification is active\n4. Check audit file location for space or permission issues\n5. Verify Cribl source health for the SQL Server input\n6. Check network connectivity between SQL Server and Cribl',
+      dashboardDependency: 'Audit Pipeline Health dashboard, Event Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time by database',
+          description: 'Track audit event generation rate per database',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m count() by database_name'
+        },
+        {
+          name: 'Action type coverage',
+          description: 'Verify all expected audit action types are present',
+          query: 'dataset="$DATASET" earliest=-6h\n| summarize LastSeen=max(event_time), Count=count() by action_id\n| order by LastSeen asc'
+        },
+        {
+          name: 'Ingestion rate trend',
+          description: 'Monitor overall audit throughput for pipeline health',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h TotalEvents=count(), UniqueDBs=dcount(database_name), UniquePrincipals=dcount(server_principal_name)'
+        },
+        {
+          name: 'Events per principal over time',
+          description: 'Track activity per service account to detect silent accounts',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=4h count() by server_principal_name'
+        }
+      ]
+    }
+  ],
+
+  'oracle-unified-audit': [
+    {
+      id: 'ora-obs-001',
+      name: 'Database Login Failure Spike',
+      objective: 'Detect sudden increases in failed authentication attempts that indicate database availability issues, misconfigured applications, or credential rotation failures.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'authentication', 'database'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'RETURN_CODE', 'USERHOST', 'AUTHENTICATION_TYPE'],
+      detectionLogic: 'Alert when RETURN_CODE indicates login failure (ORA-1017, ORA-28000, ORA-28001) and volume exceeds 200% of the 7-day baseline for the same time window. Evaluate on 10-minute intervals per DBUSERNAME and USERHOST combination.',
+      operationalValue: 'Failed logins at scale indicate application misconfiguration after credential rotation, expired passwords blocking batch jobs, or locked accounts impacting business processes.',
+      changeMgmtRelevance: 'Login failures frequently spike after password rotations, LDAP/AD changes, or application deployments with stale connection strings. Correlate with change windows for rapid root cause.',
+      troubleshootingWorkflow: '1. Identify the failing DBUSERNAME and USERHOST pairs\n2. Check RETURN_CODE to classify failure type (wrong password vs locked vs expired)\n3. Determine if failures started after a known change window\n4. Check if the account is a service account (application) vs interactive user\n5. Verify AUTHENTICATION_TYPE — is the expected auth method in use?\n6. Check if connection pooling is exhausting retries',
+      dashboardDependency: 'Database Authentication Health dashboard, Login Failure Trends dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Failed logins by user and host (last 4 hours)',
+          description: 'Identify which accounts and hosts are generating login failures',
+          query: 'dataset="$DATASET" earliest=-4h\n| where RETURN_CODE != "0"\n| summarize Failures=count() by DBUSERNAME, USERHOST, RETURN_CODE, AUTHENTICATION_TYPE\n| order by Failures desc'
+        },
+        {
+          name: 'Login failure trend over time',
+          description: 'Track the rate of login failures to identify spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where RETURN_CODE != "0"\n| timestats span=15m count() by DBUSERNAME'
+        },
+        {
+          name: 'Success vs failure ratio per user',
+          description: 'Compare successful and failed logins to identify accounts with high failure rates',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ACTION_NAME == "LOGON"\n| extend is_failure=iif(RETURN_CODE != "0", 1, 0)\n| summarize Total=count(), Failures=sum(is_failure) by DBUSERNAME, USERHOST\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| where FailRate > 50 and Total > 5\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-002',
+      name: 'Schema DDL Change Velocity',
+      objective: 'Monitor the rate of DDL operations (CREATE, ALTER, DROP) to detect unplanned schema changes that could impact application stability.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'schema', 'database'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'OBJECT_SCHEMA', 'OBJECT_NAME', 'SQL_TEXT'],
+      detectionLogic: 'Alert when DDL operations (ACTION_NAME in CREATE, ALTER, DROP, TRUNCATE, GRANT, REVOKE) exceed normal baseline by 150% in a 30-minute window, or when DDL occurs outside approved change windows. Track per OBJECT_SCHEMA.',
+      operationalValue: 'Unplanned schema changes are a leading cause of application outages. Early detection enables rapid rollback before cascading failures reach end users.',
+      changeMgmtRelevance: 'All DDL should correlate with approved change records. DDL outside change windows is an immediate red flag requiring investigation.',
+      troubleshootingWorkflow: '1. Identify which DBUSERNAME is executing DDL\n2. Determine the OBJECT_SCHEMA and OBJECT_NAME affected\n3. Review SQL_TEXT for the exact operation\n4. Check if this correlates with an approved change window\n5. Assess blast radius — what applications use this schema?\n6. Determine if rollback DDL is needed',
+      dashboardDependency: 'Schema Change Audit dashboard, Change Management Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'DDL operations over time',
+          description: 'Track schema modification rate to spot unusual activity',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE")\n| timestats span=30m count() by ACTION_NAME'
+        },
+        {
+          name: 'DDL by user and schema (last 12 hours)',
+          description: 'Identify who is making schema changes and where',
+          query: 'dataset="$DATASET" earliest=-12h\n| where ACTION_NAME in ("CREATE", "ALTER", "DROP", "TRUNCATE")\n| summarize Operations=count() by DBUSERNAME, OBJECT_SCHEMA, ACTION_NAME\n| order by Operations desc'
+        },
+        {
+          name: 'Recent DDL statements with full SQL',
+          description: 'Review exact DDL statements executed for impact assessment',
+          query: 'dataset="$DATASET" earliest=-4h\n| where ACTION_NAME in ("CREATE", "ALTER", "DROP", "TRUNCATE")\n| project EVENT_TIMESTAMP, DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME, SQL_TEXT\n| order by EVENT_TIMESTAMP desc\n| limit 50'
+        },
+        {
+          name: 'DDL outside business hours',
+          description: 'Find schema changes occurring outside normal change windows',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION_NAME in ("CREATE", "ALTER", "DROP", "TRUNCATE")\n| summarize count() by DBUSERNAME, OBJECT_SCHEMA, ACTION_NAME\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-003',
+      name: 'Long-Running SQL Execution',
+      objective: 'Detect SQL statements with abnormally high execution frequency or patterns indicating performance degradation such as full table scans or recursive queries.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'sql', 'database'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'SQL_TEXT', 'OBJECT_SCHEMA', 'OBJECT_NAME', 'RETURN_CODE'],
+      detectionLogic: 'Alert when the same SQL_TEXT pattern (normalized) is executed >500% more frequently than baseline in a 15-minute window, or when repeated failures (RETURN_CODE != 0) indicate a stuck retry loop. Focus on SELECT, INSERT, UPDATE, DELETE actions.',
+      operationalValue: 'Runaway queries and retry storms consume database resources, causing cascading performance degradation for all connected applications.',
+      changeMgmtRelevance: 'Query performance regression often follows application deployments, index changes, or statistics gathering schedule modifications.',
+      troubleshootingWorkflow: '1. Identify the specific SQL_TEXT pattern causing high volume\n2. Check RETURN_CODE — are these succeeding or failing?\n3. If failing, identify the error and fix the root cause\n4. If succeeding at high volume, check for missing indexes or changed execution plans\n5. Identify the application (via DBUSERNAME/USERHOST) driving the load\n6. Check if recent deployments changed query patterns',
+      dashboardDependency: 'SQL Performance dashboard, Database Load dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Top SQL operations by frequency (last hour)',
+          description: 'Find the most frequently executed SQL patterns',
+          query: 'dataset="$DATASET" earliest=-1h\n| where ACTION_NAME in ("SELECT", "INSERT", "UPDATE", "DELETE")\n| summarize Executions=count() by DBUSERNAME, ACTION_NAME, OBJECT_SCHEMA, OBJECT_NAME\n| order by Executions desc\n| limit 30'
+        },
+        {
+          name: 'Failed SQL operations trend',
+          description: 'Track SQL failures over time to detect retry storms',
+          query: 'dataset="$DATASET" earliest=-12h\n| where RETURN_CODE != "0" and ACTION_NAME in ("SELECT", "INSERT", "UPDATE", "DELETE")\n| timestats span=10m count() by DBUSERNAME, ACTION_NAME'
+        },
+        {
+          name: 'Repeated failures from same user and object',
+          description: 'Identify stuck processes retrying failed operations',
+          query: 'dataset="$DATASET" earliest=-1h\n| where RETURN_CODE != "0"\n| summarize Failures=count(), DistinctErrors=dcount(RETURN_CODE) by DBUSERNAME, OBJECT_SCHEMA, OBJECT_NAME, ACTION_NAME\n| where Failures > 50\n| order by Failures desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-004',
+      name: 'Audit Policy Coverage Gap',
+      objective: 'Ensure unified audit policies remain active and covering expected schemas, detecting policy disablement or coverage gaps that create monitoring blind spots.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'audit', 'compliance'],
+      requiredFields: ['EVENT_TIMESTAMP', 'UNIFIED_AUDIT_POLICIES', 'DBUSERNAME', 'ACTION_NAME', 'OBJECT_SCHEMA'],
+      detectionLogic: 'Alert when expected UNIFIED_AUDIT_POLICIES names stop appearing in audit events for >1 hour, or when schemas that previously had audit coverage stop generating events. Compare active policy list against baseline.',
+      operationalValue: 'If audit policies are disabled or misconfigured, both security and operational monitoring become blind. This is a meta-detection that validates the monitoring infrastructure itself.',
+      changeMgmtRelevance: 'Audit policies can be inadvertently disabled during database upgrades, migrations, or administrative operations. Post-change validation should always verify audit coverage.',
+      troubleshootingWorkflow: '1. List expected UNIFIED_AUDIT_POLICIES from baseline\n2. Compare against policies seen in recent events\n3. Identify missing policies — were they dropped or disabled?\n4. Check if a DBA operation altered audit configuration\n5. Verify OBJECT_SCHEMA coverage — are all critical schemas still audited?\n6. Re-enable or recreate missing policies',
+      dashboardDependency: 'Audit Coverage dashboard, Policy Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active audit policies in last 24 hours',
+          description: 'List all audit policies generating events to verify coverage',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize EventCount=count(), LastSeen=max(EVENT_TIMESTAMP) by UNIFIED_AUDIT_POLICIES\n| order by EventCount desc'
+        },
+        {
+          name: 'Schema coverage by audit policy',
+          description: 'Verify which schemas are being captured by each policy',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by UNIFIED_AUDIT_POLICIES, OBJECT_SCHEMA\n| order by UNIFIED_AUDIT_POLICIES asc, count_ desc'
+        },
+        {
+          name: 'Audit policy event trend',
+          description: 'Track event generation per policy to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h count() by UNIFIED_AUDIT_POLICIES'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-005',
+      name: 'Privilege Escalation or Grant Activity',
+      objective: 'Monitor GRANT and REVOKE operations that modify database access, detecting both planned privilege changes and unauthorized escalation.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'privileges', 'access-control'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME', 'OBJECT_SCHEMA', 'OBJECT_NAME', 'SQL_TEXT', 'OS_USERNAME'],
+      detectionLogic: 'Alert on all GRANT and REVOKE actions, with elevated severity when: DBA role is granted, SYSDBA/SYSOPER privileges are assigned, or grants occur outside change windows. Track per DBUSERNAME and target.',
+      operationalValue: 'Privilege changes affect application functionality. Unplanned grants can break least-privilege models, while unplanned revokes can break applications that depend on specific access.',
+      changeMgmtRelevance: 'All privilege modifications should be tied to change requests. Grants outside change windows indicate emergency changes or unauthorized activity requiring documentation.',
+      troubleshootingWorkflow: '1. Identify the DBUSERNAME performing the grant/revoke\n2. Determine the target user and privileges affected\n3. Review SQL_TEXT for the full GRANT/REVOKE statement\n4. Check if this correlates with an approved change\n5. Verify the OS_USERNAME matches expected DBA accounts\n6. Assess impact on applications that use the affected account',
+      dashboardDependency: 'Privilege Change Audit dashboard, Access Control dashboard',
+      criblSearchQueries: [
+        {
+          name: 'All GRANT and REVOKE operations (last 24 hours)',
+          description: 'Complete list of privilege modifications for review',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME in ("GRANT", "REVOKE")\n| project EVENT_TIMESTAMP, DBUSERNAME, OS_USERNAME, ACTION_NAME, SQL_TEXT, OBJECT_SCHEMA, OBJECT_NAME\n| order by EVENT_TIMESTAMP desc'
+        },
+        {
+          name: 'Privilege changes by actor over time',
+          description: 'Track who is making privilege changes and when',
+          query: 'dataset="$DATASET" earliest=-7d\n| where ACTION_NAME in ("GRANT", "REVOKE")\n| timestats span=4h count() by DBUSERNAME, ACTION_NAME'
+        },
+        {
+          name: 'High-privilege grants (DBA, SYSDBA)',
+          description: 'Filter for dangerous privilege assignments',
+          query: 'dataset="$DATASET" earliest=-30d\n| where ACTION_NAME == "GRANT"\n| where SQL_TEXT contains "DBA" or SQL_TEXT contains "SYSDBA" or SQL_TEXT contains "SYSOPER"\n| project EVENT_TIMESTAMP, DBUSERNAME, OS_USERNAME, SQL_TEXT\n| order by EVENT_TIMESTAMP desc'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-006',
+      name: 'Connection Source Diversity Change',
+      objective: 'Detect changes in the population of hosts connecting to the database, identifying new sources that may indicate application sprawl or infrastructure changes.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'connectivity', 'infrastructure'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'USERHOST', 'AUTHENTICATION_TYPE', 'ACTION_NAME'],
+      detectionLogic: 'Alert when new USERHOST values appear that were not seen in the prior 7-day baseline, or when the distinct count of connecting hosts changes by >30%. Evaluate hourly.',
+      operationalValue: 'New connection sources can indicate unauthorized application deployments, infrastructure drift, or capacity planning needs. Unexpected host growth signals unplanned demand.',
+      changeMgmtRelevance: 'New connecting hosts should correlate with application deployments or infrastructure provisioning. Unknown sources indicate shadow IT or configuration drift.',
+      troubleshootingWorkflow: '1. Identify new USERHOST values not seen in baseline\n2. Determine which DBUSERNAME the new hosts use\n3. Verify if new hosts are from approved infrastructure\n4. Check if connection count is impacting database capacity\n5. Validate AUTHENTICATION_TYPE is appropriate for new sources\n6. Update baseline if hosts are approved',
+      dashboardDependency: 'Connection Source dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Distinct connecting hosts per day',
+          description: 'Track the population of hosts connecting to identify growth or anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1d DistinctHosts=dcount(USERHOST) by DBUSERNAME'
+        },
+        {
+          name: 'New hosts in last 24 hours',
+          description: 'Identify hosts connecting that are potentially new to the environment',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "LOGON"\n| summarize FirstSeen=min(EVENT_TIMESTAMP), Connections=count() by USERHOST, DBUSERNAME, AUTHENTICATION_TYPE\n| order by FirstSeen desc\n| limit 50'
+        },
+        {
+          name: 'Connection volume by host',
+          description: 'Identify top connecting hosts and their authentication methods',
+          query: 'dataset="$DATASET" earliest=-24h\n| where ACTION_NAME == "LOGON"\n| summarize Connections=count() by USERHOST, DBUSERNAME, AUTHENTICATION_TYPE\n| order by Connections desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'ora-obs-007',
+      name: 'Audit Log Ingestion Health',
+      objective: 'Monitor the continuous flow of Oracle unified audit events into the observability pipeline, detecting gaps that indicate collection failures.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'data-quality', 'monitoring'],
+      requiredFields: ['EVENT_TIMESTAMP', 'DBUSERNAME', 'ACTION_NAME'],
+      detectionLogic: 'Alert when no audit events are received for >10 minutes from a previously active database, or when event volume drops >80% compared to same time-of-day baseline. Check for time gaps between consecutive EVENT_TIMESTAMP values.',
+      operationalValue: 'Audit log gaps mean all dependent detections are blind. This meta-detection ensures the monitoring pipeline itself is healthy.',
+      changeMgmtRelevance: 'Audit log collection failures often follow database maintenance, upgrades, or Cribl pipeline changes. Validate collection health post-change.',
+      troubleshootingWorkflow: '1. Check last received EVENT_TIMESTAMP\n2. Verify the Oracle audit trail is not full (DBA_AUDIT_MGMT_LAST_ARCH_TS)\n3. Check Cribl source connectivity to the database\n4. Verify no network issues between Oracle and collection infrastructure\n5. Check if unified audit policies are still enabled\n6. Verify Cribl pipeline processing metrics',
+      dashboardDependency: 'Log Ingestion Health dashboard, Pipeline Monitoring dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume over time',
+          description: 'Track audit event ingestion rate to detect drop-offs',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m count()'
+        },
+        {
+          name: 'Last event timestamp and gap analysis',
+          description: 'Find the most recent event and identify time gaps',
+          query: 'dataset="$DATASET" earliest=-1h\n| summarize LastEvent=max(EVENT_TIMESTAMP), EventCount=count(), DistinctUsers=dcount(DBUSERNAME)\n| extend MinutesSinceLastEvent=datetime_diff("minute", now(), LastEvent)'
+        },
+        {
+          name: 'Event distribution by action type',
+          description: 'Verify all expected action types are being captured',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by ACTION_NAME\n| order by count_ desc'
+        },
+        {
+          name: 'Hourly ingestion comparison (today vs 7-day avg)',
+          description: 'Compare current ingestion against historical baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count()\n| order by _time desc'
+        }
+      ]
+    }
+  ],
+  'salesforce-events': [
+    {
+      id: 'sfe-obs-001',
+      name: 'API Error Rate Spike',
+      objective: 'Detect increases in API error responses that indicate Salesforce service degradation, integration failures, or application issues affecting business operations.',
+      severity: 'Critical',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'api', 'availability'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'STATUS_CODE', 'API_TYPE', 'URI', 'METHOD', 'CLIENT_NAME'],
+      detectionLogic: 'Alert when HTTP STATUS_CODE >= 400 exceeds 10% of total API requests in a 10-minute window, or when 5xx errors exceed 5%. Evaluate per API_TYPE and CLIENT_NAME separately. Use 7-day baseline for time-of-day comparison.',
+      operationalValue: 'API errors directly impact integrations, automation workflows, and end-user experience. Early detection prevents data sync failures and business process interruptions.',
+      changeMgmtRelevance: 'API error spikes often follow Salesforce releases, custom code deployments, integration credential rotations, or API version deprecations.',
+      troubleshootingWorkflow: '1. Identify the STATUS_CODE distribution (4xx vs 5xx)\n2. Determine affected CLIENT_NAME and API_TYPE\n3. Check URI patterns — is it a specific endpoint or widespread?\n4. For 401/403: check if credentials or permissions changed\n5. For 429: check if API limits were reduced or usage increased\n6. For 5xx: check Salesforce Trust status page\n7. Verify Cribl pipeline is not introducing errors',
+      dashboardDependency: 'API Health dashboard, Integration Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Error rate by status code (last 4 hours)',
+          description: 'Track API error distribution to identify failure patterns',
+          query: 'dataset="$DATASET" earliest=-4h\n| extend is_error=iif(STATUS_CODE >= 400, 1, 0)\n| summarize Total=count(), Errors=sum(is_error) by API_TYPE, CLIENT_NAME\n| extend ErrorRate=round(Errors * 100.0 / Total, 1)\n| where ErrorRate > 5\n| order by ErrorRate desc'
+        },
+        {
+          name: 'Error trend over time by type',
+          description: 'Visualize error rate changes to pinpoint when degradation started',
+          query: 'dataset="$DATASET" earliest=-12h\n| where STATUS_CODE >= 400\n| timestats span=10m count() by STATUS_CODE, API_TYPE'
+        },
+        {
+          name: 'Top failing endpoints',
+          description: 'Identify specific URIs with highest error rates',
+          query: 'dataset="$DATASET" earliest=-2h\n| where STATUS_CODE >= 400\n| summarize Errors=count() by URI, METHOD, STATUS_CODE, CLIENT_NAME\n| order by Errors desc\n| limit 30'
+        },
+        {
+          name: 'Client-specific error analysis',
+          description: 'Break down errors by integration client to isolate which system is affected',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Total=count(), E4xx=countif(STATUS_CODE >= 400 and STATUS_CODE < 500), E5xx=countif(STATUS_CODE >= 500) by CLIENT_NAME, API_TYPE\n| extend ErrorPct=round((E4xx + E5xx) * 100.0 / Total, 1)\n| order by ErrorPct desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-002',
+      name: 'Login Success Rate Degradation',
+      objective: 'Monitor login event patterns to detect authentication service issues, SSO failures, or platform availability problems affecting user access.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'authentication', 'login'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'SOURCE_IP', 'LOGIN_KEY', 'STATUS_CODE'],
+      detectionLogic: 'Alert when login failure rate exceeds 30% over a 15-minute window, or when login events drop to zero during business hours. Compare against day-of-week baseline. Separate by SOURCE_IP subnet to detect location-specific issues.',
+      operationalValue: 'Login failures at scale indicate SSO/IdP issues, Salesforce platform problems, or network connectivity issues that block entire user populations from working.',
+      changeMgmtRelevance: 'Login failures spike after SSO configuration changes, certificate rotations, IP allowlist updates, or Salesforce session security policy changes.',
+      troubleshootingWorkflow: '1. Determine scope — all users or specific subset?\n2. Check if failures are from specific SOURCE_IP ranges (office vs VPN vs remote)\n3. Verify SSO/IdP health if federated authentication is in use\n4. Check Salesforce Trust for platform-level issues\n5. Review recent security policy changes (session settings, IP restrictions)\n6. Check if LOGIN_KEY patterns indicate session vs fresh login issues',
+      dashboardDependency: 'User Access Health dashboard, Login Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Login success vs failure rate over time',
+          description: 'Track authentication health to spot degradation',
+          query: 'dataset="$DATASET" earliest=-12h\n| where EVENT_TYPE contains "Login"\n| extend is_failure=iif(STATUS_CODE >= 400, 1, 0)\n| timestats span=15m Total=count(), Failures=sum(is_failure)'
+        },
+        {
+          name: 'Failed logins by source IP',
+          description: 'Identify if login failures are location-specific',
+          query: 'dataset="$DATASET" earliest=-4h\n| where EVENT_TYPE contains "Login" and STATUS_CODE >= 400\n| summarize Failures=count(), DistinctUsers=dcount(USER_ID) by SOURCE_IP\n| order by Failures desc\n| limit 20'
+        },
+        {
+          name: 'Login volume compared to baseline',
+          description: 'Compare current login activity to expected volume',
+          query: 'dataset="$DATASET" earliest=-24h\n| where EVENT_TYPE contains "Login"\n| timestats span=1h count() by EVENT_TYPE'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-003',
+      name: 'API Consumption Rate Approaching Limits',
+      objective: 'Track API usage velocity to detect integrations approaching Salesforce governor limits, preventing service disruptions from throttling.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'api-limits', 'throttling'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'API_TYPE', 'CLIENT_NAME', 'URI', 'METHOD', 'STATUS_CODE'],
+      detectionLogic: 'Alert when API call volume per CLIENT_NAME exceeds 70% of expected daily allocation based on org limits, or when 429 (Too Many Requests) responses begin appearing. Track hourly burn rate to project limit breach time.',
+      operationalValue: 'Salesforce API limits are org-wide. One runaway integration can exhaust limits and block all other integrations, causing cascading business process failures.',
+      changeMgmtRelevance: 'API consumption spikes follow new integration deployments, bulk data operations, or changed synchronization frequencies. Pre-change API capacity planning is essential.',
+      troubleshootingWorkflow: '1. Identify which CLIENT_NAME is consuming the most API calls\n2. Check for 429 status codes indicating throttling has begun\n3. Determine if consumption is from a new or modified integration\n4. Calculate current burn rate and projected daily total\n5. Identify if bulk API operations can be moved to off-hours\n6. Consider API call optimization (composite requests, batch operations)',
+      dashboardDependency: 'API Consumption dashboard, Integration Capacity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'API calls per client (last 24 hours)',
+          description: 'Track which integrations are consuming API capacity',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Calls=count() by CLIENT_NAME, API_TYPE\n| order by Calls desc'
+        },
+        {
+          name: 'Hourly API consumption trend',
+          description: 'Visualize API burn rate to project limit breach',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h count() by CLIENT_NAME'
+        },
+        {
+          name: 'Throttled requests (429 responses)',
+          description: 'Detect when API limits are actively being enforced',
+          query: 'dataset="$DATASET" earliest=-12h\n| where STATUS_CODE == 429\n| timestats span=15m count() by CLIENT_NAME, API_TYPE'
+        },
+        {
+          name: 'API method distribution by client',
+          description: 'Understand what operations each client performs to identify optimization targets',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Calls=count() by CLIENT_NAME, METHOD, URI\n| order by Calls desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-004',
+      name: 'Integration User Activity Anomaly',
+      objective: 'Monitor service account and integration user activity patterns to detect broken integrations, stuck processes, or unexpected behavioral changes.',
+      severity: 'Medium',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'integration', 'service-account'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'USER_ID', 'EVENT_TYPE', 'API_TYPE', 'CLIENT_NAME', 'URI', 'STATUS_CODE'],
+      detectionLogic: 'Alert when integration user (identified by CLIENT_NAME or USER_ID patterns) shows >3x increase in event volume, sudden drop to zero, or shift in EVENT_TYPE distribution compared to 7-day baseline. Evaluate per integration user.',
+      operationalValue: 'Integration user anomalies are early indicators of sync failures, stuck batch jobs, or misconfigured automation that can cause data inconsistency across systems.',
+      changeMgmtRelevance: 'Integration behavior changes after connected system upgrades, field mapping modifications, or workflow rule changes. Baseline comparison helps isolate change impact.',
+      troubleshootingWorkflow: '1. Identify the affected integration user (CLIENT_NAME/USER_ID)\n2. Compare current activity pattern to 7-day baseline\n3. Check if activity increased (runaway process) or decreased (broken integration)\n4. Review EVENT_TYPE distribution — has the operation mix changed?\n5. Check the connected system for errors or configuration changes\n6. Verify credentials and permissions are still valid',
+      dashboardDependency: 'Integration Health dashboard, Service Account Activity dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Integration user activity over time',
+          description: 'Track activity patterns per integration user to spot anomalies',
+          query: 'dataset="$DATASET" earliest=-7d\n| where API_TYPE != ""\n| timestats span=1h count() by CLIENT_NAME'
+        },
+        {
+          name: 'Event type distribution per client',
+          description: 'Check if integration behavior pattern has shifted',
+          query: 'dataset="$DATASET" earliest=-24h\n| where CLIENT_NAME != ""\n| summarize count() by CLIENT_NAME, EVENT_TYPE, METHOD\n| order by CLIENT_NAME asc, count_ desc'
+        },
+        {
+          name: 'Integration users with zero activity (last 2 hours)',
+          description: 'Find integrations that may have stopped working',
+          query: 'dataset="$DATASET" earliest=-2h\n| where CLIENT_NAME != ""\n| summarize LastSeen=max(TIMESTAMP_DERIVED), Events=count() by CLIENT_NAME\n| where Events < 5\n| order by LastSeen asc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-005',
+      name: 'Event Type Distribution Shift',
+      objective: 'Detect significant changes in the mix of Salesforce event types that indicate platform behavior changes, new automation, or broken processes.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'event-distribution', 'platform'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'EVENT_TYPE', 'USER_ID', 'ORG_ID', 'API_TYPE'],
+      detectionLogic: 'Alert when any EVENT_TYPE changes by >50% in volume compared to 7-day same-day baseline, or when new EVENT_TYPE values appear that were not seen in the prior 30 days. Evaluate per ORG_ID.',
+      operationalValue: 'Event type shifts indicate platform-level behavioral changes that affect all downstream analytics, alerting, and compliance reporting.',
+      changeMgmtRelevance: 'Distribution shifts follow Salesforce seasonal releases, custom code deployments, workflow rule changes, or process builder modifications.',
+      troubleshootingWorkflow: '1. Identify which EVENT_TYPE(s) changed in volume\n2. Determine if this is an increase (new automation) or decrease (broken process)\n3. Check if new event types appeared (Salesforce release added them)\n4. Correlate with Salesforce release calendar\n5. Check if custom triggers or flows were deployed\n6. Verify impact on downstream reporting and alerting',
+      dashboardDependency: 'Platform Activity dashboard, Event Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event type distribution (current vs 7-day baseline)',
+          description: 'Compare current event mix against historical baseline',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize CurrentCount=count() by EVENT_TYPE\n| order by CurrentCount desc'
+        },
+        {
+          name: 'Event type volume over time',
+          description: 'Track each event type to visualize shifts',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by EVENT_TYPE'
+        },
+        {
+          name: 'New event types in last 24 hours',
+          description: 'Identify event types that recently appeared',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize FirstSeen=min(TIMESTAMP_DERIVED), Count=count() by EVENT_TYPE\n| order by FirstSeen desc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-006',
+      name: 'Multi-Org Event Volume Imbalance',
+      objective: 'Monitor event generation across Salesforce orgs to detect org-specific issues or configuration drift between production and sandbox environments.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'multi-org', 'monitoring'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'ORG_ID', 'EVENT_TYPE', 'USER_ID', 'STATUS_CODE'],
+      detectionLogic: 'Alert when an ORG_ID shows >60% volume change compared to its own baseline, or when expected orgs stop generating events entirely. Evaluate hourly per ORG_ID.',
+      operationalValue: 'Org-level volume changes indicate environment-specific issues, broken event monitoring configurations, or sandbox refresh impacts.',
+      changeMgmtRelevance: 'Volume changes per org follow sandbox refreshes, org-specific deployments, or event monitoring configuration changes.',
+      troubleshootingWorkflow: '1. Identify which ORG_ID shows abnormal volume\n2. Determine if volume increased (new activity) or decreased (broken collection)\n3. Check if org had a sandbox refresh that reset event monitoring\n4. Verify event monitoring configuration in the affected org\n5. Check if Cribl source for that org is healthy\n6. Compare with other orgs to determine if issue is isolated',
+      dashboardDependency: 'Multi-Org Health dashboard, Ingestion Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event volume by org over time',
+          description: 'Compare event generation across orgs to spot imbalances',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by ORG_ID'
+        },
+        {
+          name: 'Org health summary',
+          description: 'Current status of each org including last event and error rate',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Events=count(), LastEvent=max(TIMESTAMP_DERIVED), Errors=countif(STATUS_CODE >= 400), DistinctUsers=dcount(USER_ID) by ORG_ID\n| extend ErrorRate=round(Errors * 100.0 / Events, 1)\n| order by Events desc'
+        },
+        {
+          name: 'Orgs with significant volume drop',
+          description: 'Find orgs that may have stopped generating events or reduced significantly',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize RecentEvents=count() by ORG_ID\n| where RecentEvents < 10\n| order by RecentEvents asc'
+        }
+      ]
+    },
+    {
+      id: 'sfe-obs-007',
+      name: 'Event Pipeline Latency and Gaps',
+      objective: 'Monitor the timeliness and continuity of Salesforce event delivery to detect collection delays or pipeline failures.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'data-quality', 'latency'],
+      requiredFields: ['TIMESTAMP_DERIVED', 'EVENT_TYPE', 'ORG_ID', 'USER_ID'],
+      detectionLogic: 'Alert when no events are received for >15 minutes during business hours, or when the gap between TIMESTAMP_DERIVED and ingestion time exceeds 5 minutes. Check for completeness by verifying all expected EVENT_TYPEs are present.',
+      operationalValue: 'Pipeline latency and gaps mean downstream alerting and dashboards operate on stale data. Detecting pipeline issues quickly ensures operational decisions are based on current information.',
+      changeMgmtRelevance: 'Pipeline failures follow Salesforce API version changes, Cribl source configuration modifications, or network infrastructure changes affecting connectivity.',
+      troubleshootingWorkflow: '1. Check the last received TIMESTAMP_DERIVED across all event types\n2. Verify Cribl source connectivity to Salesforce Event Monitoring API\n3. Check if Salesforce event log files are being generated (API query)\n4. Verify authentication tokens have not expired\n5. Check for Salesforce maintenance windows\n6. Review Cribl pipeline metrics for backpressure or errors',
+      dashboardDependency: 'Pipeline Health dashboard, Data Freshness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event ingestion rate over time',
+          description: 'Track event arrival rate to detect gaps and delays',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=5m count()'
+        },
+        {
+          name: 'Last event per type and org',
+          description: 'Identify which event types or orgs have stale data',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize LastEvent=max(TIMESTAMP_DERIVED), Count=count() by EVENT_TYPE, ORG_ID\n| order by LastEvent asc'
+        },
+        {
+          name: 'Event continuity check',
+          description: 'Verify continuous event flow without gaps',
+          query: 'dataset="$DATASET" earliest=-12h\n| timestats span=10m count() by EVENT_TYPE\n| order by _time desc'
+        },
+        {
+          name: 'Distinct event types per hour',
+          description: 'Verify all expected event types are present in each time window',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=1h DistinctTypes=dcount(EVENT_TYPE), Events=count()'
+        }
+      ]
+    }
+  ],
+  'workday-audit': [
+    {
+      id: 'wda-obs-001',
+      name: 'System Account Activity Spike',
+      objective: 'Detect abnormal increases in system account operations that indicate runaway automation, integration failures, or unexpected batch processing.',
+      severity: 'Critical',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'system-account', 'automation'],
+      requiredFields: ['timestamp', 'systemAccount', 'taskName', 'activityAction', 'requestId'],
+      detectionLogic: 'Alert when a systemAccount generates >300% more events than its 7-day baseline in a 15-minute window. Evaluate per systemAccount and taskName combination. Also alert on new systemAccount values not previously seen.',
+      operationalValue: 'Runaway system accounts can overload Workday, causing performance degradation for all users. Early detection prevents business-critical HR processes from being impacted.',
+      changeMgmtRelevance: 'System account spikes follow integration deployments, scheduled job configuration changes, or connected system modifications.',
+      troubleshootingWorkflow: '1. Identify the systemAccount generating excessive activity\n2. Determine which taskName operations are being performed\n3. Check if the activity pattern matches a known batch job schedule\n4. Verify the connected integration system is healthy\n5. Check for retry loops (same requestId patterns)\n6. Determine if rate limiting or circuit breaking is needed',
+      dashboardDependency: 'System Account Activity dashboard, Integration Performance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'System account activity by volume (last 4 hours)',
+          description: 'Identify which system accounts are generating the most activity',
+          query: 'dataset="$DATASET" earliest=-4h\n| where systemAccount != ""\n| summarize Events=count(), DistinctTasks=dcount(taskName) by systemAccount\n| order by Events desc'
+        },
+        {
+          name: 'System account activity trend',
+          description: 'Track activity volume over time to spot spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where systemAccount != ""\n| timestats span=15m count() by systemAccount'
+        },
+        {
+          name: 'Task distribution per system account',
+          description: 'Understand what operations each system account is performing',
+          query: 'dataset="$DATASET" earliest=-4h\n| where systemAccount != ""\n| summarize count() by systemAccount, taskName, activityAction\n| order by count_ desc\n| limit 50'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-002',
+      name: 'Business Process Task Failure Rate',
+      objective: 'Monitor Workday business process task completion rates to detect process breakdowns affecting HR operations, payroll, or employee lifecycle management.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'business-process', 'hr-operations'],
+      requiredFields: ['timestamp', 'taskName', 'activityAction', 'actor', 'target', 'requestId'],
+      detectionLogic: 'Alert when task failures (activityAction indicating error, denial, or rollback) exceed 20% of total activity for a taskName in a 30-minute window. Track per taskName with >10 events minimum to avoid noise.',
+      operationalValue: 'Business process failures directly impact employee experience, payroll accuracy, and compliance timelines. Early detection prevents cascading process breakdowns.',
+      changeMgmtRelevance: 'Task failures spike after business process configuration changes, security policy updates, or Workday feature releases that alter process flow.',
+      troubleshootingWorkflow: '1. Identify which taskName has elevated failure rate\n2. Determine the activityAction type (denied, error, cancelled)\n3. Check if failures affect specific actors or targets\n4. Review recent business process configuration changes\n5. Check if security policy changes are denying previously allowed actions\n6. Verify integration dependencies are healthy',
+      dashboardDependency: 'Business Process Health dashboard, Task Completion dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Task success vs failure breakdown',
+          description: 'Compare successful and failed task executions',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize Total=count() by taskName, activityAction\n| order by taskName asc, Total desc'
+        },
+        {
+          name: 'Failed tasks over time',
+          description: 'Track task failure trends to identify degradation',
+          query: 'dataset="$DATASET" earliest=-24h\n| where activityAction contains "fail" or activityAction contains "deny" or activityAction contains "error"\n| timestats span=30m count() by taskName'
+        },
+        {
+          name: 'Failure patterns by actor and target',
+          description: 'Identify if failures are concentrated on specific users or targets',
+          query: 'dataset="$DATASET" earliest=-4h\n| where activityAction contains "fail" or activityAction contains "deny"\n| summarize Failures=count() by taskName, actor, target\n| order by Failures desc\n| limit 30'
+        },
+        {
+          name: 'Request IDs with repeated failures',
+          description: 'Find stuck processes retrying the same operation',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize Attempts=count(), DistinctActions=dcount(activityAction) by requestId, taskName\n| where Attempts > 3\n| order by Attempts desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-003',
+      name: 'Bulk Administrative Action Detected',
+      objective: 'Monitor for high-volume administrative operations that indicate mass changes to workforce data, potentially impacting multiple business processes simultaneously.',
+      severity: 'High',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'bulk-operations', 'administration'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'target', 'activityAction', 'systemAccount'],
+      detectionLogic: 'Alert when a single actor performs >50 operations of the same taskName within 30 minutes, or when target diversity exceeds 20 unique targets for a single actor/task combination. Separate human actors from system accounts.',
+      operationalValue: 'Bulk operations can trigger cascading business processes (notifications, approvals, integrations) that overwhelm downstream systems.',
+      changeMgmtRelevance: 'Bulk changes should correlate with approved mass-update change records. Unplanned bulk operations risk data quality issues and downstream system overload.',
+      troubleshootingWorkflow: '1. Identify the actor performing bulk operations\n2. Determine the taskName and activityAction being performed\n3. Count distinct targets to assess blast radius\n4. Check if this correlates with an approved mass-change request\n5. Monitor downstream integration queues for backlog\n6. Verify data quality in target records after completion',
+      dashboardDependency: 'Administrative Activity dashboard, Change Impact dashboard',
+      criblSearchQueries: [
+        {
+          name: 'High-volume actors (last 4 hours)',
+          description: 'Find actors performing unusually high numbers of operations',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Operations=count(), UniqueTargets=dcount(target), UniqueTasks=dcount(taskName) by actor\n| where Operations > 50\n| order by Operations desc'
+        },
+        {
+          name: 'Bulk operation patterns over time',
+          description: 'Visualize concentrated bursts of administrative activity',
+          query: 'dataset="$DATASET" earliest=-12h\n| summarize count() by actor, taskName\n| where count_ > 20\n| order by count_ desc'
+        },
+        {
+          name: 'Actor activity timeline',
+          description: 'Track a specific actor operations to see burst patterns',
+          query: 'dataset="$DATASET" earliest=-4h\n| timestats span=5m count() by actor\n| order by _time desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-004',
+      name: 'Security Policy Change Impact',
+      objective: 'Detect when security policy modifications in Workday affect access patterns, potentially blocking legitimate operations or opening unauthorized access.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'security-policy', 'access'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'activityAction', 'target', 'ipAddress'],
+      detectionLogic: 'Alert when taskName values related to security configuration change (policy edits, role assignments, domain access) followed by increased denial activity within 30 minutes. Correlate security changes with subsequent access failures.',
+      operationalValue: 'Security policy changes can inadvertently lock out users or break integrations. Detecting impact quickly enables rapid remediation before business processes are affected.',
+      changeMgmtRelevance: 'Security policy changes are high-risk modifications that require careful change management. Post-change monitoring validates that intended behavior matches actual behavior.',
+      troubleshootingWorkflow: '1. Identify the security-related taskName that was modified\n2. Determine which actor made the change\n3. Check for increased denial activity in the following time window\n4. Identify affected users or system accounts\n5. Compare access patterns before and after the change\n6. Determine if rollback is needed or if the change is working as intended',
+      dashboardDependency: 'Security Change Impact dashboard, Access Pattern dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Security-related task activity (last 24 hours)',
+          description: 'Track security configuration changes',
+          query: 'dataset="$DATASET" earliest=-24h\n| where taskName contains "Security" or taskName contains "Policy" or taskName contains "Role" or taskName contains "Permission"\n| summarize count() by taskName, actor, activityAction\n| order by count_ desc'
+        },
+        {
+          name: 'Denial activity trend',
+          description: 'Monitor for increased access denials following changes',
+          query: 'dataset="$DATASET" earliest=-12h\n| where activityAction contains "deny" or activityAction contains "unauthorized"\n| timestats span=15m count() by taskName'
+        },
+        {
+          name: 'Access changes by IP address',
+          description: 'Identify if access pattern changes correlate with location',
+          query: 'dataset="$DATASET" earliest=-4h\n| where activityAction contains "deny"\n| summarize Denials=count() by actor, ipAddress, taskName\n| order by Denials desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-005',
+      name: 'Actor Concurrency Anomaly',
+      objective: 'Detect when a single actor generates activity from multiple IP addresses simultaneously, indicating potential session issues or shared account usage.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'session', 'concurrency'],
+      requiredFields: ['timestamp', 'actor', 'ipAddress', 'taskName', 'activityAction'],
+      detectionLogic: 'Alert when an actor has events from >3 distinct ipAddress values within a 15-minute window. Exclude known system accounts and VPN egress ranges. Focus on interactive human actors.',
+      operationalValue: 'Multiple concurrent sessions from different locations may indicate account sharing, compromised credentials being used simultaneously, or session fixation issues.',
+      changeMgmtRelevance: 'Concurrency anomalies can follow VPN infrastructure changes, office network reconfigurations, or session policy modifications.',
+      troubleshootingWorkflow: '1. Identify the actor with multiple concurrent IP addresses\n2. Determine if IPs are from known corporate ranges (VPN, offices)\n3. Check timing — are events truly concurrent or sequential?\n4. Verify if actor is a system account (expected multi-source behavior)\n5. Review if recent session policy changes affected behavior\n6. Check if load balancer or proxy changes altered IP visibility',
+      dashboardDependency: 'User Activity dashboard, Session Analytics dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Actors with multiple IPs (last 4 hours)',
+          description: 'Find actors operating from multiple locations simultaneously',
+          query: 'dataset="$DATASET" earliest=-4h\n| where actor != "" and ipAddress != ""\n| summarize DistinctIPs=dcount(ipAddress), Events=count() by actor\n| where DistinctIPs > 3\n| order by DistinctIPs desc'
+        },
+        {
+          name: 'IP distribution per actor over time',
+          description: 'Track which IPs each actor uses and when',
+          query: 'dataset="$DATASET" earliest=-12h\n| where actor != "" and ipAddress != ""\n| summarize count() by actor, ipAddress\n| order by actor asc, count_ desc'
+        },
+        {
+          name: 'Concurrent activity detail for specific actor',
+          description: 'Deep-dive into a specific actor multi-IP activity',
+          query: 'dataset="$DATASET" earliest=-4h\n| where actor != "" and ipAddress != ""\n| summarize Events=count(), Tasks=dcount(taskName) by actor, ipAddress\n| order by actor asc, Events desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-006',
+      name: 'Critical Task Latency Increase',
+      objective: 'Monitor the time between related audit events to detect when business-critical processes are taking longer than expected to complete.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'latency', 'business-process'],
+      requiredFields: ['timestamp', 'taskName', 'requestId', 'activityAction', 'actor'],
+      detectionLogic: 'Alert when the time span between initiation and completion events for the same requestId exceeds 200% of the 7-day baseline for that taskName. Focus on critical HR processes (payroll, termination, hiring).',
+      operationalValue: 'Process latency increases indicate system performance issues, approval bottlenecks, or integration delays that affect time-sensitive HR operations like payroll processing.',
+      changeMgmtRelevance: 'Latency increases after Workday configuration changes, integration modifications, or approval workflow restructuring indicate performance regression.',
+      troubleshootingWorkflow: '1. Identify which taskName shows latency increase\n2. Check if latency is in processing time or waiting time (approvals)\n3. Review requestId lifecycle — where is time being spent?\n4. Check integration queue depths if external systems are involved\n5. Verify Workday tenant performance metrics\n6. Check if approval routing changes added steps',
+      dashboardDependency: 'Process Performance dashboard, SLA Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Request lifecycle duration',
+          description: 'Measure time from first to last event per request',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize StartTime=min(timestamp), EndTime=max(timestamp), Steps=count() by requestId, taskName\n| extend DurationMin=datetime_diff("minute", EndTime, StartTime)\n| where DurationMin > 0\n| order by DurationMin desc\n| limit 30'
+        },
+        {
+          name: 'Average process duration by task',
+          description: 'Track process completion times across all task types',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize StartTime=min(timestamp), EndTime=max(timestamp) by requestId, taskName\n| extend DurationMin=datetime_diff("minute", EndTime, StartTime)\n| where DurationMin > 0\n| summarize AvgDuration=avg(DurationMin), MaxDuration=max(DurationMin), Count=count() by taskName\n| order by AvgDuration desc'
+        },
+        {
+          name: 'Slow processes in last 4 hours',
+          description: 'Find currently slow-running processes',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize StartTime=min(timestamp), EndTime=max(timestamp), Steps=count(), Actors=dcount(actor) by requestId, taskName\n| extend DurationMin=datetime_diff("minute", EndTime, StartTime)\n| where DurationMin > 30\n| order by DurationMin desc'
+        }
+      ]
+    },
+    {
+      id: 'wda-obs-007',
+      name: 'Audit Log Completeness Monitor',
+      objective: 'Validate continuous audit event collection from Workday to ensure no gaps exist that would create monitoring blind spots.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'data-quality', 'completeness'],
+      requiredFields: ['timestamp', 'actor', 'taskName', 'activityAction'],
+      detectionLogic: 'Alert when no audit events are received for >10 minutes during business hours, or when event volume drops >70% compared to same time-of-day baseline. Verify all expected activityAction types are present.',
+      operationalValue: 'Audit log gaps mean all Workday monitoring is blind. This meta-detection ensures the collection pipeline is healthy and complete.',
+      changeMgmtRelevance: 'Collection gaps follow Workday maintenance windows, API credential rotations, or Cribl pipeline changes. Post-maintenance validation is essential.',
+      troubleshootingWorkflow: '1. Check last received timestamp\n2. Verify Workday audit API connectivity\n3. Check API credentials have not expired\n4. Verify Workday is not in maintenance mode\n5. Check Cribl source health metrics\n6. Verify no network issues between Cribl and Workday API endpoint',
+      dashboardDependency: 'Pipeline Health dashboard, Data Freshness dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event ingestion rate',
+          description: 'Track audit event arrival rate to detect gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m count()'
+        },
+        {
+          name: 'Activity action type coverage',
+          description: 'Verify all expected event types are present',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Events=count(), LastSeen=max(timestamp) by activityAction\n| order by Events desc'
+        },
+        {
+          name: 'Hourly event volume comparison',
+          description: 'Compare current volume against historical baseline',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count()\n| order by _time desc'
+        }
+      ]
+    }
+  ],
+  'workday-integration-prism': [
+    {
+      id: 'wdp-obs-001',
+      name: 'Integration Run Failure',
+      objective: 'Detect integration failures that indicate broken data pipelines between Workday and connected systems, requiring immediate remediation.',
+      severity: 'Critical',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'integration', 'pipeline-failure'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'errorMessage', 'targetSystem'],
+      detectionLogic: 'Alert immediately when status indicates failure for any integration run. Escalate to Critical when the same integrationName fails consecutively (2+ times) or when the integration is classified as business-critical (payroll, benefits, HRIS sync).',
+      operationalValue: 'Integration failures break data synchronization between Workday and downstream systems, causing stale data, missed payroll updates, or compliance reporting gaps.',
+      changeMgmtRelevance: 'Integration failures follow connected system upgrades, credential rotations, API version changes, or Workday configuration modifications.',
+      troubleshootingWorkflow: '1. Identify the failing integrationName and targetSystem\n2. Review errorMessage for root cause classification\n3. Check if this is a first-time or recurring failure\n4. Verify credentials and connectivity to targetSystem\n5. Check if recent changes were made to the integration or target\n6. Determine SLA impact and escalation needs',
+      dashboardDependency: 'Integration Health dashboard, Pipeline Status dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Failed integrations (last 24 hours)',
+          description: 'List all integration failures with error details',
+          query: 'dataset="$DATASET" earliest=-24h\n| where status contains "fail" or status contains "error"\n| project timestamp, integrationName, status, errorMessage, targetSystem\n| order by timestamp desc'
+        },
+        {
+          name: 'Integration failure trend',
+          description: 'Track failure frequency over time to spot degradation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status contains "fail" or status contains "error"\n| timestats span=4h count() by integrationName'
+        },
+        {
+          name: 'Consecutive failures per integration',
+          description: 'Identify integrations with repeated consecutive failures',
+          query: 'dataset="$DATASET" earliest=-48h\n| where status contains "fail" or status contains "error"\n| summarize Failures=count(), LastFailure=max(timestamp) by integrationName, targetSystem, errorMessage\n| order by Failures desc'
+        },
+        {
+          name: 'Integration success vs failure rate',
+          description: 'Compare overall reliability across integrations',
+          query: 'dataset="$DATASET" earliest=-7d\n| extend is_failure=iif(status contains "fail" or status contains "error", 1, 0)\n| summarize Total=count(), Failures=sum(is_failure) by integrationName\n| extend FailRate=round(Failures * 100.0 / Total, 1)\n| order by FailRate desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-002',
+      name: 'Record Processing Failure Rate',
+      objective: 'Monitor the ratio of failed records to total processed records to detect data quality issues or schema mismatches affecting integration reliability.',
+      severity: 'High',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'record-processing', 'integration'],
+      requiredFields: ['timestamp', 'integrationName', 'recordsProcessed', 'recordsFailed', 'errorMessage', 'dataSource'],
+      detectionLogic: 'Alert when recordsFailed / recordsProcessed ratio exceeds 5% for any integration run, or when recordsFailed count exceeds 100 absolute records. Track per integrationName and dataSource.',
+      operationalValue: 'High record failure rates indicate data quality issues, schema drift, or validation rule changes that cause partial data loads, leading to inconsistent data across systems.',
+      changeMgmtRelevance: 'Record failures spike after data model changes, validation rule additions, field type modifications, or source data format changes.',
+      troubleshootingWorkflow: '1. Identify the integration with high failure rate\n2. Check errorMessage for common patterns (validation, data type, required field)\n3. Determine if failures started after a specific run (schema change)\n4. Review dataSource for upstream data quality issues\n5. Check if Workday validation rules were recently modified\n6. Sample failed records to identify root cause pattern',
+      dashboardDependency: 'Data Quality dashboard, Integration Reliability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Record failure rates by integration',
+          description: 'Calculate failure percentage for each integration',
+          query: 'dataset="$DATASET" earliest=-7d\n| where recordsProcessed > 0\n| extend FailRate=round(recordsFailed * 100.0 / recordsProcessed, 1)\n| summarize AvgFailRate=avg(FailRate), MaxFailRate=max(FailRate), Runs=count() by integrationName\n| order by AvgFailRate desc'
+        },
+        {
+          name: 'Record failure trend over time',
+          description: 'Track failed record counts to identify degradation',
+          query: 'dataset="$DATASET" earliest=-7d\n| where recordsFailed > 0\n| timestats span=12h sum(recordsFailed) by integrationName'
+        },
+        {
+          name: 'Error messages from high-failure runs',
+          description: 'Classify error types driving record failures',
+          query: 'dataset="$DATASET" earliest=-48h\n| where recordsFailed > 10\n| project timestamp, integrationName, recordsProcessed, recordsFailed, errorMessage, dataSource\n| order by recordsFailed desc\n| limit 30'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-003',
+      name: 'Integration Run Duration Anomaly',
+      objective: 'Detect integrations running significantly longer than normal, indicating performance degradation, data volume growth, or resource contention.',
+      severity: 'High',
+      category: 'Performance',
+      tags: ['observability', 'performance', 'duration', 'sla'],
+      requiredFields: ['timestamp', 'integrationName', 'runDuration', 'recordsProcessed', 'status'],
+      detectionLogic: 'Alert when runDuration exceeds 200% of the 30-day average for that integrationName, or when duration exceeds SLA threshold. Also detect integrations that used to complete in minutes now taking hours.',
+      operationalValue: 'Long-running integrations can miss processing windows, delay downstream systems, and indicate performance issues that will worsen over time without intervention.',
+      changeMgmtRelevance: 'Duration increases follow data volume growth, added processing logic, new validation rules, or target system performance degradation.',
+      troubleshootingWorkflow: '1. Compare current runDuration to historical baseline\n2. Check if recordsProcessed increased (volume-driven)\n3. If volume is flat but duration increased, check for performance regression\n4. Verify target system responsiveness\n5. Check for concurrent integration contention\n6. Review if processing logic was modified recently',
+      dashboardDependency: 'Integration Performance dashboard, SLA Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Integration duration trend',
+          description: 'Track run duration over time to identify creep',
+          query: 'dataset="$DATASET" earliest=-30d\n| where status contains "success" or status contains "complete"\n| timestats span=1d avg(runDuration) by integrationName'
+        },
+        {
+          name: 'Slow integrations (last 7 days)',
+          description: 'Find integrations with longest run durations',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize AvgDuration=avg(runDuration), MaxDuration=max(runDuration), AvgRecords=avg(recordsProcessed) by integrationName\n| order by AvgDuration desc'
+        },
+        {
+          name: 'Duration vs volume correlation',
+          description: 'Check if duration increases correlate with record volume growth',
+          query: 'dataset="$DATASET" earliest=-30d\n| where recordsProcessed > 0\n| extend DurationPerRecord=runDuration / recordsProcessed\n| summarize AvgPerRecord=avg(DurationPerRecord), Runs=count() by integrationName\n| order by AvgPerRecord desc'
+        },
+        {
+          name: 'Recent long-running integrations',
+          description: 'Identify integrations currently exceeding normal duration',
+          query: 'dataset="$DATASET" earliest=-48h\n| project timestamp, integrationName, runDuration, recordsProcessed, status\n| order by runDuration desc\n| limit 20'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-004',
+      name: 'Data Source Connectivity Loss',
+      objective: 'Detect when integrations lose connectivity to their data sources, indicating infrastructure failures or credential issues.',
+      severity: 'High',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'connectivity', 'data-source'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'errorMessage', 'dataSource', 'targetSystem'],
+      detectionLogic: 'Alert when errorMessage contains connectivity-related patterns (timeout, connection refused, authentication failed) or when a dataSource that normally runs on schedule misses its expected execution window by >30 minutes.',
+      operationalValue: 'Data source connectivity loss means integrations cannot pull fresh data, leading to stale downstream systems and potential SLA breaches.',
+      changeMgmtRelevance: 'Connectivity loss follows infrastructure changes, firewall rule modifications, credential rotations, or network reconfiguration.',
+      troubleshootingWorkflow: '1. Identify the integration and dataSource experiencing connectivity issues\n2. Classify the error (timeout vs auth failure vs connection refused)\n3. For auth failures: check credential expiration or rotation\n4. For timeouts: verify network path and firewall rules\n5. For connection refused: verify source system is running\n6. Check if multiple integrations sharing the same dataSource are affected',
+      dashboardDependency: 'Connectivity Health dashboard, Integration Dependencies dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Connectivity-related errors',
+          description: 'Filter for errors indicating source connectivity issues',
+          query: 'dataset="$DATASET" earliest=-24h\n| where errorMessage contains "timeout" or errorMessage contains "connection" or errorMessage contains "auth" or errorMessage contains "refused"\n| project timestamp, integrationName, dataSource, targetSystem, errorMessage\n| order by timestamp desc'
+        },
+        {
+          name: 'Data source health by last successful run',
+          description: 'Identify data sources that have not run successfully recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status contains "success" or status contains "complete"\n| summarize LastSuccess=max(timestamp), SuccessRuns=count() by integrationName, dataSource\n| order by LastSuccess asc'
+        },
+        {
+          name: 'Error frequency by data source',
+          description: 'Track which data sources generate the most errors',
+          query: 'dataset="$DATASET" earliest=-7d\n| where status contains "fail" or status contains "error"\n| summarize Errors=count() by dataSource, integrationName\n| order by Errors desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-005',
+      name: 'Record Volume Deviation',
+      objective: 'Monitor processed record counts for unexpected changes that indicate data source issues, filter problems, or upstream data pipeline failures.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'volume', 'anomaly'],
+      requiredFields: ['timestamp', 'integrationName', 'recordsProcessed', 'dataSource', 'status'],
+      detectionLogic: 'Alert when recordsProcessed deviates >50% from the 7-day rolling average for that integrationName. Both increases (data explosion) and decreases (missing data) are significant.',
+      operationalValue: 'Volume deviations indicate upstream data issues that will propagate to downstream systems. Catching them at the integration layer prevents bad data from spreading.',
+      changeMgmtRelevance: 'Volume changes follow source system modifications, data migration events, or filter/transformation changes in the integration configuration.',
+      troubleshootingWorkflow: '1. Determine if volume increased or decreased\n2. For decreases: check data source availability and filter criteria\n3. For increases: check if source system had a data migration or bulk load\n4. Compare with other integrations from same dataSource\n5. Verify integration filter/transformation logic has not changed\n6. Check if data source retention or purge schedule changed',
+      dashboardDependency: 'Data Volume Trends dashboard, Integration Baseline dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Record volume per integration over time',
+          description: 'Track processed record counts to identify deviations',
+          query: 'dataset="$DATASET" earliest=-30d\n| where recordsProcessed > 0\n| timestats span=1d avg(recordsProcessed) by integrationName'
+        },
+        {
+          name: 'Volume anomalies in last 7 days',
+          description: 'Find integrations with unusual record counts',
+          query: 'dataset="$DATASET" earliest=-7d\n| where recordsProcessed > 0\n| summarize AvgRecords=avg(recordsProcessed), MaxRecords=max(recordsProcessed), MinRecords=min(recordsProcessed), Runs=count() by integrationName\n| extend Variance=round((MaxRecords - MinRecords) * 100.0 / AvgRecords, 1)\n| where Variance > 50\n| order by Variance desc'
+        },
+        {
+          name: 'Zero-record integrations',
+          description: 'Find integrations that completed but processed no records',
+          query: 'dataset="$DATASET" earliest=-48h\n| where recordsProcessed == 0 and (status contains "success" or status contains "complete")\n| project timestamp, integrationName, dataSource, status\n| order by timestamp desc'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-006',
+      name: 'Target System Write Failures',
+      objective: 'Detect when integrations successfully read data but fail to write to target systems, indicating downstream system issues.',
+      severity: 'Medium',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'target-system', 'write-failure'],
+      requiredFields: ['timestamp', 'integrationName', 'recordsProcessed', 'recordsFailed', 'targetSystem', 'errorMessage', 'status'],
+      detectionLogic: 'Alert when recordsFailed > 0 and errorMessage indicates target system write issues (write timeout, insert failed, update rejected). Focus on integrations where recordsProcessed > 0 but recordsFailed is high relative to processed.',
+      operationalValue: 'Write failures mean data was extracted but not loaded, creating synchronization gaps between systems that grow worse with each failed run.',
+      changeMgmtRelevance: 'Write failures follow target system schema changes, permission modifications, capacity issues, or API version changes on the target.',
+      troubleshootingWorkflow: '1. Identify the targetSystem experiencing write failures\n2. Classify errorMessage patterns (permission, schema, capacity, timeout)\n3. Check if the target system recently had changes deployed\n4. Verify target system is healthy and accepting connections\n5. Check if data format or schema expectations changed\n6. Determine records that need to be replayed after fixing',
+      dashboardDependency: 'Target System Health dashboard, Write Failure Analysis dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Write failures by target system',
+          description: 'Identify which target systems have the most write issues',
+          query: 'dataset="$DATASET" earliest=-7d\n| where recordsFailed > 0\n| summarize TotalFailed=sum(recordsFailed), TotalProcessed=sum(recordsProcessed), Runs=count() by targetSystem, integrationName\n| extend FailRate=round(TotalFailed * 100.0 / TotalProcessed, 1)\n| order by TotalFailed desc'
+        },
+        {
+          name: 'Write failure error patterns',
+          description: 'Classify the types of write errors occurring',
+          query: 'dataset="$DATASET" earliest=-48h\n| where recordsFailed > 0\n| summarize Occurrences=count(), TotalFailed=sum(recordsFailed) by targetSystem, errorMessage\n| order by TotalFailed desc\n| limit 20'
+        },
+        {
+          name: 'Write failure trend by target',
+          description: 'Track write failures over time to spot degradation',
+          query: 'dataset="$DATASET" earliest=-14d\n| where recordsFailed > 0\n| timestats span=1d sum(recordsFailed) by targetSystem'
+        }
+      ]
+    },
+    {
+      id: 'wdp-obs-007',
+      name: 'Integration Schedule Drift',
+      objective: 'Detect when integrations run outside their expected schedule or miss scheduled execution windows, indicating scheduling infrastructure issues.',
+      severity: 'Low',
+      category: 'Availability',
+      tags: ['observability', 'availability', 'scheduling', 'sla'],
+      requiredFields: ['timestamp', 'integrationName', 'status', 'runDuration', 'recordsProcessed'],
+      detectionLogic: 'Alert when an integration that normally runs on a consistent schedule (daily, hourly) misses its expected window by >30 minutes, or when execution frequency changes unexpectedly. Build baseline from 14-day run history.',
+      operationalValue: 'Schedule drift means data freshness SLAs are not being met. Downstream systems and reports operate on stale data without users knowing.',
+      changeMgmtRelevance: 'Schedule drift follows Workday scheduler changes, timezone configuration modifications, or integration priority adjustments.',
+      troubleshootingWorkflow: '1. Verify the integration expected schedule from configuration\n2. Check last successful execution timestamp\n3. Determine if the scheduler service is healthy\n4. Check for job queue congestion or priority conflicts\n5. Verify no maintenance windows are blocking execution\n6. Check if dependent integrations are blocking the schedule',
+      dashboardDependency: 'Schedule Compliance dashboard, Integration Cadence dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Integration execution frequency',
+          description: 'Track how often each integration runs to detect schedule changes',
+          query: 'dataset="$DATASET" earliest=-14d\n| summarize Runs=count(), FirstRun=min(timestamp), LastRun=max(timestamp) by integrationName\n| extend DaySpan=datetime_diff("day", LastRun, FirstRun)\n| extend RunsPerDay=round(Runs * 1.0 / DaySpan, 1)\n| order by RunsPerDay desc'
+        },
+        {
+          name: 'Last run time per integration',
+          description: 'Find integrations that have not run recently',
+          query: 'dataset="$DATASET" earliest=-7d\n| summarize LastRun=max(timestamp), TotalRuns=count() by integrationName, status\n| order by LastRun asc'
+        },
+        {
+          name: 'Run timing distribution',
+          description: 'Analyze what time of day integrations typically execute',
+          query: 'dataset="$DATASET" earliest=-14d\n| summarize count() by integrationName, status\n| order by integrationName asc, count_ desc'
+        },
+        {
+          name: 'Missed schedule detection',
+          description: 'Identify integrations with gaps longer than their normal cadence',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize LastRun=max(timestamp), Runs=count() by integrationName\n| where Runs < 2\n| order by LastRun asc'
+        }
+      ]
+    }
+  ],
+  'sap-sm20-audit': [
+    {
+      id: 'sm2-obs-001',
+      name: 'Critical Transaction Code Execution Spike',
+      objective: 'Detect abnormal increases in execution of sensitive transaction codes that indicate potential system configuration changes or operational issues.',
+      severity: 'Critical',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'transaction', 'sap'],
+      requiredFields: ['timestamp', 'user', 'transaction_code', 'event', 'client', 'source_address'],
+      detectionLogic: 'Alert when execution frequency of critical transaction codes (SE16, SM21, SU01, PFCG, SE38, SA38) exceeds 200% of 7-day baseline in a 30-minute window. Evaluate per transaction_code and client combination.',
+      operationalValue: 'Spikes in critical transaction execution indicate mass configuration changes, troubleshooting activity, or system maintenance that may impact system stability.',
+      changeMgmtRelevance: 'Transaction code spikes should correlate with approved change windows. Activity outside change windows indicates unauthorized or emergency changes.',
+      troubleshootingWorkflow: '1. Identify which transaction_code(s) spiked\n2. Determine the user(s) driving the activity\n3. Check if this correlates with an approved change window\n4. Verify the client (production vs development)\n5. Review the event types associated with the transactions\n6. Assess potential impact on system stability',
+      dashboardDependency: 'Transaction Activity dashboard, Change Management Compliance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Transaction code frequency (last 4 hours)',
+          description: 'Identify which transaction codes are executing most frequently',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Executions=count(), DistinctUsers=dcount(user) by transaction_code, client\n| order by Executions desc'
+        },
+        {
+          name: 'Transaction activity over time',
+          description: 'Track transaction execution trends to spot spikes',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=30m count() by transaction_code'
+        },
+        {
+          name: 'Critical transaction codes by user',
+          description: 'See who is executing sensitive transactions',
+          query: 'dataset="$DATASET" earliest=-12h\n| where transaction_code in ("SE16", "SM21", "SU01", "PFCG", "SE38", "SA38", "SE11", "SE80")\n| summarize count() by user, transaction_code, client\n| order by count_ desc'
+        },
+        {
+          name: 'Transaction code execution by source address',
+          description: 'Identify where critical transactions are being executed from',
+          query: 'dataset="$DATASET" earliest=-4h\n| where transaction_code in ("SE16", "SM21", "SU01", "PFCG", "SE38", "SA38")\n| summarize count() by transaction_code, user, source_address\n| order by count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-002',
+      name: 'Batch Job Execution Failure',
+      objective: 'Detect when background job reports fail or produce errors, indicating system instability or configuration issues affecting automated SAP processes.',
+      severity: 'High',
+      category: 'Error Rate',
+      tags: ['observability', 'error-rate', 'batch-job', 'automation'],
+      requiredFields: ['timestamp', 'user', 'report_name', 'event', 'audit_class', 'client'],
+      detectionLogic: 'Alert when event values indicate failure, abort, or error for report_name executions, especially when the same report_name fails consecutively. Track per report_name and client.',
+      operationalValue: 'Batch job failures disrupt automated business processes including financial postings, material movements, and master data updates. Cascading failures can halt business operations.',
+      changeMgmtRelevance: 'Batch job failures follow SAP transport imports, basis configuration changes, or system parameter modifications.',
+      troubleshootingWorkflow: '1. Identify the failing report_name\n2. Check the event type and audit_class for error classification\n3. Determine if this is a first-time or recurring failure\n4. Check if SAP transports were recently imported\n5. Verify system resources (memory, work processes, locks)\n6. Check if the job user account has proper authorizations',
+      dashboardDependency: 'Batch Job Health dashboard, System Stability dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Report execution failures (last 24 hours)',
+          description: 'Find reports that are failing or producing errors',
+          query: 'dataset="$DATASET" earliest=-24h\n| where event contains "fail" or event contains "error" or event contains "abort"\n| summarize Failures=count() by report_name, user, client, event\n| order by Failures desc'
+        },
+        {
+          name: 'Report failure trend',
+          description: 'Track failure frequency over time',
+          query: 'dataset="$DATASET" earliest=-7d\n| where event contains "fail" or event contains "error" or event contains "abort"\n| timestats span=4h count() by report_name'
+        },
+        {
+          name: 'Report execution by audit class',
+          description: 'Classify events by audit category to understand failure type',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by report_name, audit_class, event\n| order by report_name asc, count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-003',
+      name: 'User Session Concurrency Surge',
+      objective: 'Monitor the number of concurrent user sessions to detect capacity issues, licensing concerns, or unusual activity patterns.',
+      severity: 'High',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'sessions', 'licensing'],
+      requiredFields: ['timestamp', 'user', 'terminal', 'client', 'source_address', 'event'],
+      detectionLogic: 'Alert when distinct concurrent user count exceeds 80% of licensed capacity or >150% of normal baseline for time-of-day. Track per client and evaluate on 15-minute windows.',
+      operationalValue: 'Session surges can exhaust work processes, dialog slots, or license allocations, degrading performance for all users and potentially causing connection rejections.',
+      changeMgmtRelevance: 'Session surges may follow new user provisioning, training events, or application launches that drive increased adoption.',
+      troubleshootingWorkflow: '1. Determine current concurrent user count vs capacity\n2. Identify which client(s) are affected\n3. Check if the surge correlates with a known event (training, go-live)\n4. Verify work process availability on application servers\n5. Check for abnormal terminal or source_address patterns\n6. Determine if load balancing is distributing sessions properly',
+      dashboardDependency: 'User Concurrency dashboard, Capacity Planning dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Concurrent users over time',
+          description: 'Track unique active users to identify capacity pressure',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=15m DistinctUsers=dcount(user) by client'
+        },
+        {
+          name: 'Users by terminal and source',
+          description: 'Understand where sessions are originating from',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize Sessions=count(), DistinctUsers=dcount(user) by terminal, source_address, client\n| order by Sessions desc'
+        },
+        {
+          name: 'Peak user counts by hour',
+          description: 'Identify peak usage periods for capacity planning',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=1h DistinctUsers=dcount(user) by client\n| order by DistinctUsers desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-004',
+      name: 'Client Cross-Activity Detection',
+      objective: 'Monitor for users operating across multiple SAP clients simultaneously, indicating potential transport issues or cross-environment activity during restricted periods.',
+      severity: 'Medium',
+      category: 'Change',
+      tags: ['observability', 'change-management', 'cross-client', 'governance'],
+      requiredFields: ['timestamp', 'user', 'client', 'transaction_code', 'source_address'],
+      detectionLogic: 'Alert when a user has activity in multiple client values (production, QA, development) within the same 30-minute window, especially during change freeze periods or outside approved transport windows.',
+      operationalValue: 'Cross-client activity during restricted periods indicates potential unauthorized transport promotions or testing in production, both of which risk system stability.',
+      changeMgmtRelevance: 'Legitimate cross-client activity occurs during transport promotion. Activity outside transport windows indicates process violations.',
+      troubleshootingWorkflow: '1. Identify the user with cross-client activity\n2. Determine which clients are involved\n3. Check if activity is during an approved transport window\n4. Review transaction_code patterns in each client\n5. Verify if this is transport-related or independent activity\n6. Check if change freeze restrictions are in effect',
+      dashboardDependency: 'Cross-Client Activity dashboard, Transport Governance dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Users active in multiple clients',
+          description: 'Find users operating across multiple SAP clients',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize DistinctClients=dcount(client), Events=count() by user\n| where DistinctClients > 1\n| order by DistinctClients desc'
+        },
+        {
+          name: 'Cross-client activity detail',
+          description: 'See what transaction codes users are executing in each client',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by user, client, transaction_code\n| order by user asc, client asc, count_ desc'
+        },
+        {
+          name: 'Cross-client timing analysis',
+          description: 'Determine if cross-client activity is truly concurrent',
+          query: 'dataset="$DATASET" earliest=-4h\n| where user != ""\n| summarize FirstEvent=min(timestamp), LastEvent=max(timestamp), Events=count() by user, client\n| order by user asc, FirstEvent asc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-005',
+      name: 'Audit Class Distribution Shift',
+      objective: 'Monitor changes in the distribution of audit classes to detect system behavioral changes that may indicate configuration drift or emerging issues.',
+      severity: 'Medium',
+      category: 'Data Quality',
+      tags: ['observability', 'data-quality', 'audit-class', 'baseline'],
+      requiredFields: ['timestamp', 'audit_class', 'event', 'user', 'client'],
+      detectionLogic: 'Alert when any audit_class changes by >40% in event volume compared to 7-day same-day baseline, or when new audit_class values appear that were not seen in the prior 30 days. Evaluate per client.',
+      operationalValue: 'Audit class distribution shifts indicate system-level behavioral changes that affect security monitoring coverage and operational visibility.',
+      changeMgmtRelevance: 'Distribution changes follow SAP kernel updates, audit configuration modifications, or system parameter changes affecting event generation.',
+      troubleshootingWorkflow: '1. Identify which audit_class(es) changed in volume\n2. Determine if this is an increase (new activity) or decrease (reduced coverage)\n3. Check if audit configuration was modified (SM19/SM20)\n4. Verify SAP kernel or basis was not recently updated\n5. Determine if the shift affects security monitoring coverage\n6. Update baseline if the change is intentional',
+      dashboardDependency: 'Audit Coverage dashboard, Event Distribution dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Audit class distribution',
+          description: 'Current breakdown of events by audit class',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Events=count(), DistinctUsers=dcount(user) by audit_class, client\n| order by Events desc'
+        },
+        {
+          name: 'Audit class volume over time',
+          description: 'Track each audit class to identify shifts',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h count() by audit_class'
+        },
+        {
+          name: 'Event types within each audit class',
+          description: 'Understand what is driving volume in each class',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize count() by audit_class, event\n| order by audit_class asc, count_ desc'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-006',
+      name: 'Terminal Connectivity Pattern Change',
+      objective: 'Detect changes in the terminal and source address patterns connecting to SAP, identifying infrastructure changes or access pattern shifts.',
+      severity: 'Medium',
+      category: 'Capacity',
+      tags: ['observability', 'capacity', 'connectivity', 'infrastructure'],
+      requiredFields: ['timestamp', 'terminal', 'source_address', 'user', 'client', 'event'],
+      detectionLogic: 'Alert when new terminal values or source_address values appear that were not seen in the prior 14-day baseline, or when existing terminals drop from activity. Track per client.',
+      operationalValue: 'Terminal and source changes indicate infrastructure modifications, new access points, or network changes that affect capacity planning and access control.',
+      changeMgmtRelevance: 'Terminal changes follow desktop infrastructure deployments, VPN changes, Citrix/terminal server modifications, or SAP GUI version rollouts.',
+      troubleshootingWorkflow: '1. Identify new or missing terminal values\n2. Determine associated source_address ranges\n3. Check if changes correlate with infrastructure deployments\n4. Verify new terminals are from approved infrastructure\n5. Check if missing terminals indicate a connectivity issue\n6. Update access control lists if new terminals are approved',
+      dashboardDependency: 'Access Infrastructure dashboard, Terminal Inventory dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Active terminals and sources',
+          description: 'List all terminal and source address combinations',
+          query: 'dataset="$DATASET" earliest=-24h\n| summarize Users=dcount(user), Events=count() by terminal, source_address, client\n| order by Events desc'
+        },
+        {
+          name: 'New terminals in last 48 hours',
+          description: 'Identify terminals that recently appeared',
+          query: 'dataset="$DATASET" earliest=-48h\n| summarize FirstSeen=min(timestamp), Events=count(), Users=dcount(user) by terminal, source_address\n| order by FirstSeen desc\n| limit 30'
+        },
+        {
+          name: 'Terminal activity over time',
+          description: 'Track terminal usage patterns to detect changes',
+          query: 'dataset="$DATASET" earliest=-7d\n| timestats span=4h dcount(terminal) by client'
+        }
+      ]
+    },
+    {
+      id: 'sm2-obs-007',
+      name: 'Audit Log Collection Health',
+      objective: 'Validate continuous SAP audit event collection to ensure no gaps exist in the security and operational monitoring pipeline.',
+      severity: 'Low',
+      category: 'Data Quality',
+      tags: ['observability', 'pipeline', 'data-quality', 'collection'],
+      requiredFields: ['timestamp', 'user', 'event', 'client'],
+      detectionLogic: 'Alert when no SM20 audit events are received for >10 minutes during business hours, or when event volume drops >70% compared to same time-of-day baseline. Verify all expected clients are generating events.',
+      operationalValue: 'Audit log gaps create blind spots in security and operational monitoring. This meta-detection validates the collection pipeline itself.',
+      changeMgmtRelevance: 'Collection gaps follow SAP basis changes, audit configuration modifications (SM19), or Cribl pipeline changes affecting SAP source.',
+      troubleshootingWorkflow: '1. Check last received timestamp per client\n2. Verify SM20 audit is active on the SAP system (SM19)\n3. Check Cribl source connectivity to SAP\n4. Verify no network issues between SAP and collection infrastructure\n5. Check SAP system log (SM21) for audit subsystem errors\n6. Verify audit file rotation has not caused data loss',
+      dashboardDependency: 'Pipeline Health dashboard, Collection Coverage dashboard',
+      criblSearchQueries: [
+        {
+          name: 'Event ingestion rate per client',
+          description: 'Track event arrival rate to detect gaps',
+          query: 'dataset="$DATASET" earliest=-24h\n| timestats span=10m count() by client'
+        },
+        {
+          name: 'Last event per client',
+          description: 'Identify clients that may have stopped sending events',
+          query: 'dataset="$DATASET" earliest=-2h\n| summarize LastEvent=max(timestamp), Events=count(), Users=dcount(user) by client\n| order by LastEvent asc'
+        },
+        {
+          name: 'Event type coverage check',
+          description: 'Verify all expected event types are being collected',
+          query: 'dataset="$DATASET" earliest=-4h\n| summarize count() by event, audit_class, client\n| order by client asc, count_ desc'
+        },
+        {
+          name: 'Hourly volume comparison',
+          description: 'Compare current ingestion against historical baseline',
+          query: 'dataset="$DATASET" earliest=-48h\n| timestats span=1h count() by client\n| order by _time desc'
+        }
+      ]
+    }
+  ],
 };
