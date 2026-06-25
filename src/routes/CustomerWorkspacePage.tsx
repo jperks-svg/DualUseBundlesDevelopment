@@ -426,11 +426,13 @@ export default function CustomerWorkspacePage() {
       return { ...d, missing, broken: missing.length > 0, coverage: required.size > 0 ? Math.round(((required.size - missing.length) / required.size) * 100) : 100 };
     });
 
-    // Custom search impact
+    // Custom search impact — re-parse query to catch fields that may have been missed at creation time
     const searches = (activeProfile?.customSearches || []).filter(s => s.sourceId === tuningSource);
     const searchImpact = searches.map(s => {
-      const missing = s.referencedFields.filter(f => dropped.has(f));
-      return { ...s, missing, broken: missing.length > 0 };
+      const liveFields = parseKqlFields(s.query);
+      const allRefFields = [...new Set([...s.referencedFields, ...liveFields])];
+      const missing = allRefFields.filter(f => dropped.has(f));
+      return { ...s, referencedFields: allRefFields, missing, broken: missing.length > 0 };
     });
 
     const brokenDetections = [...secImpact, ...obsImpact].filter(d => d.broken).length;
@@ -878,11 +880,11 @@ export default function CustomerWorkspacePage() {
                                   <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: tuningImpact.brokenCount > 0 ? 'var(--cds-color-warning)' : 'var(--cds-color-success)' }}>
                                     {tuningImpact.brokenCount}
                                   </div>
-                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Detections Affected</div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Affected</div>
                                 </div>
                                 <div style={{ padding: 12, background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)', textAlign: 'center' }}>
                                   <div style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 700, color: 'var(--cds-color-success)' }}>{tuningImpact.healthyCount}</div>
-                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Detections Healthy</div>
+                                  <div style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)' }}>Healthy</div>
                                 </div>
                               </div>
                             )}
@@ -1121,7 +1123,8 @@ export default function CustomerWorkspacePage() {
                       {(activeProfile.customSearches || []).map(search => {
                         const src = allSources.find(s => s.id === search.sourceId);
                         const dropped = droppedFields[search.sourceId] || new Set();
-                        const brokenFields = search.referencedFields.filter(f => dropped.has(f));
+                        const liveRefs = [...new Set([...search.referencedFields, ...parseKqlFields(search.query)])];
+                        const brokenFields = liveRefs.filter(f => dropped.has(f));
                         const isBroken = brokenFields.length > 0;
                         return (
                           <div key={search.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 14px', marginBottom: 6, borderRadius: 'var(--cds-radius-md)', border: `1px solid ${isBroken ? 'var(--cds-color-danger)' : 'var(--cds-color-border-subtle)'}`, background: isBroken ? 'rgba(239,68,68,0.03)' : 'transparent' }}>
@@ -1136,7 +1139,7 @@ export default function CustomerWorkspacePage() {
                               </div>
                               {search.description && <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', marginBottom: 4 }}>{search.description}</div>}
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {search.referencedFields.map(f => (
+                                {liveRefs.map(f => (
                                   <code key={f} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: brokenFields.includes(f) ? 'rgba(239,68,68,0.1)' : 'var(--cds-color-accent-subtle)', color: brokenFields.includes(f) ? 'var(--cds-color-danger)' : 'var(--cds-color-accent)', textDecoration: brokenFields.includes(f) ? 'line-through' : 'none' }}>{f}</code>
                                 ))}
                               </div>

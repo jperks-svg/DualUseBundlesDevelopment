@@ -66,8 +66,6 @@ function extractFieldsFromExpression(expr: string, fields: Set<string>) {
     if (cleaned.includes(`${id}(`)) continue;
     // Skip numeric-like
     if (/^\d/.test(id)) continue;
-    // Skip very short identifiers that are likely aliases
-    if (id.length === 1 && /^[a-z]$/.test(id)) continue;
 
     fields.add(id);
   }
