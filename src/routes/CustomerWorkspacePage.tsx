@@ -428,10 +428,13 @@ export default function CustomerWorkspacePage() {
     });
 
     // Custom search impact — re-parse query to catch fields that may have been missed at creation time
+    // Also check source fields directly against query text (covers numeric/unusual field names the parser can't extract)
+    const sourceFieldNames = fields.map((f: any) => f.field);
     const searches = (activeProfile?.customSearches || []).filter(s => s.sourceId === tuningSource);
     const searchImpact = searches.map(s => {
       const liveFields = parseKqlFields(s.query);
-      const allRefFields = [...new Set([...s.referencedFields, ...liveFields])];
+      const sourceFieldsInQuery = sourceFieldNames.filter((fname: string) => s.query.includes(fname));
+      const allRefFields = [...new Set([...s.referencedFields, ...liveFields, ...sourceFieldsInQuery])];
       const missing = allRefFields.filter(f => dropped.has(f));
       return { ...s, referencedFields: allRefFields, missing, broken: missing.length > 0 };
     });
