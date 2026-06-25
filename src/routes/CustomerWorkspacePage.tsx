@@ -397,7 +397,8 @@ export default function CustomerWorkspacePage() {
   }
 
   function dropAllRecommended(sourceId: string) {
-    const fields = (fieldMatrix as any)[sourceId] || [];
+    const customSrc = activeProfile?.customSources?.find(cs => cs.id === sourceId);
+    const fields = customSrc ? customSrc.fields : ((fieldMatrix as any)[sourceId] || []);
     const droppable = fields.filter((f: any) => f.canDrop === 'Yes').map((f: any) => f.field);
     persistDroppedFields({ ...droppedFields, [sourceId]: new Set(droppable) });
   }
@@ -991,10 +992,10 @@ export default function CustomerWorkspacePage() {
                                       </div>
                                     )}
                                     {/* Healthy items */}
-                                    {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length > 0 && (
+                                    {([...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length > 0 || (tuningImpact.searchImpact && tuningImpact.searchImpact.filter(s => !s.broken).length > 0)) && (
                                       <div>
                                         <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-success)', marginBottom: 6 }}>
-                                          Healthy ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length}{tuningImpact.searchImpact && tuningImpact.searchImpact.filter(s => !s.broken).length > 0 ? ` + ${tuningImpact.searchImpact.filter(s => !s.broken).length} searches` : ''})
+                                          Healthy ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length + (tuningImpact.searchImpact ? tuningImpact.searchImpact.filter(s => !s.broken).length : 0)})
                                         </div>
                                         {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).map(d => (
                                           <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', marginBottom: 2, borderRadius: 'var(--cds-radius-sm)', background: 'var(--cds-color-bg-subtle)' }}>
