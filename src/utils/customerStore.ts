@@ -19,6 +19,7 @@ export interface CustomSearch {
   id: string;
   name: string;
   description: string;
+  category: 'security' | 'observability' | 'both';
   sourceId: string;
   query: string;
   referencedFields: string[];

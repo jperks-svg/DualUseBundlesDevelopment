@@ -138,6 +138,7 @@ export default function CustomerWorkspacePage() {
   const [showAddSearch, setShowAddSearch] = useState(false);
   const [searchName, setSearchName] = useState('');
   const [searchDesc, setSearchDesc] = useState('');
+  const [searchCategory, setSearchCategory] = useState<'security' | 'observability' | 'both'>('security');
   const [searchSourceId, setSearchSourceId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchValidation, setSearchValidation] = useState<{ valid: boolean; errors: string[]; warnings: string[]; referencedFields: string[] } | null>(null);
@@ -324,6 +325,7 @@ export default function CustomerWorkspacePage() {
       id: `search_${Date.now().toString(36)}`,
       name: searchName.trim(),
       description: searchDesc.trim(),
+      category: searchCategory,
       sourceId: searchSourceId,
       query: searchQuery.trim(),
       referencedFields: validation.referencedFields,
@@ -334,7 +336,7 @@ export default function CustomerWorkspacePage() {
       return { ...p, customSearches: [...(p.customSearches || []), newSearch], updatedAt: new Date().toISOString() };
     }));
     setSearchName(''); setSearchDesc(''); setSearchQuery(''); setSearchSourceId('');
-    setSearchValidation(null); setShowAddSearch(false);
+    setSearchCategory('security'); setSearchValidation(null); setShowAddSearch(false);
   }
 
   function removeCustomSearch(searchId: string) {
@@ -996,14 +998,18 @@ export default function CustomerWorkspacePage() {
 
                   {showAddSearch && (
                     <div style={{ background: 'var(--cds-color-bg-subtle)', padding: 16, borderRadius: 'var(--cds-radius-md)', marginBottom: 16 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
                         <div>
                           <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Search Name *</label>
                           <input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="e.g. Failed Login Spike" style={inputStyle} />
                         </div>
                         <div>
-                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Description</label>
-                          <input value={searchDesc} onChange={e => setSearchDesc(e.target.value)} placeholder="What this search detects" style={inputStyle} />
+                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Category *</label>
+                          <select value={searchCategory} onChange={e => setSearchCategory(e.target.value as any)} style={{ ...inputStyle, padding: '8px 10px' }}>
+                            <option value="security">Security</option>
+                            <option value="observability">Observability</option>
+                            <option value="both">Both</option>
+                          </select>
                         </div>
                         <div>
                           <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Source *</label>
@@ -1014,6 +1020,10 @@ export default function CustomerWorkspacePage() {
                               return <option key={sid} value={sid}>{src?.name || sid}</option>;
                             })}
                           </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Description</label>
+                          <input value={searchDesc} onChange={e => setSearchDesc(e.target.value)} placeholder="What this search detects" style={inputStyle} />
                         </div>
                       </div>
                       <div style={{ marginBottom: 12 }}>
@@ -1078,6 +1088,9 @@ export default function CustomerWorkspacePage() {
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                                 <span style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600 }}>{search.name}</span>
+                                <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: (search.category || 'security') === 'security' ? 'rgba(234,179,8,0.1)' : (search.category === 'observability' ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)'), color: (search.category || 'security') === 'security' ? 'var(--cds-color-warning)' : (search.category === 'observability' ? '#3b82f6' : '#a855f7'), fontWeight: 600 }}>
+                                  {(search.category || 'security') === 'both' ? 'Sec + Obs' : (search.category || 'security') === 'security' ? 'Security' : 'Observability'}
+                                </span>
                                 <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'var(--cds-color-bg-subtle)', color: 'var(--cds-color-fg-muted)' }}>{src?.name || search.sourceId}</span>
                                 {isBroken && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(239,68,68,0.1)', color: 'var(--cds-color-danger)', fontWeight: 600 }}>BROKEN</span>}
                               </div>
