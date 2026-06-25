@@ -127,6 +127,7 @@ export default function CustomerWorkspacePage() {
 
   // Custom source state
   const [showAddCustomSource, setShowAddCustomSource] = useState(false);
+  const [editingCustomSourceId, setEditingCustomSourceId] = useState<string | null>(null);
   const [customSourceName, setCustomSourceName] = useState('');
   const [customSourceVendor, setCustomSourceVendor] = useState('');
   const [customSourceDesc, setCustomSourceDesc] = useState('');
@@ -306,6 +307,37 @@ export default function CustomerWorkspacePage() {
     }));
   }
 
+  function startEditCustomSource(sourceId: string) {
+    const cs = activeProfile?.customSources?.find(s => s.id === sourceId);
+    if (!cs) return;
+    setEditingCustomSourceId(sourceId);
+    setCustomSourceName(cs.name);
+    setCustomSourceVendor(cs.vendor);
+    setCustomSourceDesc(cs.description);
+    setCustomSourceFields([...cs.fields]);
+    setShowAddCustomSource(true);
+  }
+
+  function handleSaveCustomSource() {
+    if (!activeProfile || !customSourceName.trim() || customSourceFields.length === 0) return;
+    if (editingCustomSourceId) {
+      setProfiles(prev => prev.map(p => {
+        if (p.id !== activeProfile.id) return p;
+        const customSources = (p.customSources || []).map(cs => {
+          if (cs.id !== editingCustomSourceId) return cs;
+          return { ...cs, name: customSourceName.trim(), vendor: customSourceVendor.trim() || 'Custom', description: customSourceDesc.trim(), fields: customSourceFields };
+        });
+        return { ...p, customSources, updatedAt: new Date().toISOString() };
+      }));
+      setEditingCustomSourceId(null);
+    } else {
+      handleAddCustomSource();
+      return;
+    }
+    setCustomSourceName(''); setCustomSourceVendor(''); setCustomSourceDesc('');
+    setCustomSourceFields([]); setShowAddCustomSource(false);
+  }
+
   // Custom search management
   function handleValidateSearch(query: string) {
     setSearchQuery(query);
@@ -437,13 +469,17 @@ export default function CustomerWorkspacePage() {
       totalGuard += guardCount;
       totalSecRequired += secReq;
       totalObsFields += obsReq;
-      totalSecDetections += secDets.length;
-      totalObsDetections += obsDets.length;
+      const customSecCount = (activeProfile.customSearches || []).filter(s => s.sourceId === sid && (s.category === 'security' || s.category === 'both')).length;
+      const customObsCount = (activeProfile.customSearches || []).filter(s => s.sourceId === sid && (s.category === 'observability' || s.category === 'both')).length;
+      totalSecDetections += secDets.length + customSecCount;
+      totalObsDetections += obsDets.length + customObsCount;
 
       source?.destinations?.forEach((d: string) => allDestinations.add(d));
 
-      if (secDets.length === 0) coverageGaps.push(`${source?.name || sid}: No security detections`);
-      if (obsDets.length === 0) coverageGaps.push(`${source?.name || sid}: No observability detections`);
+      const customSecSearches = (activeProfile.customSearches || []).filter(s => s.sourceId === sid && (s.category === 'security' || s.category === 'both'));
+      const customObsSearches = (activeProfile.customSearches || []).filter(s => s.sourceId === sid && (s.category === 'observability' || s.category === 'both'));
+      if (secDets.length === 0 && customSecSearches.length === 0) coverageGaps.push(`${source?.name || sid}: No security detections`);
+      if (obsDets.length === 0 && customObsSearches.length === 0) coverageGaps.push(`${source?.name || sid}: No observability detections`);
 
       sourceAnalyses.push({
         id: sid,
@@ -592,8 +628,12 @@ export default function CustomerWorkspacePage() {
                       {isCustom && <span style={{ marginLeft: 4, fontSize: 9, color: '#a855f7', fontWeight: 600 }}>CUSTOM</span>}
                     </span>
                     {isCustom && selected && (
-                      <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeCustomSource(s.id); }}
-                        style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--cds-color-danger)', cursor: 'pointer' }} title="Remove custom source">&#x2715;</span>
+                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                        <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); startEditCustomSource(s.id); }}
+                          style={{ fontSize: 10, color: '#a855f7', cursor: 'pointer' }} title="Edit fields">&#9998;</span>
+                        <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeCustomSource(s.id); }}
+                          style={{ fontSize: 10, color: 'var(--cds-color-danger)', cursor: 'pointer' }} title="Remove custom source">&#x2715;</span>
+                      </span>
                     )}
                   </label>
                 );
@@ -604,7 +644,7 @@ export default function CustomerWorkspacePage() {
           {/* Add Custom Source Modal */}
           {showAddCustomSource && (
             <div style={{ ...card, marginBottom: 24, border: '2px solid #a855f7' }}>
-              <h4 style={{ fontSize: 'var(--cds-font-size-base)', fontWeight: 600, margin: '0 0 16px', color: '#a855f7' }}>Add Custom Source</h4>
+              <h4 style={{ fontSize: 'var(--cds-font-size-base)', fontWeight: 600, margin: '0 0 16px', color: '#a855f7' }}>{editingCustomSourceId ? 'Edit Custom Source' : 'Add Custom Source'}</h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
                 <div>
                   <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Source Name *</label>
@@ -654,11 +694,11 @@ export default function CustomerWorkspacePage() {
               </div>
 
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={handleAddCustomSource} disabled={!customSourceName.trim() || customSourceFields.length === 0}
+                <button onClick={handleSaveCustomSource} disabled={!customSourceName.trim() || customSourceFields.length === 0}
                   style={{ ...btnPrimary, opacity: (!customSourceName.trim() || customSourceFields.length === 0) ? 0.5 : 1 }}>
-                  Add Source
+                  {editingCustomSourceId ? 'Save Changes' : 'Add Source'}
                 </button>
-                <button onClick={() => { setShowAddCustomSource(false); setCustomSourceFields([]); setCustomSourceName(''); }} style={btnSecondary}>Cancel</button>
+                <button onClick={() => { setShowAddCustomSource(false); setEditingCustomSourceId(null); setCustomSourceFields([]); setCustomSourceName(''); }} style={btnSecondary}>Cancel</button>
               </div>
             </div>
           )}
