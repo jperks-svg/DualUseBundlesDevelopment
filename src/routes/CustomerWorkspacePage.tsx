@@ -7,7 +7,8 @@ import { securityDetections as secDetData } from '../data/securityDetections';
 import { observabilityDetections as obsDetData } from '../data/observabilityDetections';
 import { routingBlueprints } from '../data/routing';
 import { calculateFieldReduction, calculateCostSavings } from '../utils/costCalc';
-import { getProfilesSync, saveProfilesToKV, loadProfilesFromKV, CustomerProfile } from '../utils/customerStore';
+import { getProfilesSync, saveProfilesToKV, loadProfilesFromKV, CustomerProfile, CustomSource, CustomField, CustomSearch } from '../utils/customerStore';
+import { validateKql, parseKqlFields } from '../utils/kqlParser';
 
 const card: React.CSSProperties = {
   background: 'var(--cds-color-bg)', border: '1px solid var(--cds-color-border-subtle)',
@@ -35,9 +36,9 @@ const inputStyle: React.CSSProperties = {
   fontSize: 'var(--cds-font-size-sm)', background: 'var(--cds-color-bg)', color: 'var(--cds-color-fg)', width: '100%',
 };
 
-const allSources = dataSources.flatMap((c: any) => c.sources).filter((s: any) => s.status === 'available').sort((a: any, b: any) => a.name.localeCompare(b.name));
+const catalogSources = dataSources.flatMap((c: any) => c.sources).filter((s: any) => s.status === 'available').sort((a: any, b: any) => a.name.localeCompare(b.name));
 
-function generateCombinedPackYaml(sourceIds: string[], customerName: string, customDrops?: Record<string, Set<string>>): string {
+function generateCombinedPackYaml(sourceIds: string[], customerName: string, customDrops?: Record<string, Set<string>>, customSources?: CustomSource[]): string {
   let yaml = '';
   yaml += `# ============================================================\n`;
   yaml += `# Combined Cribl Stream Pipeline Pack\n`;
@@ -46,8 +47,9 @@ function generateCombinedPackYaml(sourceIds: string[], customerName: string, cus
   yaml += `# ============================================================\n\n`;
 
   sourceIds.forEach(sid => {
-    const fields = (fieldMatrix as any)[sid] || [];
-    const source = allSources.find(s => s.id === sid);
+    const customSrc = customSources?.find(cs => cs.id === sid);
+    const fields = customSrc ? customSrc.fields : ((fieldMatrix as any)[sid] || []);
+    const source = customSrc ? { name: customSrc.name } : catalogSources.find(s => s.id === sid);
     const userDrops = customDrops?.[sid];
     const droppable = userDrops && userDrops.size > 0
       ? [...userDrops]
@@ -123,6 +125,23 @@ export default function CustomerWorkspacePage() {
   });
   const [fieldFilter, setFieldFilter] = useState<'all' | 'droppable' | 'security' | 'observability'>('all');
 
+  // Custom source state
+  const [showAddCustomSource, setShowAddCustomSource] = useState(false);
+  const [customSourceName, setCustomSourceName] = useState('');
+  const [customSourceVendor, setCustomSourceVendor] = useState('');
+  const [customSourceDesc, setCustomSourceDesc] = useState('');
+  const [customSourceFields, setCustomSourceFields] = useState<CustomField[]>([]);
+  const [newFieldName, setNewFieldName] = useState('');
+  const [newFieldDesc, setNewFieldDesc] = useState('');
+
+  // Custom search state
+  const [showAddSearch, setShowAddSearch] = useState(false);
+  const [searchName, setSearchName] = useState('');
+  const [searchDesc, setSearchDesc] = useState('');
+  const [searchSourceId, setSearchSourceId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchValidation, setSearchValidation] = useState<{ valid: boolean; errors: string[]; warnings: string[]; referencedFields: string[] } | null>(null);
+
   // On mount: refresh from KV store (async) to pick up data from prior sessions
   useEffect(() => {
     loadProfilesFromKV().then(kvProfiles => {
@@ -173,6 +192,13 @@ export default function CustomerWorkspacePage() {
   }, [activeProfileId]);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || null;
+
+  const allSources = useMemo(() => {
+    const custom = (activeProfile?.customSources || []).map(cs => ({
+      id: cs.id, name: cs.name, vendor: cs.vendor, status: 'available', isCustom: true,
+    }));
+    return [...catalogSources, ...custom].sort((a: any, b: any) => a.name.localeCompare(b.name));
+  }, [activeProfile]);
 
   function handleCreate() {
     if (!newName.trim()) return;
@@ -229,6 +255,107 @@ export default function CustomerWorkspacePage() {
     ));
   }
 
+  // Custom source management
+  function handleAddCustomSource() {
+    if (!activeProfile || !customSourceName.trim() || customSourceFields.length === 0) return;
+    const newSource: CustomSource = {
+      id: `custom_${Date.now().toString(36)}`,
+      name: customSourceName.trim(),
+      vendor: customSourceVendor.trim() || 'Custom',
+      description: customSourceDesc.trim(),
+      fields: customSourceFields,
+      createdAt: new Date().toISOString(),
+    };
+    setProfiles(prev => prev.map(p => {
+      if (p.id !== activeProfile.id) return p;
+      const customSources = [...(p.customSources || []), newSource];
+      const sourceIds = [...p.sourceIds, newSource.id];
+      return { ...p, customSources, sourceIds, updatedAt: new Date().toISOString() };
+    }));
+    setCustomSourceName(''); setCustomSourceVendor(''); setCustomSourceDesc('');
+    setCustomSourceFields([]); setShowAddCustomSource(false);
+  }
+
+  function handleAddField() {
+    if (!newFieldName.trim()) return;
+    setCustomSourceFields(prev => [...prev, {
+      field: newFieldName.trim(),
+      description: newFieldDesc.trim() || newFieldName.trim(),
+      canDrop: 'Sometimes',
+      securitySiem: 'No',
+      observability: 'No',
+    }]);
+    setNewFieldName(''); setNewFieldDesc('');
+  }
+
+  function removeCustomField(idx: number) {
+    setCustomSourceFields(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function removeCustomSource(sourceId: string) {
+    if (!activeProfile) return;
+    setProfiles(prev => prev.map(p => {
+      if (p.id !== activeProfile.id) return p;
+      return {
+        ...p,
+        customSources: (p.customSources || []).filter(s => s.id !== sourceId),
+        sourceIds: p.sourceIds.filter(id => id !== sourceId),
+        updatedAt: new Date().toISOString(),
+      };
+    }));
+  }
+
+  // Custom search management
+  function handleValidateSearch(query: string) {
+    setSearchQuery(query);
+    if (query.trim()) {
+      const result = validateKql(query);
+      setSearchValidation(result);
+    } else {
+      setSearchValidation(null);
+    }
+  }
+
+  function handleAddSearch() {
+    if (!activeProfile || !searchName.trim() || !searchQuery.trim() || !searchSourceId) return;
+    const validation = validateKql(searchQuery);
+    if (!validation.valid) return;
+    const newSearch: CustomSearch = {
+      id: `search_${Date.now().toString(36)}`,
+      name: searchName.trim(),
+      description: searchDesc.trim(),
+      sourceId: searchSourceId,
+      query: searchQuery.trim(),
+      referencedFields: validation.referencedFields,
+      createdAt: new Date().toISOString(),
+    };
+    setProfiles(prev => prev.map(p => {
+      if (p.id !== activeProfile.id) return p;
+      return { ...p, customSearches: [...(p.customSearches || []), newSearch], updatedAt: new Date().toISOString() };
+    }));
+    setSearchName(''); setSearchDesc(''); setSearchQuery(''); setSearchSourceId('');
+    setSearchValidation(null); setShowAddSearch(false);
+  }
+
+  function removeCustomSearch(searchId: string) {
+    if (!activeProfile) return;
+    setProfiles(prev => prev.map(p => {
+      if (p.id !== activeProfile.id) return p;
+      return { ...p, customSearches: (p.customSearches || []).filter(s => s.id !== searchId), updatedAt: new Date().toISOString() };
+    }));
+  }
+
+  // Get all custom searches for a given source, plus their field impacts
+  const customSearchImpact = useMemo(() => {
+    if (!activeProfile || !tuningSource) return [];
+    const searches = (activeProfile.customSearches || []).filter(s => s.sourceId === tuningSource);
+    const dropped = droppedFields[tuningSource] || new Set();
+    return searches.map(s => {
+      const missing = s.referencedFields.filter(f => dropped.has(f));
+      return { ...s, missing, broken: missing.length > 0 };
+    });
+  }, [activeProfile, tuningSource, droppedFields]);
+
   function toggleFieldDrop(sourceId: string, fieldName: string) {
     const current = new Set(droppedFields[sourceId] || []);
     current.has(fieldName) ? current.delete(fieldName) : current.add(fieldName);
@@ -248,7 +375,8 @@ export default function CustomerWorkspacePage() {
   // Field tuning impact for active tuning source
   const tuningImpact = useMemo(() => {
     if (!tuningSource) return null;
-    const fields = (fieldMatrix as any)[tuningSource] || [];
+    const customSrc = activeProfile?.customSources?.find(cs => cs.id === tuningSource);
+    const fields = customSrc ? customSrc.fields : ((fieldMatrix as any)[tuningSource] || []);
     const dropped = droppedFields[tuningSource] || new Set();
     const secDets: any[] = (secDetData as any)[tuningSource] || [];
     const obsDets: any[] = (obsDetData as any)[tuningSource] || [];
@@ -264,10 +392,20 @@ export default function CustomerWorkspacePage() {
       return { ...d, missing, broken: missing.length > 0, coverage: required.size > 0 ? Math.round(((required.size - missing.length) / required.size) * 100) : 100 };
     });
 
-    const brokenCount = [...secImpact, ...obsImpact].filter(d => d.broken).length;
+    // Custom search impact
+    const searches = (activeProfile?.customSearches || []).filter(s => s.sourceId === tuningSource);
+    const searchImpact = searches.map(s => {
+      const missing = s.referencedFields.filter(f => dropped.has(f));
+      return { ...s, missing, broken: missing.length > 0 };
+    });
+
+    const brokenDetections = [...secImpact, ...obsImpact].filter(d => d.broken).length;
+    const brokenSearches = searchImpact.filter(s => s.broken).length;
+    const brokenCount = brokenDetections + brokenSearches;
     const totalDets = secImpact.length + obsImpact.length;
-    return { secImpact, obsImpact, brokenCount, healthyCount: totalDets - brokenCount, totalDets, droppedCount: dropped.size, totalFields: fields.length };
-  }, [tuningSource, droppedFields]);
+    const totalItems = totalDets + searches.length;
+    return { secImpact, obsImpact, searchImpact, brokenCount, healthyCount: totalItems - brokenCount, totalDets, totalItems, droppedCount: dropped.size, totalFields: fields.length };
+  }, [tuningSource, droppedFields, activeProfile]);
 
   // Aggregate analysis for active profile
   const analysis = useMemo(() => {
@@ -280,7 +418,8 @@ export default function CustomerWorkspacePage() {
     const sourceAnalyses: any[] = [];
 
     activeProfile.sourceIds.forEach(sid => {
-      const fields = (fieldMatrix as any)[sid] || [];
+      const customSrc = activeProfile.customSources?.find(cs => cs.id === sid);
+      const fields = customSrc ? customSrc.fields : ((fieldMatrix as any)[sid] || []);
       const secDets = (secDetData as any)[sid] || [];
       const obsDets = (obsDetData as any)[sid] || [];
       const source = allSources.find(s => s.id === sid);
@@ -355,7 +494,7 @@ export default function CustomerWorkspacePage() {
   function downloadCombinedPack() {
     if (!activeProfile || activeProfile.sourceIds.length === 0) return;
     const hasCustomDrops = Object.values(droppedFields).some(s => s.size > 0);
-    const yaml = generateCombinedPackYaml(activeProfile.sourceIds, activeProfile.name, hasCustomDrops ? droppedFields : undefined);
+    const yaml = generateCombinedPackYaml(activeProfile.sourceIds, activeProfile.name, hasCustomDrops ? droppedFields : undefined, activeProfile.customSources);
     const blob = new Blob([yaml], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -428,26 +567,99 @@ export default function CustomerWorkspacePage() {
               <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>
                 Data Sources ({activeProfile.sourceIds.length} selected)
               </h3>
-              <button onClick={() => handleDelete(activeProfile.id)} style={btnDanger}>Delete Project</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setShowAddCustomSource(true)} style={{ ...btnPrimary, padding: '6px 12px', fontSize: 'var(--cds-font-size-xs)' }}>+ Add Custom Source</button>
+                <button onClick={() => handleDelete(activeProfile.id)} style={btnDanger}>Delete Project</button>
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
               {allSources.map((s: any) => {
                 const selected = activeProfile.sourceIds.includes(s.id);
+                const isCustom = s.isCustom;
                 return (
                   <label key={s.id} style={{
                     display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer',
                     borderRadius: 'var(--cds-radius-md)',
                     background: selected ? 'var(--cds-color-accent-subtle)' : 'var(--cds-color-bg-subtle)',
-                    border: selected ? '1px solid var(--cds-brand-teal)' : '1px solid transparent',
+                    border: selected ? (isCustom ? '1px solid #a855f7' : '1px solid var(--cds-brand-teal)') : '1px solid transparent',
                   }}>
                     <input type="checkbox" checked={selected} onChange={() => toggleSource(s.id)}
-                      style={{ width: 14, height: 14, accentColor: 'var(--cds-brand-teal)' }} />
-                    <span style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg)' }}>{s.name}</span>
+                      style={{ width: 14, height: 14, accentColor: isCustom ? '#a855f7' : 'var(--cds-brand-teal)' }} />
+                    <span style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg)' }}>
+                      {s.name}
+                      {isCustom && <span style={{ marginLeft: 4, fontSize: 9, color: '#a855f7', fontWeight: 600 }}>CUSTOM</span>}
+                    </span>
+                    {isCustom && selected && (
+                      <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeCustomSource(s.id); }}
+                        style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--cds-color-danger)', cursor: 'pointer' }} title="Remove custom source">&#x2715;</span>
+                    )}
                   </label>
                 );
               })}
             </div>
           </div>
+
+          {/* Add Custom Source Modal */}
+          {showAddCustomSource && (
+            <div style={{ ...card, marginBottom: 24, border: '2px solid #a855f7' }}>
+              <h4 style={{ fontSize: 'var(--cds-font-size-base)', fontWeight: 600, margin: '0 0 16px', color: '#a855f7' }}>Add Custom Source</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div>
+                  <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Source Name *</label>
+                  <input value={customSourceName} onChange={e => setCustomSourceName(e.target.value)} placeholder="e.g. Custom App Logs" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Vendor</label>
+                  <input value={customSourceVendor} onChange={e => setCustomSourceVendor(e.target.value)} placeholder="e.g. Internal" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Description</label>
+                  <input value={customSourceDesc} onChange={e => setCustomSourceDesc(e.target.value)} placeholder="Brief description" style={inputStyle} />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 8 }}>
+                  Fields ({customSourceFields.length} defined)
+                </label>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <input value={newFieldName} onChange={e => setNewFieldName(e.target.value)} placeholder="Field name (e.g. src_ip)"
+                    style={{ ...inputStyle, flex: 1 }} onKeyDown={e => { if (e.key === 'Enter') handleAddField(); }} />
+                  <input value={newFieldDesc} onChange={e => setNewFieldDesc(e.target.value)} placeholder="Description (optional)"
+                    style={{ ...inputStyle, flex: 1 }} onKeyDown={e => { if (e.key === 'Enter') handleAddField(); }} />
+                  <button onClick={handleAddField} style={{ ...btnSecondary, padding: '6px 12px', whiteSpace: 'nowrap' }}>+ Add Field</button>
+                </div>
+                {customSourceFields.length > 0 && (
+                  <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--cds-color-border-subtle)', borderRadius: 'var(--cds-radius-md)' }}>
+                    {customSourceFields.map((f, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--cds-color-border-subtle)' }}>
+                        <code style={{ fontSize: 11, fontFamily: 'var(--cds-font-mono)', color: 'var(--cds-color-accent)', flex: 1 }}>{f.field}</code>
+                        <span style={{ fontSize: 10, color: 'var(--cds-color-fg-muted)', flex: 1 }}>{f.description}</span>
+                        <select value={f.canDrop} onChange={e => {
+                          const updated = [...customSourceFields];
+                          updated[i] = { ...updated[i], canDrop: e.target.value as any };
+                          setCustomSourceFields(updated);
+                        }} style={{ fontSize: 10, padding: '2px 4px', borderRadius: 3 }}>
+                          <option value="Yes">Droppable</option>
+                          <option value="No">Required</option>
+                          <option value="Sometimes">Sometimes</option>
+                        </select>
+                        <span onClick={() => removeCustomField(i)} style={{ cursor: 'pointer', color: 'var(--cds-color-danger)', fontSize: 12 }}>&#x2715;</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleAddCustomSource} disabled={!customSourceName.trim() || customSourceFields.length === 0}
+                  style={{ ...btnPrimary, opacity: (!customSourceName.trim() || customSourceFields.length === 0) ? 0.5 : 1 }}>
+                  Add Source
+                </button>
+                <button onClick={() => { setShowAddCustomSource(false); setCustomSourceFields([]); setCustomSourceName(''); }} style={btnSecondary}>Cancel</button>
+              </div>
+            </div>
+          )}
 
           {/* Notes */}
           <div style={{ ...card, marginBottom: 24 }}>
@@ -597,7 +809,8 @@ export default function CustomerWorkspacePage() {
                       </div>
 
                       {tuningSource && (() => {
-                        const fields = (fieldMatrix as any)[tuningSource] || [];
+                        const customSrc = activeProfile?.customSources?.find(cs => cs.id === tuningSource);
+                        const fields = customSrc ? customSrc.fields : ((fieldMatrix as any)[tuningSource] || []);
                         const dropped = droppedFields[tuningSource] || new Set();
                         const filteredFields = fieldFilter === 'all' ? fields
                           : fieldFilter === 'droppable' ? fields.filter((f: any) => f.canDrop === 'Yes')
@@ -686,7 +899,7 @@ export default function CustomerWorkspacePage() {
                                 </div>
                               </div>
 
-                              {/* Right: detection impact */}
+                              {/* Right: detection + search impact */}
                               <div>
                                 {(!tuningImpact || tuningImpact.droppedCount === 0) && (
                                   <div style={{ padding: 30, textAlign: 'center', color: 'var(--cds-color-fg-muted)', background: 'var(--cds-color-bg-subtle)', borderRadius: 'var(--cds-radius-md)' }}>
@@ -695,10 +908,27 @@ export default function CustomerWorkspacePage() {
                                 )}
                                 {tuningImpact && tuningImpact.droppedCount > 0 && (
                                   <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                                    {/* Broken custom searches */}
+                                    {tuningImpact.searchImpact && tuningImpact.searchImpact.filter(s => s.broken).length > 0 && (
+                                      <div style={{ marginBottom: 12 }}>
+                                        <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: '#a855f7', marginBottom: 6 }}>
+                                          Custom Searches Broken ({tuningImpact.searchImpact.filter(s => s.broken).length})
+                                        </div>
+                                        {tuningImpact.searchImpact.filter(s => s.broken).map(s => (
+                                          <div key={s.id} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 'var(--cds-radius-sm)', border: '1px solid #a855f7', background: 'rgba(168,85,247,0.03)' }}>
+                                            <span style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 500 }}>{s.name}</span>
+                                            <div style={{ fontSize: 10, color: 'var(--cds-color-fg-subtle)', marginTop: 3 }}>
+                                              Missing: {s.missing.map((f: string) => <code key={f} style={{ color: '#a855f7', marginRight: 3 }}>{f}</code>)}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {/* Broken detections */}
                                     {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).length > 0 && (
                                       <div style={{ marginBottom: 12 }}>
                                         <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-danger)', marginBottom: 6 }}>
-                                          Affected ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).length})
+                                          Detections Affected ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).length})
                                         </div>
                                         {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => d.broken).map(d => (
                                           <div key={d.id} style={{ padding: '6px 10px', marginBottom: 4, borderRadius: 'var(--cds-radius-sm)', border: '1px solid var(--cds-color-danger)', background: 'rgba(239,68,68,0.03)' }}>
@@ -716,15 +946,22 @@ export default function CustomerWorkspacePage() {
                                         ))}
                                       </div>
                                     )}
+                                    {/* Healthy items */}
                                     {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length > 0 && (
                                       <div>
                                         <div style={{ fontSize: 'var(--cds-font-size-xs)', fontWeight: 600, color: 'var(--cds-color-success)', marginBottom: 6 }}>
-                                          Healthy ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length})
+                                          Healthy ({[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).length}{tuningImpact.searchImpact && tuningImpact.searchImpact.filter(s => !s.broken).length > 0 ? ` + ${tuningImpact.searchImpact.filter(s => !s.broken).length} searches` : ''})
                                         </div>
                                         {[...tuningImpact.secImpact, ...tuningImpact.obsImpact].filter(d => !d.broken).map(d => (
                                           <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', marginBottom: 2, borderRadius: 'var(--cds-radius-sm)', background: 'var(--cds-color-bg-subtle)' }}>
                                             <span style={{ color: 'var(--cds-color-success)', fontSize: 10 }}>&#10003;</span>
                                             <span style={{ fontSize: 11, color: 'var(--cds-color-fg-muted)' }}>{d.name}</span>
+                                          </div>
+                                        ))}
+                                        {tuningImpact.searchImpact && tuningImpact.searchImpact.filter(s => !s.broken).map(s => (
+                                          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', marginBottom: 2, borderRadius: 'var(--cds-radius-sm)', background: 'var(--cds-color-bg-subtle)' }}>
+                                            <span style={{ color: '#a855f7', fontSize: 10 }}>&#10003;</span>
+                                            <span style={{ fontSize: 11, color: 'var(--cds-color-fg-muted)' }}>{s.name} <span style={{ fontSize: 9, color: '#a855f7' }}>(search)</span></span>
                                           </div>
                                         ))}
                                       </div>
@@ -736,6 +973,125 @@ export default function CustomerWorkspacePage() {
                           </div>
                         );
                       })()}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Custom Searches */}
+              {activeProfile.sourceIds.length > 0 && (
+                <div style={{ ...card, marginBottom: 24 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <div>
+                      <h3 style={{ fontSize: 'var(--cds-font-size-lg)', fontWeight: 600, margin: 0 }}>Custom Searches</h3>
+                      <p style={{ fontSize: 'var(--cds-font-size-sm)', color: 'var(--cds-color-fg-muted)', margin: '4px 0 0' }}>
+                        Add your own KQL searches. Referenced fields are validated and factored into droppable field analysis.
+                      </p>
+                    </div>
+                    <button onClick={() => { setShowAddSearch(!showAddSearch); if (!searchSourceId) setSearchSourceId(activeProfile.sourceIds[0]); }}
+                      style={showAddSearch ? btnPrimary : btnSecondary}>
+                      {showAddSearch ? 'Cancel' : '+ Add Search'}
+                    </button>
+                  </div>
+
+                  {showAddSearch && (
+                    <div style={{ background: 'var(--cds-color-bg-subtle)', padding: 16, borderRadius: 'var(--cds-radius-md)', marginBottom: 16 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                        <div>
+                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Search Name *</label>
+                          <input value={searchName} onChange={e => setSearchName(e.target.value)} placeholder="e.g. Failed Login Spike" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Description</label>
+                          <input value={searchDesc} onChange={e => setSearchDesc(e.target.value)} placeholder="What this search detects" style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>Source *</label>
+                          <select value={searchSourceId} onChange={e => setSearchSourceId(e.target.value)} style={{ ...inputStyle, padding: '8px 10px' }}>
+                            <option value="">Select source...</option>
+                            {activeProfile.sourceIds.map(sid => {
+                              const src = allSources.find(s => s.id === sid);
+                              return <option key={sid} value={sid}>{src?.name || sid}</option>;
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', display: 'block', marginBottom: 4 }}>KQL Query *</label>
+                        <textarea value={searchQuery} onChange={e => handleValidateSearch(e.target.value)}
+                          placeholder={'dataset="$DATASET" earliest=-24h\n| where field="value"\n| summarize count() by src_ip\n| order by count_ desc'}
+                          style={{ ...inputStyle, minHeight: 100, resize: 'vertical', fontFamily: 'var(--cds-font-mono)', fontSize: 12 }} />
+                      </div>
+
+                      {searchValidation && (
+                        <div style={{ marginBottom: 12, padding: 12, borderRadius: 'var(--cds-radius-md)', background: 'var(--cds-color-bg)', border: `1px solid ${searchValidation.valid ? 'var(--cds-color-success)' : 'var(--cds-color-danger)'}` }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                            <span style={{ fontSize: 12, color: searchValidation.valid ? 'var(--cds-color-success)' : 'var(--cds-color-danger)', fontWeight: 600 }}>
+                              {searchValidation.valid ? '✓ Valid KQL' : '✗ Invalid KQL'}
+                            </span>
+                          </div>
+                          {searchValidation.errors.length > 0 && (
+                            <div style={{ marginBottom: 6 }}>
+                              {searchValidation.errors.map((err, i) => (
+                                <div key={i} style={{ fontSize: 11, color: 'var(--cds-color-danger)', marginBottom: 2 }}>Error: {err}</div>
+                              ))}
+                            </div>
+                          )}
+                          {searchValidation.warnings.length > 0 && (
+                            <div style={{ marginBottom: 6 }}>
+                              {searchValidation.warnings.map((w, i) => (
+                                <div key={i} style={{ fontSize: 11, color: 'var(--cds-color-warning)', marginBottom: 2 }}>Warning: {w}</div>
+                              ))}
+                            </div>
+                          )}
+                          {searchValidation.referencedFields.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--cds-color-fg-muted)', marginBottom: 4 }}>Referenced Fields ({searchValidation.referencedFields.length}):</div>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {searchValidation.referencedFields.map(f => (
+                                  <code key={f} style={{ fontSize: 10, padding: '1px 6px', background: 'var(--cds-color-accent-subtle)', borderRadius: 3, color: 'var(--cds-color-accent)' }}>{f}</code>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <button onClick={handleAddSearch}
+                        disabled={!searchName.trim() || !searchQuery.trim() || !searchSourceId || !searchValidation?.valid}
+                        style={{ ...btnPrimary, opacity: (!searchName.trim() || !searchQuery.trim() || !searchSourceId || !searchValidation?.valid) ? 0.5 : 1 }}>
+                        Add Search
+                      </button>
+                    </div>
+                  )}
+
+                  {/* List existing custom searches */}
+                  {(activeProfile.customSearches || []).length > 0 && (
+                    <div>
+                      {(activeProfile.customSearches || []).map(search => {
+                        const src = allSources.find(s => s.id === search.sourceId);
+                        const dropped = droppedFields[search.sourceId] || new Set();
+                        const brokenFields = search.referencedFields.filter(f => dropped.has(f));
+                        const isBroken = brokenFields.length > 0;
+                        return (
+                          <div key={search.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 14px', marginBottom: 6, borderRadius: 'var(--cds-radius-md)', border: `1px solid ${isBroken ? 'var(--cds-color-danger)' : 'var(--cds-color-border-subtle)'}`, background: isBroken ? 'rgba(239,68,68,0.03)' : 'transparent' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 'var(--cds-font-size-sm)', fontWeight: 600 }}>{search.name}</span>
+                                <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'var(--cds-color-bg-subtle)', color: 'var(--cds-color-fg-muted)' }}>{src?.name || search.sourceId}</span>
+                                {isBroken && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'rgba(239,68,68,0.1)', color: 'var(--cds-color-danger)', fontWeight: 600 }}>BROKEN</span>}
+                              </div>
+                              {search.description && <div style={{ fontSize: 'var(--cds-font-size-xs)', color: 'var(--cds-color-fg-muted)', marginBottom: 4 }}>{search.description}</div>}
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {search.referencedFields.map(f => (
+                                  <code key={f} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: brokenFields.includes(f) ? 'rgba(239,68,68,0.1)' : 'var(--cds-color-accent-subtle)', color: brokenFields.includes(f) ? 'var(--cds-color-danger)' : 'var(--cds-color-accent)', textDecoration: brokenFields.includes(f) ? 'line-through' : 'none' }}>{f}</code>
+                                ))}
+                              </div>
+                            </div>
+                            <span onClick={() => removeCustomSearch(search.id)} style={{ cursor: 'pointer', color: 'var(--cds-color-danger)', fontSize: 12, marginTop: 2 }} title="Remove search">&#x2715;</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

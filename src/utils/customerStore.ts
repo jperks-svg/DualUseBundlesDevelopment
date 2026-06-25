@@ -1,9 +1,38 @@
+export interface CustomField {
+  field: string;
+  description: string;
+  canDrop: 'Yes' | 'No' | 'Sometimes';
+  securitySiem: 'Yes' | 'No' | 'Sometimes';
+  observability: 'Yes' | 'No' | 'Sometimes';
+}
+
+export interface CustomSource {
+  id: string;
+  name: string;
+  vendor: string;
+  description: string;
+  fields: CustomField[];
+  createdAt: string;
+}
+
+export interface CustomSearch {
+  id: string;
+  name: string;
+  description: string;
+  sourceId: string;
+  query: string;
+  referencedFields: string[];
+  createdAt: string;
+}
+
 export interface CustomerProfile {
   id: string;
   name: string;
   company: string;
   sourceIds: string[];
   droppedFields?: Record<string, string[]>;
+  customSources?: CustomSource[];
+  customSearches?: CustomSearch[];
   notes: string;
   createdAt: string;
   updatedAt: string;
