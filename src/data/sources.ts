@@ -243,7 +243,137 @@ export const dataSources = [
         logFormat: 'CSV (S3 export) with multiple log types: dnslogs (DNS queries), proxylogs (intelligent proxy), iplogs (cloud firewall), cdrlogs (cloud delivered firewall). Key fields: Timestamp, InternalIp, ExternalIp, Action, QueryType, Domain, Categories, PolicyIdentity, Verdict.',
         avgEPS: '5,000-100,000 EPS depending on user population and DNS query volume',
         sampleEvent: '"2026-06-06 14:32:08","jperks@cribl.io","LAPTOP-JP01","10.1.2.100","203.0.113.42","Allowed","A","suspicious-domain.xyz","Malware,Newly Seen Domains","Cribl-Prod-Policy","DNS","","","","198.51.100.1","","","","low"'
-      }
+      },
+      {
+  id: 'azure-dns',
+  name: 'Azure DNS Analytics & Query Logs',
+  vendor: 'Microsoft',
+  description: 'DNS query logs and analytics from Azure DNS public zones and Azure DNS Private Resolver. Captures resolution requests, response codes, query types, and client metadata via Azure Monitor Diagnostic Settings. Provides visibility into DNS-based threats, misconfigurations, and traffic patterns across Azure-hosted workloads.',
+  status: 'available',
+  useCases: [
+    'DNS tunneling and exfiltration detection',
+    'DGA (Domain Generation Algorithm) domain identification',
+    'Shadow IT discovery via unexpected DNS resolutions',
+    'DNS query volume anomaly detection',
+    'Private zone resolution auditing for compliance',
+    'Stale or orphaned DNS record identification',
+    'Query latency and failure rate monitoring',
+    'Cross-tenant DNS resolution tracking'
+  ],
+  personas: ['Security Analyst', 'SOC Engineer', 'Cloud Infrastructure Engineer', 'Network Operations'],
+  jobsToBeDone: [
+    {
+      category: 'Security Detection',
+      jobs: [
+        'Detect DNS tunneling by identifying high-entropy query names and abnormal TXT record volumes',
+        'Flag queries to known malicious domains or newly registered domains indicative of DGA activity',
+        'Identify data exfiltration attempts via encoded subdomains exceeding normal label lengths',
+        'Alert on DNS rebinding attacks targeting internal Azure Private DNS zones',
+        'Correlate NXDOMAIN spikes with potential reconnaissance or misconfigured malware callbacks'
+      ]
+    },
+    {
+      category: 'Cost Optimization',
+      jobs: [
+        'Reduce SIEM ingestion costs by filtering repetitive health-check DNS queries before forwarding',
+        'Deduplicate high-frequency recursive resolution logs from Azure Private Resolver',
+        'Route low-value DNS analytics to cold storage while sending security-relevant queries to SIEM',
+        'Identify and suppress noisy internal service discovery queries that inflate log volume',
+        'Summarize DNS query patterns into aggregated metrics to replace verbose raw logs'
+      ]
+    },
+    {
+      category: 'Operational Visibility',
+      jobs: [
+        'Monitor DNS resolution failure rates across Azure regions and virtual networks',
+        'Track query volume trends to capacity-plan Azure DNS Private Resolver endpoints',
+        'Identify misconfigured conditional forwarders causing resolution loops or timeouts',
+        'Audit private zone record usage to detect stale entries and reduce zone sprawl',
+        'Correlate DNS query spikes with application deployment events or outages'
+      ]
+    },
+    {
+      category: 'Data Onboarding',
+      jobs: [
+        'Normalize AzureDiagnostics DNS records into a common DNS schema for multi-cloud correlation',
+        'Enrich DNS logs with Azure resource metadata including subscription, resource group, and virtual network',
+        'Parse resource-specific DNS query logs and map response codes to human-readable status values',
+        'Route DNS security events to SIEM and operational metrics to monitoring platforms simultaneously',
+        'Transform Azure Monitor JSON payloads into destination-native formats for Splunk CIM or Elastic ECS compliance'
+      ]
+    }
+  ],
+  criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
+  destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
+  collectionMethod: 'Azure Event Hub (recommended) or Azure Blob Storage via Azure Monitor Diagnostic Settings. Configure diagnostic settings on DNS Private Resolver or public DNS zones to export DnsQueryLogs and DNS Analytics categories. Cribl Stream ingests via the Azure Event Hub source or Azure Blob Storage source with JSON array parsing enabled.',
+  sampleEvent: '{"time":"2026-06-29T14:32:07.182Z","resourceId":"/SUBSCRIPTIONS/A1B2C3D4-E5F6-7890-ABCD-EF1234567890/RESOURCEGROUPS/RG-NETWORKING/PROVIDERS/MICROSOFT.NETWORK/DNSRESOLVERPOLICIES/POLICY-PROD-EASTUS","operationName":"Microsoft.Network/dnsResolverPolicies/dnsQueryLog","category":"DnsQueryLogs","properties":{"queryName":"api.internal.contoso.com.","queryType":"A","responseCode":"NOERROR","clientIP":"10.42.3.117","virtualNetworkId":"/subscriptions/a1b2c3d4-e5f6-7890-abcd-ef1234567890/resourceGroups/rg-networking/providers/Microsoft.Network/virtualNetworks/vnet-prod-eastus","protocol":"UDP","queryClass":"IN","responseTtl":300,"dnsResolverPolicyName":"policy-prod-eastus","ruleName":"forward-internal"}}'
+},
+      {
+  id: 'bluecat-dns',
+  name: 'BlueCat DNS Edge & Integrity Logs',
+  vendor: 'BlueCat',
+  description: 'Collects DNS query logs, DHCP lease events, and policy enforcement actions from BlueCat Integrity (Address Manager / BDDS) and BlueCat Edge service points. Provides visibility into internal DNS resolution patterns, namespace-aware routing decisions, threat feed block/redirect actions, and client-to-IP mappings for asset enrichment and lateral movement detection.',
+  status: 'available',
+  useCases: [
+    'DNS threat detection and response',
+    'DNS tunneling and exfiltration identification',
+    'Internal asset discovery via DHCP/IPAM correlation',
+    'Policy enforcement audit and compliance',
+    'Namespace-aware traffic analysis',
+    'Shadow IT and unauthorized SaaS detection',
+    'DNS query volume optimization and cost reduction',
+    'Incident response enrichment with client-to-IP mapping'
+  ],
+  personas: ['Security Analyst', 'Network Engineer', 'SOC Analyst', 'IT Operations', 'Platform Engineer'],
+  jobsToBeDone: [
+    {
+      category: 'Security Detection',
+      jobs: [
+        'Detect DNS tunneling via high-entropy subdomain queries and abnormal TXT record volumes',
+        'Identify DGA (Domain Generation Algorithm) callbacks by correlating query patterns against threat intelligence feeds',
+        'Alert on policy bypass attempts where clients resolve blocked domains through alternate resolvers',
+        'Detect lateral movement by correlating DHCP lease changes with anomalous DNS resolution patterns',
+        'Identify data exfiltration via DNS by monitoring query length distributions and NXDOMAIN ratios',
+        'Surface unauthorized namespace resolution indicating split-horizon policy violations'
+      ]
+    },
+    {
+      category: 'Cost Optimization',
+      jobs: [
+        'Reduce SIEM ingest costs by filtering repetitive PTR lookups and health-check DNS noise before forwarding',
+        'Identify high-volume internal DNS chatterers generating unnecessary query load for tuning or suppression',
+        'Deduplicate Edge service point logs when multiple points report the same resolution chain',
+        'Route low-value DHCP lease renewal events to cold storage while forwarding only new assignments to SIEM',
+        'Quantify DNS query volume per business unit to enable chargeback or rightsizing discussions'
+      ]
+    },
+    {
+      category: 'Operational Visibility',
+      jobs: [
+        'Monitor DNS resolution latency across Edge service points to detect upstream resolver degradation',
+        'Track DHCP pool utilization and forecast address exhaustion across managed scopes',
+        'Audit namespace delegation changes and zone transfer activity for change management compliance',
+        'Correlate DNS SERVFAIL and REFUSED responses with application availability incidents',
+        'Map client device DNS behavior to identify misconfigured or rogue DNS resolver usage',
+        'Baseline DNS query patterns per namespace to detect configuration drift after maintenance windows'
+      ]
+    },
+    {
+      category: 'Data Onboarding',
+      jobs: [
+        'Normalize BlueCat syslog (BDDS) and Edge webhook/API formats into a unified DNS schema',
+        'Enrich DNS events with IPAM metadata (network, location, device name) from Address Manager exports',
+        'Parse BlueCat Edge policy action fields to extract threat category, feed source, and enforcement decision',
+        'Convert BlueCat timestamp formats and correlate Edge cloud timestamps with on-prem BDDS syslog times',
+        'Route DNS security events to SIEM and operational DNS metrics to observability platforms simultaneously'
+      ]
+    }
+  ],
+  criblProducts: ['Stream', 'Edge', 'Lake', 'Search', 'Guard'],
+  destinations: ['CrowdStrike NG SIEM', 'Splunk', 'Microsoft Sentinel', 'Elastic Security', 'Datadog', 'Cribl Lake', 'Amazon S3'],
+  collectionMethod: 'Syslog (TCP/UDP/TLS) from BlueCat DNS/DHCP Server (BDDS) appliances; REST API polling or webhook receiver for BlueCat Edge cloud service points; optional S3 import for Edge batch exports. Cribl Edge can be deployed as a local collector on the same network segment as BDDS for reliable UDP syslog capture with automatic source identification.',
+  sampleEvent: '<134>1 2026-06-29T14:32:07.891Z bdds01.corp.internal named-query 12847 - - client @0x7f2a1c003a80 10.42.18.55#52341 (edge-config.bluecat.io): query: edge-config.bluecat.io IN A + (10.42.1.10); policy: PASSTHRU; namespace: internal-corp; view: corporate-resolvers; response: NOERROR; rdata: 104.18.22.47; elapsed_ms: 2; feed_match: none; edge_sp: sp-us-east-1a'
+}
     ]
   },
   {

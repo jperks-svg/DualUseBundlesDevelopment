@@ -20213,4 +20213,611 @@ export const securityDetections = {
       ]
     }
   ],
+  'azure-dns': [
+  {
+    id: 'az-sec-001',
+    name: 'DNS Tunneling via Private Resolver',
+    objective: 'Detect potential DNS tunneling activity through Azure Private DNS Resolvers by identifying queries with unusually long subdomain labels or high-entropy domain names. Tunneling encodes data in DNS queries to bypass network controls, making resolver-level detection critical.',
+    severity: 'High',
+    mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1048.001 - Exfiltration Over Alternative Protocol: Exfiltration Over Symmetric Encrypted Non-C2 Protocol'],
+    tags: ['security', 'dns', 'azure', 'exfiltration', 'tunneling', 'private-resolver'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'dns_resolver_name', 'virtual_network', 'subnet', 'response_code', 'protocol', 'subscription_id'],
+    detectionLogic: 'Identify DNS queries where the fully qualified domain name exceeds 60 characters or contains subdomain labels longer than 30 characters. Calculate Shannon entropy of the longest subdomain label â€” flag queries exceeding entropy threshold of 3.5. Aggregate by client_ip over a 10-minute sliding window and alert when a single source generates more than 50 high-entropy queries. Exclude known CDN and SaaS domains from baseline allowlist.',
+    falsePositives: [
+      'Legitimate SaaS applications using long CNAME chains or encoded identifiers in subdomains (e.g., Microsoft DKIM selectors)',
+      'Certificate validation queries with base64-encoded certificate hashes in domain names',
+      'Anti-spam and email authentication lookups (DKIM, SPF) that use encoded values in DNS labels',
+      'Automated vulnerability scanners or penetration testing tools during authorized security assessments'
+    ],
+    tuningGuidance: 'Adjust the entropy threshold between 3.2 and 4.0 based on baseline noise. Maintain an allowlist of known-good long-domain patterns (e.g., _dmarc, _domainkey prefixes). Reduce window size to 5 minutes for higher-fidelity environments or increase to 15 minutes for noisy networks. Exclude resolver names associated with dev/test subscriptions if they generate synthetic traffic.',
+    investigationWorkflow: '1. Identify the source client_ip and correlate with Azure VM or resource identity via virtual_network and subnet fields\n2. Extract and decode the subdomain labels from flagged query_name values â€” check for base64, hex, or custom encoding patterns\n3. Determine the parent domain and check threat intelligence feeds for known tunneling infrastructure\n4. Review query volume and timing patterns for the source IP over the past 24 hours to establish periodicity\n5. Check if the dns_resolver_name has forwarding rules that could route tunneled traffic externally\n6. Correlate with NSG flow logs to verify whether the client has other outbound connectivity or is DNS-only\n7. Examine response_data for TXT or NULL record responses carrying encoded payloads back to the client',
+    criblSearchQueries: [
+      {
+        name: 'High-Entropy DNS Queries via Private Resolver',
+        description: 'Identifies DNS queries with high-entropy subdomain labels transiting Azure Private Resolvers, indicative of DNS tunneling encoding.',
+        query: `dataset="$DATASET" earliest=-24h
+| where dns_resolver_name != null
+| where length(query_name) > 60
+| eval subdomain = split(query_name, ".")[0]
+| eval entropy = shannon_entropy(subdomain)
+| where entropy > 3.5
+| stats count as query_count, dc(query_name) as unique_queries, values(query_type) as query_types by client_ip, dns_resolver_name, virtual_network
+| where query_count > 50
+| sort -query_count`
+      },
+      {
+        name: 'DNS Tunneling Temporal Pattern Analysis',
+        description: 'Detects sustained high-frequency DNS queries with long labels from a single source, revealing beaconing or bulk data exfiltration patterns.',
+        query: `dataset="$DATASET" earliest=-24h
+| where dns_resolver_name != null
+| where length(query_name) > 60
+| eval subdomain_label = split(query_name, ".")[0]
+| where length(subdomain_label) > 30
+| bin timestamp span=5m as time_bucket
+| stats count as queries_per_window, sum(length(query_name)) as total_bytes_encoded, dc(query_name) as unique_names by client_ip, time_bucket, subnet, dns_resolver_name
+| where queries_per_window > 20 AND unique_names > 15
+| sort -total_bytes_encoded`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-002',
+    name: 'DGA Domain Queries',
+    objective: 'Detect Domain Generation Algorithm activity by identifying clusters of queries to algorithmically generated domain names that fail to resolve. DGA is a primary technique used by malware families to establish C2 channels while evading static blocklists.',
+    severity: 'High',
+    mitre: ['T1568.002 - Dynamic Resolution: Domain Generation Algorithms', 'T1071.004 - Application Layer Protocol: DNS'],
+    tags: ['security', 'dns', 'azure', 'malware', 'c2', 'dga'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'virtual_network', 'subnet', 'dns_resolver_name', 'subscription_id', 'resource_group'],
+    detectionLogic: 'Analyze DNS queries for characteristics of algorithmically generated domains: consonant-to-vowel ratio exceeding 4:1, absence of dictionary words in labels, uniform label length distribution, and NXDOMAIN response codes. Score each query_name using a composite heuristic combining bigram frequency analysis against English language norms and label length uniformity. Aggregate by client_ip over 15-minute windows â€” trigger alert when a single source generates more than 25 queries scoring above the DGA threshold with NXDOMAIN responses exceeding 80% of total queries.',
+    falsePositives: [
+      'Randomized subdomain queries from CDN health checks or load balancer probes that use pseudo-random prefixes',
+      'Legitimate DNSSEC validation queries or NSEC walking that produces high volumes of NXDOMAIN responses',
+      'Cloud service auto-discovery mechanisms that probe for regional endpoint availability using generated names',
+      'Antivirus or endpoint protection updates that check randomized canary domains to verify DNS integrity'
+    ],
+    tuningGuidance: 'Calibrate the DGA scoring threshold by analyzing 7 days of baseline DNS traffic to establish normal NXDOMAIN ratios per source. Allowlist known cloud provider health-check patterns (e.g., Azure Traffic Manager probes). Increase the NXDOMAIN percentage threshold to 90% in environments with heavy DNSSEC usage. Consider reducing the query count threshold to 15 for high-security zones.',
+    investigationWorkflow: '1. Isolate the client_ip and map it to the Azure resource (VM, container, function) using virtual_network and subnet\n2. Extract the set of queried domains and analyze for known DGA family patterns (length, TLD distribution, character composition)\n3. Check the NXDOMAIN ratio â€” DGA typically shows 90%+ failure rate as only the current seed resolves\n4. Cross-reference any successfully resolved domains against threat intelligence for known C2 infrastructure\n5. Review the timing pattern of queries â€” DGA often shows burst patterns aligned with seed rotation intervals\n6. Check the resource for other indicators: unusual outbound connections, process creation events, or recent deployments\n7. If confirmed, isolate the resource via NSG rules and capture memory/disk for forensic analysis',
+    criblSearchQueries: [
+      {
+        name: 'DGA Detection via NXDOMAIN Clustering',
+        description: 'Identifies sources generating high volumes of failed DNS resolutions to domains with algorithmic characteristics, a hallmark of DGA-based malware.',
+        query: `dataset="$DATASET" earliest=-24h
+| where response_code == "NXDOMAIN"
+| where query_type in ("A", "AAAA")
+| eval domain_parts = split(query_name, ".")
+| eval sld = domain_parts[length(domain_parts)-2]
+| where length(sld) >= 8 AND length(sld) <= 24
+| eval vowel_count = len(replace(lower(sld), "[^aeiou]", ""))
+| eval consonant_ratio = (length(sld) - vowel_count) / max(vowel_count, 1)
+| where consonant_ratio > 3.5
+| stats count as nxdomain_count, dc(query_name) as unique_domains, earliest(timestamp) as first_seen, latest(timestamp) as last_seen by client_ip, virtual_network, subnet
+| where nxdomain_count > 25 AND unique_domains > 20
+| sort -nxdomain_count`
+      },
+      {
+        name: 'DGA Burst Pattern Detection',
+        description: 'Detects short bursts of queries to high-entropy domains that fail resolution, identifying DGA seed rotation cycles.',
+        query: `dataset="$DATASET" earliest=-24h
+| where response_code == "NXDOMAIN"
+| eval domain_parts = split(query_name, ".")
+| eval sld = domain_parts[length(domain_parts)-2]
+| eval entropy = shannon_entropy(sld)
+| where entropy > 3.2 AND length(sld) > 7
+| bin timestamp span=15m as time_window
+| stats count as query_burst, dc(query_name) as unique_domains, values(sld) as sample_domains by client_ip, time_window, dns_resolver_name
+| where query_burst > 25 AND unique_domains / query_burst > 0.8
+| sort -query_burst`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-003',
+    name: 'Unauthorized DNS Resolver Usage',
+    objective: 'Detect DNS queries routed through resolvers that the querying resource is not authorized to use, indicating potential lateral movement or misconfiguration exploitation. Unauthorized resolver access can bypass DNS-layer security policies scoped to specific virtual networks.',
+    severity: 'Medium',
+    mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1021 - Remote Services', 'T1599 - Network Boundary Bridging'],
+    tags: ['security', 'dns', 'azure', 'policy-violation', 'lateral-movement', 'resolver'],
+    requiredFields: ['timestamp', 'client_ip', 'dns_resolver_name', 'virtual_network', 'subnet', 'linked_vnet', 'endpoint_name', 'endpoint_type', 'subscription_id', 'resource_group', 'query_name', 'forwarding_rule'],
+    detectionLogic: 'Maintain a mapping of authorized resolver-to-VNet associations based on linked_vnet configurations. For each DNS query, verify that the source client_ip belongs to a subnet within a virtual_network that is linked to the dns_resolver_name handling the query. Flag queries where the source VNet is not in the authorized linked_vnet list for that resolver. Additionally detect queries arriving at inbound endpoints from IP ranges outside the expected subnet allocations. Exclude known hub-and-spoke peering relationships from alerts.',
+    falsePositives: [
+      'Newly peered virtual networks that have not yet been added to the authorized resolver mapping baseline',
+      'Azure Private Link or Private Endpoint traffic that routes through unexpected resolver paths during failover',
+      'Hub-and-spoke network topologies where spoke VNets legitimately route through centralized hub resolvers',
+      'VPN gateway or ExpressRoute connected on-premises clients using Azure DNS resolvers during hybrid connectivity'
+    ],
+    tuningGuidance: 'Build the authorized resolver-to-VNet mapping from Azure Resource Graph data and update weekly. Explicitly model hub-and-spoke topologies by adding hub resolver names as authorized for all spoke VNets. Add a 24-hour grace period for newly created VNet peerings to reduce noise during infrastructure changes. Separate alerting for inbound vs outbound endpoint type violations.',
+    investigationWorkflow: '1. Identify the source client_ip and determine which virtual_network and subnet it belongs to via Azure Resource Graph\n2. Verify whether the dns_resolver_name is linked to the source virtual_network â€” check linked_vnet configuration\n3. Determine if there is a recent VNet peering or network change that could explain the unauthorized path\n4. Review the forwarding_rule applied to the query to understand where the query was ultimately routed\n5. Check if the source resource has recently been moved, redeployed, or had its network interface reconfigured\n6. Examine the query_name values to determine if the unauthorized resolver usage is targeting sensitive internal zones\n7. Correlate with Azure Activity Log for recent changes to DNS resolver configurations or VNet link operations',
+    criblSearchQueries: [
+      {
+        name: 'Cross-VNet Unauthorized Resolver Access',
+        description: 'Identifies DNS queries arriving at resolvers from virtual networks that are not in the linked VNet configuration, indicating unauthorized cross-network DNS access.',
+        query: `dataset="$DATASET" earliest=-24h
+| where dns_resolver_name != null AND virtual_network != null AND linked_vnet != null
+| where virtual_network != linked_vnet
+| stats count as query_count, dc(query_name) as unique_queries, dc(dns_resolver_name) as resolvers_accessed, values(dns_resolver_name) as resolver_names by client_ip, virtual_network, subnet, subscription_id
+| where query_count > 5
+| sort -query_count`
+      },
+      {
+        name: 'Unexpected Inbound Endpoint Usage',
+        description: 'Detects queries arriving at inbound resolver endpoints from clients outside the expected subnet ranges, potentially indicating unauthorized network access.',
+        query: `dataset="$DATASET" earliest=-24h
+| where endpoint_type == "inbound" AND endpoint_name != null
+| stats count as total_queries, dc(client_ip) as unique_sources, dc(virtual_network) as source_vnets, values(virtual_network) as vnet_list, values(query_name) as sample_queries by endpoint_name, dns_resolver_name, resource_group
+| where source_vnets > 1
+| sort -unique_sources`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-004',
+    name: 'DNS Query to Known Malicious Domain',
+    objective: 'Detect DNS resolution attempts to domains identified as malicious by threat intelligence feeds, including known C2 infrastructure, phishing domains, and malware distribution sites. Immediate detection at the DNS layer provides the earliest possible indicator of compromise before network connections are established.',
+    severity: 'Critical',
+    mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1566 - Phishing', 'T1204 - User Execution'],
+    tags: ['security', 'dns', 'azure', 'threat-intelligence', 'ioc', 'malicious-domain', 'c2'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'response_data', 'virtual_network', 'subnet', 'dns_resolver_name', 'subscription_id', 'resource_group', 'correlation_id'],
+    detectionLogic: 'Compare each query_name against a curated threat intelligence domain list updated at minimum every 4 hours. Match on exact domain, parent domain (to catch subdomain variations of malicious roots), and known fast-flux domain patterns. For successful resolutions (NOERROR), additionally compare response_data IP addresses against known malicious IP indicators. Trigger immediately on any match â€” no aggregation threshold required for confirmed IOCs. Enrich alerts with threat intelligence context including malware family, campaign attribution, and confidence score.',
+    falsePositives: [
+      'Security research or threat hunting activities where analysts intentionally query malicious domains from isolated research environments',
+      'Threat intelligence feed false positives â€” legitimate domains incorrectly categorized due to shared hosting infrastructure or expired IOC entries',
+      'DNS sinkhole responses where security tools intentionally resolve malicious domains to controlled IPs for monitoring purposes',
+      'Parked or expired domains that were previously malicious but have since been reclaimed by legitimate registrants'
+    ],
+    tuningGuidance: 'Use high-confidence IOC feeds only (confidence score > 80) to minimize false positives. Implement IOC aging â€” automatically expire indicators older than 90 days unless refreshed. Maintain a verified allowlist of security research subnets exempt from alerting. Cross-reference with DNS sinkhole IP ranges to differentiate between actual resolution and controlled sinkholing. Weight alerts by threat intelligence source reputation.',
+    investigationWorkflow: '1. Immediately identify the source client_ip and map to the specific Azure resource (VM name, container, function app) via virtual_network and subnet\n2. Query threat intelligence for the matched domain â€” determine malware family, campaign, severity, and known TTPs\n3. Check response_code and response_data â€” if NOERROR, the domain resolved and a connection may have been attempted\n4. Use correlation_id to trace the full DNS transaction and identify any follow-up queries (often C2 uses multi-stage resolution)\n5. Review all DNS queries from the same client_ip in the surrounding 1-hour window for additional IOC matches or suspicious patterns\n6. Check Azure NSG flow logs and firewall logs for outbound connections to the resolved IP address\n7. If confirmed malicious, immediately isolate the resource via NSG deny-all rule and escalate to incident response\n8. Preserve forensic evidence â€” snapshot the disk, capture memory if possible, and document the timeline',
+    criblSearchQueries: [
+      {
+        name: 'DNS Queries to Threat Intelligence IOC Domains',
+        description: 'Matches DNS queries against known malicious domains from threat intelligence feeds, providing immediate alerting on potential compromise indicators.',
+        query: `dataset="$DATASET" earliest=-24h
+| where query_name in (lookup("threat_intel_domains", "domain"))
+| eval resolution_status = if(response_code == "NOERROR", "RESOLVED", "BLOCKED")
+| stats count as hit_count, earliest(timestamp) as first_query, latest(timestamp) as last_query, values(query_type) as query_types, values(response_data) as resolved_ips by client_ip, query_name, virtual_network, subnet, dns_resolver_name, resolution_status
+| sort -hit_count`
+      },
+      {
+        name: 'Post-Resolution Malicious Domain Activity Correlation',
+        description: 'Identifies all DNS activity from hosts that queried known malicious domains, enabling discovery of additional IOCs and lateral movement indicators.',
+        query: `dataset="$DATASET" earliest=-24h
+| where client_ip in (
+    dataset="$DATASET" earliest=-24h
+    | where query_name in (lookup("threat_intel_domains", "domain"))
+    | dedup client_ip
+    | fields client_ip
+  )
+| stats count as total_queries, dc(query_name) as unique_domains, values(query_name) as all_domains, values(response_code) as response_codes by client_ip, virtual_network, subnet
+| where total_queries > 1
+| sort -total_queries`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-005',
+    name: 'Anomalous Query Volume Spike',
+    objective: 'Detect sudden and significant increases in DNS query volume from individual sources or across resolver infrastructure that deviate from established baselines. Volume spikes can indicate automated reconnaissance, data exfiltration, denial-of-service preparation, or compromised resources participating in botnet activity.',
+    severity: 'Medium',
+    mitre: ['T1046 - Network Service Discovery', 'T1498 - Network Denial of Service', 'T1048 - Exfiltration Over Alternative Protocol'],
+    tags: ['security', 'dns', 'azure', 'anomaly', 'volume-spike', 'baseline'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'virtual_network', 'subnet', 'dns_resolver_name', 'subscription_id', 'resource_group', 'response_time_ms', 'record_count'],
+    detectionLogic: 'Establish per-source and per-resolver rolling baselines using 7-day hourly averages with standard deviation calculations. For each 5-minute evaluation window, compute the current query rate per client_ip and compare against the source-specific baseline. Alert when current volume exceeds 3 standard deviations above the rolling mean OR when absolute volume exceeds 500 queries per minute from a single source. Additionally monitor resolver-level aggregate volume for infrastructure-wide anomalies exceeding 2.5 standard deviations. Account for day-of-week and time-of-day seasonality in baseline calculations.',
+    falsePositives: [
+      'Legitimate batch processing jobs or scheduled tasks that generate bursty DNS activity at predictable intervals (e.g., hourly cron jobs resolving service endpoints)',
+      'Auto-scaling events where multiple new instances simultaneously perform service discovery DNS lookups during initialization',
+      'Software deployments or rolling updates that trigger simultaneous DNS cache misses across a fleet of instances',
+      'DNS cache expiration alignment where multiple cached records expire simultaneously causing a resolution burst'
+    ],
+    tuningGuidance: 'Extend the baseline learning period to 14 days for environments with weekly batch cycles. Add time-of-day and day-of-week seasonality adjustments to reduce alerts during known peak windows. Create separate baselines for different resource types (VMs vs containers vs functions) as their DNS patterns differ fundamentally. Implement a minimum baseline threshold â€” do not alert on sources with fewer than 50 queries in the baseline period as the standard deviation calculation becomes unreliable.',
+    investigationWorkflow: '1. Identify the source client_ip and determine if it corresponds to a single resource or a NAT gateway aggregating multiple sources\n2. Compare current query volume against the 7-day baseline â€” determine the magnitude of deviation and onset time\n3. Analyze the query_name distribution during the spike â€” is it diverse (reconnaissance) or concentrated (tunneling/exfiltration)\n4. Check query_type distribution â€” unusual record types (TXT, NULL, MX) in high volume suggest data encoding\n5. Review response_code distribution â€” high NXDOMAIN rates suggest scanning; all NOERROR suggests targeted resolution\n6. Check response_time_ms for degradation that could indicate resolver overload from the spike\n7. Correlate with deployment events, auto-scaling activity, or scheduled job executions to rule out operational causes\n8. If no legitimate cause identified, investigate the source resource for compromise indicators',
+    criblSearchQueries: [
+      {
+        name: 'Per-Source DNS Volume Anomaly Detection',
+        description: 'Identifies individual clients generating DNS query volumes significantly above their historical baseline, detecting potential automated exfiltration or reconnaissance.',
+        query: `dataset="$DATASET" earliest=-24h
+| bin timestamp span=5m as time_window
+| stats count as query_count, dc(query_name) as unique_domains, dc(query_type) as query_type_diversity by client_ip, time_window, virtual_network, subnet, dns_resolver_name
+| where query_count > 500
+| eval queries_per_minute = query_count / 5
+| eval domain_ratio = unique_domains / query_count
+| stats max(query_count) as peak_volume, avg(query_count) as avg_volume, stdev(query_count) as volume_stddev, max(unique_domains) as max_unique_domains by client_ip, virtual_network, subnet
+| where peak_volume > avg_volume + (3 * volume_stddev) AND peak_volume > 500
+| sort -peak_volume`
+      },
+      {
+        name: 'Resolver Infrastructure Volume Spike',
+        description: 'Monitors aggregate query volume per DNS resolver for infrastructure-wide anomalies that may indicate coordinated attack activity or resolver abuse.',
+        query: `dataset="$DATASET" earliest=-24h
+| bin timestamp span=5m as time_window
+| stats count as total_queries, dc(client_ip) as unique_sources, dc(query_name) as unique_domains, avg(response_time_ms) as avg_response_time by dns_resolver_name, time_window, resource_group
+| stats max(total_queries) as peak_queries, avg(total_queries) as baseline_queries, stdev(total_queries) as volume_stddev, max(avg_response_time) as peak_latency by dns_resolver_name, resource_group
+| where peak_queries > baseline_queries + (2.5 * volume_stddev)
+| eval spike_magnitude = round((peak_queries - baseline_queries) / max(volume_stddev, 1), 2)
+| sort -spike_magnitude`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-006',
+    name: 'DNS Zone Enumeration / Recon',
+    objective: 'Detect systematic DNS reconnaissance attempts where an attacker methodically queries for common hostnames, record types, or subdomains within a target DNS zone to map infrastructure. Zone enumeration reveals network topology, service locations, and potential attack targets.',
+    severity: 'Medium',
+    mitre: ['T1046 - Network Service Discovery', 'T1590.002 - Gather Victim Network Information: DNS', 'T1595.001 - Active Scanning: Scanning IP Blocks'],
+    tags: ['security', 'dns', 'azure', 'reconnaissance', 'enumeration', 'zone-walking'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'zone_name', 'virtual_network', 'subnet', 'dns_resolver_name', 'subscription_id', 'record_count', 'dnssec_status'],
+    detectionLogic: 'Detect systematic enumeration by identifying a single client_ip querying many unique subdomains within the same parent zone_name over a short time window. Flag when a source queries more than 30 unique hostnames under the same zone within 10 minutes, especially when combined with multiple query_type variations (A, AAAA, MX, TXT, SRV, CNAME) for the same targets. Additionally detect sequential or dictionary-based patterns in subdomain labels (alphabetical ordering, common wordlist patterns like admin, mail, vpn, dev, staging). Weight alerts higher when NXDOMAIN response rates exceed 60%, indicating blind enumeration rather than legitimate service discovery.',
+    falsePositives: [
+      'Legitimate service discovery by orchestration tools (Kubernetes, Consul) that resolve multiple service endpoints within a zone during startup or health checks',
+      'Monitoring and observability tools that perform periodic DNS checks across all managed hostnames within a zone for availability monitoring',
+      'Email delivery systems performing MX, SPF, DKIM, and DMARC lookups across multiple domains during bulk mail processing',
+      'Certificate transparency monitoring tools that validate DNS records for all certificates in their watch list'
+    ],
+    tuningGuidance: 'Exclude known monitoring systems and orchestration platforms by client_ip or subnet allowlist. Increase the unique hostname threshold to 50 for zones with many legitimate subdomains. Reduce the time window to 5 minutes for high-security zones containing sensitive infrastructure records. Add query_type weighting â€” SRV and ANY queries are stronger enumeration signals than A/AAAA alone. Consider zone sensitivity classification to apply different thresholds per zone.',
+    investigationWorkflow: '1. Identify the source client_ip and determine if it maps to an internal resource, VPN client, or external scanner\n2. Analyze the pattern of queried subdomains â€” look for wordlist characteristics, alphabetical ordering, or sequential numbering\n3. Review query_type distribution â€” multiple record types per hostname strongly indicates active reconnaissance\n4. Check the zone_name being enumerated and assess its sensitivity (production, internal services, management plane)\n5. Determine the NXDOMAIN ratio â€” high rates confirm blind enumeration rather than legitimate resolution\n6. Check if the source has previously performed similar enumeration against other zones (campaign behavior)\n7. Review whether the enumerated zone has DNSSEC enabled and check dnssec_status for NSEC walking indicators\n8. If external source, block at network level and review zone for any sensitive records that may have been exposed',
+    criblSearchQueries: [
+      {
+        name: 'DNS Zone Enumeration Detection',
+        description: 'Identifies sources systematically querying many unique subdomains within a single zone, characteristic of DNS reconnaissance and infrastructure mapping.',
+        query: `dataset="$DATASET" earliest=-24h
+| where zone_name != null
+| bin timestamp span=10m as time_window
+| stats count as total_queries, dc(query_name) as unique_subdomains, dc(query_type) as query_type_count, values(query_type) as query_types by client_ip, zone_name, time_window, virtual_network, subnet
+| where unique_subdomains > 30 AND query_type_count >= 3
+| eval enum_score = unique_subdomains * query_type_count
+| sort -enum_score`
+      },
+      {
+        name: 'Enumeration with High NXDOMAIN Ratio',
+        description: 'Detects blind DNS enumeration attempts characterized by high failure rates across many subdomains, indicating wordlist or brute-force hostname discovery.',
+        query: `dataset="$DATASET" earliest=-24h
+| where zone_name != null
+| bin timestamp span=10m as time_window
+| stats count as total_queries, dc(query_name) as unique_names, sum(if(response_code == "NXDOMAIN", 1, 0)) as nxdomain_count, sum(if(response_code == "NOERROR", 1, 0)) as success_count by client_ip, zone_name, time_window, subnet
+| eval nxdomain_ratio = round(nxdomain_count / total_queries, 2)
+| where unique_names > 20 AND nxdomain_ratio > 0.6
+| eval recon_confidence = case(nxdomain_ratio > 0.9, "HIGH", nxdomain_ratio > 0.75, "MEDIUM", true(), "LOW")
+| sort -unique_names`
+      }
+    ]
+  },
+  {
+    id: 'az-sec-007',
+    name: 'Cross-VNet DNS Exfiltration',
+    objective: 'Detect data exfiltration attempts that leverage DNS queries to transfer encoded data from one virtual network to an external or unauthorized destination by routing through cross-VNet DNS resolution paths. This technique exploits VNet peering or forwarding rules to bypass network-level DLP controls that do not inspect DNS traffic.',
+    severity: 'High',
+    mitre: ['T1048.001 - Exfiltration Over Alternative Protocol: Exfiltration Over Symmetric Encrypted Non-C2 Protocol', 'T1071.004 - Application Layer Protocol: DNS', 'T1599 - Network Boundary Bridging'],
+    tags: ['security', 'dns', 'azure', 'exfiltration', 'cross-vnet', 'data-loss', 'forwarding-rules'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'virtual_network', 'subnet', 'dns_resolver_name', 'linked_vnet', 'forwarding_rule', 'endpoint_name', 'endpoint_type', 'response_code', 'response_data', 'subscription_id', 'resource_group', 'protocol'],
+    detectionLogic: 'Identify DNS queries that originate in one virtual_network but are forwarded to external DNS infrastructure via forwarding_rule configurations in a different VNet. Detect when TXT, NULL, or CNAME queries with high-entropy payloads in the query_name traverse outbound endpoints that forward to non-Azure DNS servers. Flag patterns where a source in a high-security VNet generates queries that exit through a lower-security VNet forwarding path. Correlate query volume with data encoding capacity â€” each DNS query can carry approximately 200 bytes of encoded data in labels, so sustained high-frequency queries represent meaningful data transfer. Alert when cumulative encoded payload capacity exceeds 100KB from a single source within 30 minutes.',
+    falsePositives: [
+      'Legitimate conditional forwarding rules for hybrid DNS resolution where queries for on-premises domains traverse VNet boundaries to reach corporate DNS servers',
+      'Azure Private DNS zone resolution that routes queries through hub VNets in hub-and-spoke architectures as part of normal name resolution',
+      'Third-party SaaS integrations that use TXT record queries for domain ownership verification or configuration distribution',
+      'DKIM signing and verification processes that query TXT records with encoded cryptographic material across VNet boundaries'
+    ],
+    tuningGuidance: 'Map all legitimate forwarding rules and their expected traffic patterns to establish a baseline of normal cross-VNet DNS flows. Classify VNets by security tier and only alert on flows from higher to lower security tiers. Exclude queries to known Azure internal domains (*.azure.com, *.windows.net, *.microsoft.com) from exfiltration analysis. Adjust the cumulative payload threshold based on the sensitivity classification of the source VNet. Monitor forwarding_rule changes as a leading indicator.',
+    investigationWorkflow: '1. Map the full DNS resolution path: source client_ip -> source virtual_network -> dns_resolver_name -> forwarding_rule -> destination DNS server\n2. Identify the security classification of the source VNet and determine what data assets reside there\n3. Analyze query_name patterns for encoding â€” base32, base64, hex encoding in subdomain labels indicates intentional data embedding\n4. Calculate cumulative data transfer capacity: count of queries multiplied by average label length to estimate exfiltrated data volume\n5. Check query_type distribution â€” TXT and NULL records are preferred for exfiltration due to larger response capacity\n6. Review the forwarding_rule destination â€” determine if it points to attacker-controlled infrastructure or a legitimate external resolver\n7. Correlate with Azure Activity Log for recent forwarding_rule modifications that may have enabled the exfiltration path\n8. Check endpoint_type to determine if outbound endpoints were recently created or modified\n9. If confirmed, immediately disable the forwarding rule, isolate the source resource, and begin data impact assessment',
+    criblSearchQueries: [
+      {
+        name: 'Cross-VNet High-Entropy DNS Forwarding',
+        description: 'Detects encoded data in DNS queries that traverse VNet boundaries via forwarding rules, indicating potential data exfiltration through DNS infrastructure.',
+        query: `dataset="$DATASET" earliest=-24h
+| where forwarding_rule != null AND endpoint_type == "outbound"
+| where query_type in ("TXT", "NULL", "CNAME", "A")
+| eval subdomain = split(query_name, ".")[0]
+| eval payload_entropy = shannon_entropy(subdomain)
+| eval payload_bytes = length(subdomain)
+| where payload_entropy > 3.5 AND payload_bytes > 20
+| bin timestamp span=30m as time_window
+| stats count as query_count, sum(payload_bytes) as total_payload_bytes, dc(query_name) as unique_queries, values(forwarding_rule) as fwd_rules, values(query_type) as query_types by client_ip, virtual_network, subnet, dns_resolver_name, time_window
+| where total_payload_bytes > 102400
+| eval estimated_exfil_kb = round(total_payload_bytes / 1024, 1)
+| sort -total_payload_bytes`
+      },
+      {
+        name: 'Cross-VNet DNS Path Anomaly',
+        description: 'Identifies DNS queries from high-security VNets that exit through outbound forwarding rules to external resolvers, detecting potential exfiltration channel establishment.',
+        query: `dataset="$DATASET" earliest=-24h
+| where forwarding_rule != null AND endpoint_type == "outbound"
+| where virtual_network != linked_vnet
+| stats count as cross_vnet_queries, dc(query_name) as unique_domains, dc(forwarding_rule) as rules_used, values(forwarding_rule) as forwarding_rules, earliest(timestamp) as first_seen, latest(timestamp) as last_seen by client_ip, virtual_network, subnet, dns_resolver_name, linked_vnet
+| where cross_vnet_queries > 100
+| eval duration_minutes = round((last_seen - first_seen) / 60000, 1)
+| eval queries_per_minute = round(cross_vnet_queries / max(duration_minutes, 1), 1)
+| sort -cross_vnet_queries`
+      }
+    ]
+  }
+],
+  'bluecat-dns': [
+  {
+    id: 'bc-sec-001',
+    name: 'DNS Tunneling Detection',
+    objective: 'Detect potential DNS tunneling activity where data is exfiltrated or commands are received via encoded DNS queries. Identifies anomalously long subdomain labels, high query volumes to single domains, and unusual record types commonly abused for tunneling (TXT, NULL, CNAME).',
+    severity: 'High',
+    mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1048.001 - Exfiltration Over Alternative Protocol: Exfiltration Over Symmetric Encrypted Non-C2 Protocol'],
+    tags: ['security', 'dns', 'bluecat', 'exfiltration', 'tunneling', 'c2'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'server_name', 'protocol', 'recursive'],
+    detectionLogic: 'Calculates Shannon entropy and label length for each query_name. Flags queries where the longest subdomain label exceeds 52 characters or overall query_name entropy exceeds 3.5 bits per character. Aggregates per client_ip over a 10-minute sliding window and triggers when a single client sends more than 50 high-entropy queries to the same registered domain. Additional weight given to TXT, NULL, and CNAME query types which are commonly abused for tunneling payloads.',
+    falsePositives: [
+      'DKIM and SPF TXT record lookups with long encoded values',
+      'Legitimate SaaS applications using long CNAME chains for CDN resolution',
+      'Anti-spam and email security services performing bulk TXT lookups',
+      'Certificate validation and OCSP queries with encoded certificate hashes'
+    ],
+    tuningGuidance: 'Whitelist known DKIM selector domains and CDN CNAME patterns. Adjust entropy threshold based on baseline â€” environments with internationalized domain names may require a higher threshold (3.8+). Exclude internal zones from analysis. Tune the query count threshold based on environment size; larger environments may need 75+ to reduce noise.',
+    investigationWorkflow: '1. Identify the client_ip generating high-entropy queries and resolve to hostname via client_hostname or DHCP records\n2. Extract the target registered domain (effective TLD+1) from the flagged query_names\n3. Check if the target domain is newly registered (< 30 days) using WHOIS data\n4. Examine the full query_name patterns â€” look for base32/base64 encoded subdomains\n5. Correlate with network flow data to confirm no direct outbound connections to the same domain\n6. Check the client endpoint for known DNS tunneling tools (iodine, dnscat2, dns2tcp)\n7. If confirmed, block the domain via BlueCat policy and isolate the endpoint',
+    criblSearchQueries: [
+      {
+        name: 'High-Entropy DNS Queries',
+        description: 'Identifies individual DNS queries with unusually long subdomain labels or high character entropy, indicative of encoded tunneling payloads',
+        query: `dataset="$DATASET" earliest=-24h
+| where len(query_name) > 60 AND query_type in ("TXT", "NULL", "CNAME", "MX")
+| eval domain_parts = split(query_name, ".")
+| eval max_label_len = max(arraymap(domain_parts, len(x)))
+| where max_label_len > 52
+| stats count as query_count, dc(query_name) as unique_queries, values(query_type) as types by client_ip, server_name
+| where query_count > 20
+| sort -query_count`
+      },
+      {
+        name: 'DNS Tunneling Aggregate Behavior',
+        description: 'Aggregates query volume per client to a single parent domain over time windows, detecting sustained tunneling sessions',
+        query: `dataset="$DATASET" earliest=-24h
+| eval registered_domain = arrayindex(split(query_name, "."), -2) + "." + arrayindex(split(query_name, "."), -1)
+| stats count as total_queries, dc(query_name) as unique_subdomains, avg(len(query_name)) as avg_query_len, sum(case(query_type="TXT", 1, 0)) as txt_count by client_ip, registered_domain, bin(timestamp, 10m)
+| where unique_subdomains > 50 AND avg_query_len > 45
+| sort -unique_subdomains`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-002',
+    name: 'DGA Domain Queries',
+    objective: 'Detect queries to domains generated by Domain Generation Algorithms used by malware families for command-and-control rendezvous. Identifies clusters of NXDomain responses to algorithmically generated domain names from a single client.',
+    severity: 'High',
+    mitre: ['T1568.002 - Dynamic Resolution: Domain Generation Algorithms', 'T1071.004 - Application Layer Protocol: DNS'],
+    tags: ['security', 'dns', 'bluecat', 'malware', 'dga', 'c2'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'client_hostname', 'server_name', 'zone_name'],
+    detectionLogic: 'Monitors for clients generating a high volume of NXDOMAIN responses within short time windows. Applies linguistic analysis to failed query_name values: consonant-to-vowel ratio exceeding 4:1, absence of dictionary words in labels, uniform label length distribution (characteristic of fixed-length DGA output), and high character randomness. Triggers when a single client_ip generates 15+ NXDOMAIN responses in a 5-minute window where 80% or more of the queried domains fail the linguistic plausibility check.',
+    falsePositives: [
+      'Software update mechanisms that probe multiple CDN endpoints before finding an active one',
+      'Typo-squatting protection services that intentionally resolve randomized domains',
+      'Automated security scanners and penetration testing tools during authorized assessments',
+      'Applications with hardcoded fallback domains that no longer resolve'
+    ],
+    tuningGuidance: 'Establish a per-client NXDOMAIN baseline over 7 days and alert only on 3x deviations. Exclude known software update domains (e.g., Microsoft, Adobe CDN patterns). Whitelist domains matching corporate naming conventions. Reduce sensitivity for DNS servers in DMZ segments that handle external recursive queries from multiple clients.',
+    investigationWorkflow: '1. Gather the full list of NXDOMAIN query_names from the flagged client_ip in the detection window\n2. Run the domains through a DGA classification model or check against known DGA family patterns\n3. Identify the client_hostname and determine the endpoint owner and installed software\n4. Check if any of the DGA domains recently registered or resolved â€” indicates the C2 rendezvous succeeded\n5. Examine endpoint EDR logs for process-level DNS resolution to identify the responsible binary\n6. Cross-reference with threat intelligence for known DGA family attribution\n7. Contain the endpoint, collect forensic image, and block identified DGA seed domains at the policy level',
+    criblSearchQueries: [
+      {
+        name: 'NXDOMAIN Burst per Client',
+        description: 'Identifies clients with abnormally high NXDOMAIN response rates in short time windows, a hallmark of active DGA resolution attempts',
+        query: `dataset="$DATASET" earliest=-24h
+| where response_code = "NXDOMAIN" AND query_type = "A"
+| eval domain_len = len(query_name)
+| eval label = arrayindex(split(query_name, "."), 0)
+| eval label_len = len(label)
+| stats count as nxd_count, dc(query_name) as unique_domains, avg(label_len) as avg_label_len, dc(zone_name) as tld_count by client_ip, client_hostname, bin(timestamp, 5m)
+| where nxd_count > 15 AND unique_domains > 12 AND avg_label_len > 8
+| sort -nxd_count`
+      },
+      {
+        name: 'DGA Linguistic Pattern Analysis',
+        description: 'Applies character distribution analysis to NXDOMAIN queries to surface domains with algorithmically generated characteristics',
+        query: `dataset="$DATASET" earliest=-24h
+| where response_code = "NXDOMAIN"
+| eval label = arrayindex(split(query_name, "."), 0)
+| eval vowels = len(replace(label, "[^aeiou]", ""))
+| eval consonants = len(replace(label, "[^bcdfghjklmnpqrstvwxyz]", ""))
+| eval digits = len(replace(label, "[^0-9]", ""))
+| eval ratio = consonants / max(vowels, 1)
+| where ratio > 4 OR (digits > 3 AND len(label) > 10)
+| stats count as dga_candidates, dc(query_name) as unique_names, values(query_name) as sample_domains by client_ip, client_hostname
+| where dga_candidates > 10
+| sort -dga_candidates`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-003',
+    name: 'Policy Bypass Attempt',
+    objective: 'Detect clients attempting to circumvent BlueCat DNS security policies by querying external resolvers directly or by crafting queries designed to evade policy matching. Identifies direct DNS to non-corporate resolvers and policy evasion techniques like subdomain prepending.',
+    severity: 'Medium',
+    mitre: ['T1562.001 - Impair Defenses: Disable or Modify Tools', 'T1090.002 - Proxy: External Proxy'],
+    tags: ['security', 'dns', 'bluecat', 'policy-evasion', 'defense-evasion'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'policy_name', 'policy_action', 'server_ip', 'view_name', 'recursive', 'edns_subnet', 'client_hostname'],
+    detectionLogic: 'Monitors for three bypass indicators: (1) Queries arriving at BlueCat that reference well-known public resolver IPs (8.8.8.8, 1.1.1.1) in EDNS client subnet fields, suggesting the client is proxying through external resolvers. (2) Rapid successive queries for the same effective domain using different subdomain prefixes immediately after a policy block action â€” indicates the client is probing for policy gaps. (3) Clients switching between DNS views or querying from unexpected network segments relative to their DHCP assignment. Triggers when any single indicator fires 5+ times in 15 minutes or when two indicators co-occur.',
+    falsePositives: [
+      'Split-tunnel VPN users whose DNS traffic routes partially through external resolvers',
+      'Developers testing DNS resolution from multiple network perspectives',
+      'Network monitoring tools that validate DNS policy enforcement by intentionally testing blocked domains',
+      'Mobile devices roaming between corporate WiFi and guest networks'
+    ],
+    tuningGuidance: 'Define the list of authorized DNS server_ip addresses for each network segment. Whitelist known monitoring and testing tools by client_hostname or MAC address. Adjust the subdomain variation threshold higher for environments with heavy use of wildcard DNS records. Consider suppressing alerts for guest WiFi network segments where policy enforcement is relaxed.',
+    investigationWorkflow: '1. Identify the client_ip and resolve to client_hostname, MAC address, and DHCP fingerprint for device identification\n2. Determine which policy_name was being bypassed and what domains were targeted\n3. Check if the client has recently changed network segments or view assignments\n4. Review the sequence of queries â€” map the timeline of block actions followed by variant queries\n5. Inspect endpoint for DNS-over-HTTPS tools, proxy applications, or modified hosts files\n6. Verify the user has a legitimate business need for the blocked resource\n7. If malicious intent confirmed, escalate to security operations and enforce client isolation via DHCP policy',
+    criblSearchQueries: [
+      {
+        name: 'Policy Block Followed by Query Variants',
+        description: 'Detects clients that receive a policy block and then immediately retry with subdomain variations of the same domain, indicating active bypass attempts',
+        query: `dataset="$DATASET" earliest=-24h
+| where policy_action = "block" OR policy_action = "deny"
+| eval registered_domain = arrayindex(split(query_name, "."), -2) + "." + arrayindex(split(query_name, "."), -1)
+| stats count as block_count, dc(query_name) as query_variants, earliest(timestamp) as first_block, latest(timestamp) as last_attempt, values(policy_name) as policies_hit by client_ip, registered_domain, bin(timestamp, 15m)
+| where query_variants > 5 AND block_count > 5
+| sort -query_variants`
+      },
+      {
+        name: 'External Resolver Proxy Detection',
+        description: 'Identifies queries containing EDNS client subnet data from well-known public resolvers, suggesting clients are routing DNS through external services to bypass corporate policy',
+        query: `dataset="$DATASET" earliest=-24h
+| where edns_subnet != "" AND edns_subnet != null
+| eval is_public_resolver = case(edns_subnet startswith "8.8.", 1, edns_subnet startswith "1.1.1.", 1, edns_subnet startswith "1.0.0.", 1, edns_subnet startswith "9.9.9.", 1, 0)
+| where is_public_resolver = 1
+| stats count as proxy_queries, dc(query_name) as unique_domains, values(edns_subnet) as resolver_subnets by client_ip, client_hostname, view_name
+| where proxy_queries > 5
+| sort -proxy_queries`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-004',
+    name: 'Threat Feed Hit â€” Malicious Domain',
+    objective: 'Alert on DNS queries that match BlueCat threat intelligence feeds indicating known malicious, phishing, or command-and-control infrastructure. Prioritizes confirmed threat feed matches that received successful resolution, meaning the endpoint may have established communication with the malicious host.',
+    severity: 'Critical',
+    mitre: ['T1071.004 - Application Layer Protocol: DNS', 'T1566.002 - Phishing: Spearphishing Link', 'T1204.001 - User Execution: Malicious Link'],
+    tags: ['security', 'dns', 'bluecat', 'threat-intelligence', 'ioc', 'malicious-domain'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'response_data', 'threat_category', 'threat_feed', 'policy_action', 'client_hostname', 'mac_address', 'network_name'],
+    detectionLogic: 'Triggers on any query where threat_feed is populated and threat_category indicates malicious activity (malware, c2, phishing, exploit-kit, cryptomining). Escalates to Critical when policy_action is not "block" (indicating the query was allowed through) or when response_code is NOERROR with valid response_data (meaning resolution succeeded). Correlates multiple threat feed hits from the same client within 1 hour as a single high-confidence incident. Groups by threat_category to distinguish between active compromise indicators (c2, malware) and user-initiated risks (phishing).',
+    falsePositives: [
+      'Stale threat feed entries for domains that have been cleaned and re-registered',
+      'Security research teams intentionally resolving known malicious domains in sandboxed environments',
+      'Threat intelligence platforms performing automated IOC enrichment lookups',
+      'Parked domains that previously hosted malicious content but are now inactive'
+    ],
+    tuningGuidance: 'Prioritize alerts where policy_action is not "block" â€” these represent actual exposure. Suppress repeated alerts for the same client+domain pair after initial notification within 4 hours. Whitelist security team source IPs and known threat research infrastructure. Review and prune threat feeds quarterly for stale IOCs. Weight newer feed entries (< 30 days) higher than aged indicators.',
+    investigationWorkflow: '1. Confirm the threat_feed source and threat_category â€” determine if this is malware C2, phishing, or lower-severity categorization\n2. Check the policy_action â€” if the query was blocked, risk is contained; if allowed, escalate immediately\n3. If response_code is NOERROR, extract response_data IPs and check for active network connections to those IPs\n4. Identify the client_hostname, mac_address, and user assignment for the affected endpoint\n5. Query endpoint EDR for the process that initiated the DNS lookup and any subsequent network activity\n6. Check if the domain is part of a known malware family or campaign via threat intelligence enrichment\n7. If C2 communication confirmed, initiate incident response: isolate endpoint, preserve memory, notify SOC\n8. Add any new indicators discovered during investigation back to local threat feeds',
+    criblSearchQueries: [
+      {
+        name: 'Allowed Threat Feed Hits',
+        description: 'Identifies DNS queries matching threat intelligence feeds where the query was NOT blocked, indicating potential active communication with malicious infrastructure',
+        query: `dataset="$DATASET" earliest=-24h
+| where threat_feed != "" AND threat_feed != null
+| where policy_action != "block" AND policy_action != "deny"
+| where response_code = "NOERROR"
+| stats count as hit_count, dc(query_name) as unique_malicious_domains, values(threat_category) as categories, values(query_name) as domains, values(response_data) as resolved_ips, latest(timestamp) as last_seen by client_ip, client_hostname, network_name
+| sort -hit_count`
+      },
+      {
+        name: 'Threat Feed Hit Summary by Category',
+        description: 'Provides a comprehensive view of all threat feed matches grouped by category and severity to identify the most impacted clients and most active threat types',
+        query: `dataset="$DATASET" earliest=-24h
+| where threat_feed != "" AND threat_feed != null
+| eval was_blocked = case(policy_action = "block", "yes", policy_action = "deny", "yes", "no")
+| stats count as total_hits, dc(client_ip) as affected_clients, dc(query_name) as unique_domains, sum(case(was_blocked = "no", 1, 0)) as unblocked_hits by threat_category, threat_feed
+| eval risk_score = unblocked_hits * 10 + total_hits
+| sort -risk_score`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-005',
+    name: 'Namespace Abuse / Cross-Namespace Query',
+    objective: 'Detect unauthorized cross-namespace DNS queries that may indicate lateral movement reconnaissance, namespace boundary violations, or misconfigured service discovery. Identifies clients resolving resources in namespaces they should not have visibility into based on their deployment role and network assignment.',
+    severity: 'Medium',
+    mitre: ['T1018 - Remote System Discovery', 'T1046 - Network Service Scanning', 'T1590.002 - Gather Victim Network Information: DNS'],
+    tags: ['security', 'dns', 'bluecat', 'namespace', 'lateral-movement', 'reconnaissance'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'namespace', 'view_name', 'network_name', 'location', 'deployment_role', 'service_point', 'client_hostname', 'response_code'],
+    detectionLogic: 'Maintains a learned mapping of client network segments to their authorized namespaces based on 7-day historical baseline. Alerts when a client_ip queries resources in a namespace that no other client in its network_name has queried in the baseline period. Weights the alert higher when: (1) the target namespace is a production or restricted environment, (2) the query volume is low but covers many unique hostnames (scanning pattern), (3) the queries occur outside business hours for the client location. Suppresses alerts for DNS servers acting in forwarding roles (deployment_role = "forwarder").',
+    falsePositives: [
+      'Newly provisioned services that legitimately need cross-namespace resolution during initial deployment',
+      'IT administrators performing authorized infrastructure audits across namespace boundaries',
+      'Monitoring systems with broad namespace visibility requirements for health checks',
+      'DNS migration projects where namespace boundaries are temporarily relaxed'
+    ],
+    tuningGuidance: 'Define explicit namespace access policies per network segment and deployment role. Whitelist monitoring and orchestration systems that require cross-namespace visibility. Increase the baseline learning period to 14 days for environments with infrequent but legitimate cross-namespace traffic. Exclude forward-lookup zones shared across all namespaces from analysis.',
+    investigationWorkflow: '1. Identify the source client_ip, its assigned namespace, network_name, and the target namespace being queried\n2. Determine if the client has any legitimate business justification for cross-namespace access\n3. Review the specific query_names â€” are they targeting infrastructure hosts, databases, or sensitive services?\n4. Check if this is a scanning pattern (many unique hosts queried, low repeat rate) vs. targeted access\n5. Correlate with authentication logs â€” did this client recently authenticate to any systems in the target namespace?\n6. Verify the deployment_role and service_point configuration are correct for this client\n7. If unauthorized, restrict namespace visibility via BlueCat view configuration and investigate the endpoint for compromise',
+    criblSearchQueries: [
+      {
+        name: 'Cross-Namespace Query Anomalies',
+        description: 'Identifies clients querying namespaces outside their assigned network segment, highlighting potential namespace boundary violations or lateral movement',
+        query: `dataset="$DATASET" earliest=-24h
+| where namespace != "" AND namespace != null AND network_name != "" AND network_name != null
+| where deployment_role != "forwarder"
+| stats count as query_count, dc(query_name) as unique_targets, dc(namespace) as namespaces_queried, values(namespace) as target_namespaces, values(query_name) as sample_queries by client_ip, client_hostname, network_name, location
+| where namespaces_queried > 2
+| sort -namespaces_queried`
+      },
+      {
+        name: 'Namespace Scanning Pattern Detection',
+        description: 'Detects low-volume, high-breadth query patterns within a single foreign namespace that suggest systematic enumeration of resources',
+        query: `dataset="$DATASET" earliest=-24h
+| where namespace != "" AND namespace != null
+| stats count as queries, dc(query_name) as unique_hosts, dc(query_type) as record_types_used by client_ip, client_hostname, namespace, network_name, bin(timestamp, 30m)
+| where unique_hosts > 10 AND queries < unique_hosts * 3
+| eval scan_ratio = unique_hosts / max(queries, 1)
+| where scan_ratio > 0.4
+| sort -unique_hosts`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-006',
+    name: 'Unauthorized Zone Transfer',
+    objective: 'Detect unauthorized AXFR or IXFR zone transfer requests that could expose the complete DNS zone contents to an attacker. Successful zone transfers reveal the full inventory of hosts, services, and network topology, enabling targeted attacks.',
+    severity: 'High',
+    mitre: ['T1590.002 - Gather Victim Network Information: DNS', 'T1018 - Remote System Discovery'],
+    tags: ['security', 'dns', 'bluecat', 'zone-transfer', 'reconnaissance', 'data-exposure'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'zone_name', 'server_name', 'server_ip', 'protocol', 'client_hostname', 'deployment_role'],
+    detectionLogic: 'Alerts on any DNS query where query_type is AXFR or IXFR. Immediately escalates when the request originates from a client_ip not in the authorized transfer ACL (derived from BlueCat zone transfer configuration). Differentiates between: (1) Unauthorized source with successful transfer (Critical â€” data exposed), (2) Unauthorized source with refused response (High â€” active reconnaissance), (3) Authorized secondary but unexpected timing (Medium â€” possible compromised secondary). Also detects TCP connections on port 53 with large response sizes that may indicate zone transfer over non-standard query types.',
+    falsePositives: [
+      'Authorized secondary DNS servers performing scheduled zone transfers',
+      'DNS monitoring tools that validate zone consistency via periodic AXFR checks',
+      'BlueCat DNS High Availability pairs synchronizing zone data during failover events',
+      'Authorized IT automation tools performing zone audits for compliance reporting'
+    ],
+    tuningGuidance: 'Maintain a strict allowlist of authorized zone transfer sources â€” this should be a small, well-defined list. Any AXFR/IXFR from outside this list is inherently suspicious. Exclude BlueCat-to-BlueCat HA transfer pairs by server_name. Alert on successful transfers from authorized sources only if they occur outside the expected synchronization schedule (more than 2x normal frequency).',
+    investigationWorkflow: '1. Immediately verify whether the zone transfer was successful (response_code = NOERROR) or refused\n2. Identify the requesting client_ip â€” is it an authorized secondary server or an unknown host?\n3. If successful and unauthorized, determine which zone_name was transferred and assess the sensitivity of exposed records\n4. Check if the source IP has performed any prior reconnaissance (port scans, other DNS enumeration)\n5. Review BlueCat ACL configuration to understand why the transfer was not blocked (misconfiguration vs. policy gap)\n6. If the transfer succeeded, assume full zone contents are compromised â€” assess which hosts are now known to the attacker\n7. Immediately update zone transfer ACLs to restrict access, rotate any sensitive service discovery information if feasible\n8. Monitor for follow-up attacks targeting hosts revealed in the zone data',
+    criblSearchQueries: [
+      {
+        name: 'Zone Transfer Requests â€” All Sources',
+        description: 'Lists all AXFR and IXFR requests with their outcomes, highlighting unauthorized sources that attempted or completed zone transfers',
+        query: `dataset="$DATASET" earliest=-24h
+| where query_type = "AXFR" OR query_type = "IXFR"
+| eval transfer_success = case(response_code = "NOERROR", "SUCCESS", response_code = "REFUSED", "REFUSED", response_code = "NOTAUTH", "NOT_AUTHORIZED", "OTHER")
+| stats count as attempts, values(zone_name) as zones_targeted, values(transfer_success) as outcomes, values(server_name) as target_servers, earliest(timestamp) as first_attempt, latest(timestamp) as last_attempt by client_ip, client_hostname, protocol
+| sort -attempts`
+      },
+      {
+        name: 'Successful Unauthorized Zone Transfers',
+        description: 'Focuses specifically on completed zone transfers from non-standard sources, representing confirmed data exposure events requiring immediate response',
+        query: `dataset="$DATASET" earliest=-24h
+| where (query_type = "AXFR" OR query_type = "IXFR") AND response_code = "NOERROR"
+| where deployment_role != "secondary" AND deployment_role != "ha-peer"
+| stats count as successful_transfers, dc(zone_name) as zones_exposed, values(zone_name) as zone_list, values(server_name) as servers_used by client_ip, client_hostname
+| where successful_transfers > 0
+| sort -zones_exposed`
+      }
+    ]
+  },
+  {
+    id: 'bc-sec-007',
+    name: 'DNS Amplification / Reflection Attack',
+    objective: 'Detect DNS amplification and reflection attacks where the BlueCat infrastructure is being abused as a reflector to generate high-volume responses directed at spoofed source IPs. Identifies query patterns that maximize response-to-query size ratios and abnormal traffic volumes from single sources.',
+    severity: 'Medium',
+    mitre: ['T1498.002 - Network Denial of Service: Reflection Amplification', 'T1499.002 - Endpoint Denial of Service: Service Exhaustion Flood'],
+    tags: ['security', 'dns', 'bluecat', 'ddos', 'amplification', 'reflection', 'abuse'],
+    requiredFields: ['timestamp', 'client_ip', 'query_name', 'query_type', 'response_code', 'response_data', 'protocol', 'recursive', 'ttl', 'response_time_ms', 'server_name', 'edns_subnet', 'client_port'],
+    detectionLogic: 'Detects amplification abuse by identifying: (1) High volume of queries from a single client_ip using query types known for amplification (ANY, TXT, DNSSEC-related RRSIG, DNSKEY) over UDP protocol. (2) Queries arriving with recursion desired from non-internal IP ranges (open resolver abuse). (3) Abnormal ratio where a single client_ip sends identical queries repeatedly (>100 identical queries in 1 minute). (4) Multiple source IPs querying the exact same domain with the same query type simultaneously (coordinated reflector abuse). Triggers when query volume from a single IP exceeds 500/minute for amplification-prone record types or when 10+ different source IPs query the same unusual domain simultaneously.',
+    falsePositives: [
+      'Legitimate monitoring systems performing frequent ANY or TXT health checks against specific zones',
+      'DNSSEC validators requesting DNSKEY and RRSIG records at high volume during key rollovers',
+      'Load testing activities against DNS infrastructure during authorized performance assessments',
+      'Misconfigured applications in retry loops sending repeated identical queries'
+    ],
+    tuningGuidance: 'Implement Response Rate Limiting (RRL) in BlueCat to mitigate amplification regardless of detection. Set baseline query rates per client_ip and alert at 5x normal volume for amplification-prone types. Whitelist internal monitoring IPs that legitimately perform high-volume checks. Disable open recursion for non-internal source ranges at the server configuration level. Tune the identical-query threshold based on the largest legitimate query burst observed in baseline.',
+    investigationWorkflow: '1. Identify the source client_ip(s) and determine if they are internal or external to the network\n2. If external, this IP is likely spoofed â€” the real victim is at that IP receiving amplified responses\n3. Examine the query pattern â€” are all queries for the same domain/type? Calculate the amplification factor (response size / query size)\n4. Check if BlueCat Response Rate Limiting is active and whether it is effectively throttling responses\n5. Determine the target zone_name being abused â€” is it a zone with large records (TXT, ANY) that maximize amplification?\n6. If the source is spoofed, notify the victim network abuse contact and upstream ISP\n7. Implement rate limiting or block the specific query pattern at the BlueCat policy level\n8. Review server configuration to ensure recursion is restricted to authorized client ranges only',
+    criblSearchQueries: [
+      {
+        name: 'Amplification-Prone Query Volume Spikes',
+        description: 'Detects source IPs sending abnormally high volumes of queries using record types commonly exploited for DNS amplification attacks',
+        query: `dataset="$DATASET" earliest=-24h
+| where query_type in ("ANY", "TXT", "RRSIG", "DNSKEY", "DS") AND protocol = "UDP"
+| stats count as query_count, dc(query_name) as unique_domains, values(query_type) as types_used, avg(response_time_ms) as avg_response_ms by client_ip, server_name, bin(timestamp, 1m)
+| where query_count > 500
+| eval queries_per_domain = query_count / max(unique_domains, 1)
+| where queries_per_domain > 50
+| sort -query_count`
+      },
+      {
+        name: 'Coordinated Reflection Pattern',
+        description: 'Identifies multiple source IPs all querying the same domain with amplification-prone record types simultaneously, characteristic of a distributed reflector attack campaign',
+        query: `dataset="$DATASET" earliest=-24h
+| where query_type in ("ANY", "TXT", "RRSIG", "DNSKEY") AND protocol = "UDP"
+| stats dc(client_ip) as source_count, count as total_queries, values(client_ip) as source_ips, sum(case(recursive = "true", 1, 0)) as recursive_queries by query_name, query_type, bin(timestamp, 5m)
+| where source_count > 10 AND total_queries > 100
+| eval avg_per_source = total_queries / source_count
+| sort -source_count`
+      }
+    ]
+  }
+],
 };

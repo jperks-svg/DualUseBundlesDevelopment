@@ -20459,4 +20459,475 @@ export const observabilityDetections = {
       ]
     }
   ],
+  'azure-dns': [
+  {
+    id: 'az-obs-001',
+    name: 'DNS Resolver Query Latency',
+    objective: 'Detect when Azure DNS resolver response times exceed acceptable thresholds, indicating degraded name resolution performance. Sustained latency spikes impact application startup times, service discovery, and end-user experience across dependent workloads.',
+    category: 'Performance',
+    tags: ['observability', 'dns', 'azure', 'latency', 'resolver'],
+    requiredFields: ['timestamp', 'dns_resolver_name', 'response_time_ms', 'query_name', 'virtual_network', 'subscription_id'],
+    detectionLogic: 'Calculate the 95th percentile of response_time_ms per dns_resolver_name over a sliding 15-minute window. Alert when p95 exceeds 100ms for two consecutive windows or when any single query exceeds 500ms. Baseline is established from the prior 7-day average p95 per resolver.',
+    operationalValue: 'DNS latency directly multiplies into every service call that requires name resolution. A 50ms increase in DNS p95 can add 200-500ms to composite API transactions that chain multiple service lookups. Early detection prevents cascading timeout failures.',
+    changeMgmtRelevance: 'DNS latency spikes commonly follow conditional forwarder changes, new forwarding rules, resolver inbound endpoint scaling events, or VNet peering modifications. Correlate onset time with change windows to identify causal configuration updates.',
+    troubleshootingWorkflow: '1. Identify which dns_resolver_name is exhibiting elevated latency\n2. Determine if latency is isolated to specific query_names or query_types\n3. Check if the affected virtual_network recently had peering or routing changes\n4. Verify resolver endpoint health and capacity in Azure Portal\n5. Examine forwarding rules for the affected queries to identify upstream DNS target issues\n6. Check if DNSSEC validation is adding processing overhead\n7. Escalate to Azure Support if resolver infrastructure latency persists without configuration cause',
+    dashboardDependency: 'DNS Performance Overview, Resolver Health Dashboard, Application Dependency Map',
+    criblSearchQueries: [
+      {
+        name: 'Resolver Latency P95 Trend',
+        description: 'Shows 15-minute bucketed p95 response time per resolver to identify latency trends and threshold breaches',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_time_ms > 0
+| timestats span=15m percentile(response_time_ms, 95) as p95_ms, avg(response_time_ms) as avg_ms, count() as query_count by dns_resolver_name
+| order by p95_ms desc`
+      },
+      {
+        name: 'Slow Query Investigation',
+        description: 'Surfaces individual queries exceeding 200ms with full context for root cause analysis',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_time_ms > 200
+| summarize Count=count(), AvgLatency=round(avg(response_time_ms), 1), MaxLatency=max(response_time_ms) by dns_resolver_name, query_name, query_type, virtual_network
+| where Count > 5
+| order by MaxLatency desc
+| limit 50`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-002',
+    name: 'NXDOMAIN Response Rate Spike',
+    objective: 'Detect abnormal increases in NXDOMAIN (non-existent domain) response codes that indicate misconfigured applications, stale DNS records, or potential DNS tunneling activity. A sustained spike above baseline signals either a configuration drift or an application deployment referencing decommissioned endpoints.',
+    category: 'Health',
+    tags: ['observability', 'dns', 'azure', 'nxdomain', 'error-rate'],
+    requiredFields: ['timestamp', 'response_code', 'query_name', 'client_ip', 'virtual_network', 'dns_resolver_name'],
+    detectionLogic: 'Calculate the ratio of NXDOMAIN responses to total queries per virtual_network over 15-minute windows. Alert when the NXDOMAIN rate exceeds 15% of total query volume OR when the absolute NXDOMAIN count exceeds 3x the 7-day rolling average for the same time-of-day window. Exclude known-benign suffixes (e.g., WPAD, _msdcs probes).',
+    operationalValue: 'NXDOMAIN spikes waste resolver capacity and indicate broken service dependencies. Applications retrying failed lookups create amplification loops that consume resolver throughput and delay legitimate queries. Rapid detection prevents resource exhaustion.',
+    changeMgmtRelevance: 'NXDOMAIN spikes frequently follow DNS zone record deletions, private DNS zone unlinking from VNets, application deployments referencing old service names, or conditional forwarder removals. Time-correlate with recent zone or networking change tickets.',
+    troubleshootingWorkflow: '1. Identify the virtual_network and client_ip sources generating the highest NXDOMAIN volume\n2. Extract the top query_names returning NXDOMAIN to determine if they share a common domain suffix\n3. Check if the queried zone_name exists and is linked to the source VNet\n4. Verify whether a recent DNS zone change removed records matching the failing queries\n5. Cross-reference client_ip with application deployment logs to identify the misconfigured service\n6. If queries appear random or algorithmically generated, escalate to security for DNS tunneling analysis\n7. Remediate by correcting DNS records or updating application configuration to reference valid endpoints',
+    dashboardDependency: 'DNS Error Rate Dashboard, Zone Health Overview, Application DNS Dependency Tracker',
+    criblSearchQueries: [
+      {
+        name: 'NXDOMAIN Rate by VNet',
+        description: 'Calculates NXDOMAIN percentage per virtual network over time to identify environments with elevated failure rates',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize Total=count(), NXDomain=countif(response_code == "NXDOMAIN") by virtual_network, dns_resolver_name
+| extend NXRate=round(NXDomain * 100.0 / Total, 1)
+| where NXRate > 5 and Total > 100
+| order by NXRate desc`
+      },
+      {
+        name: 'Top NXDOMAIN Query Names',
+        description: 'Identifies the most frequently failing query names and their source clients for targeted remediation',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_code == "NXDOMAIN"
+| summarize HitCount=count(), UniqueClients=dcount(client_ip) by query_name, virtual_network
+| where HitCount > 10
+| order by HitCount desc
+| limit 50`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-003',
+    name: 'DNS Query Volume by VNet',
+    objective: 'Track DNS query volume per virtual network to detect capacity pressure, identify growth trends, and prevent resolver saturation. Sudden volume increases may indicate application scaling events, misconfigurations causing query storms, or new workload onboarding without capacity planning.',
+    category: 'Capacity',
+    tags: ['observability', 'dns', 'azure', 'capacity', 'volume', 'vnet'],
+    requiredFields: ['timestamp', 'virtual_network', 'query_name', 'query_type', 'dns_resolver_name', 'client_ip', 'subscription_id'],
+    detectionLogic: 'Aggregate total query count per virtual_network in 5-minute bins. Alert when any VNet exceeds 80% of its estimated resolver capacity (based on endpoint count x 10,000 QPS per endpoint). Also alert on a >200% volume increase compared to the same hour in the prior 7-day baseline. Track distinct client_ip count to differentiate organic growth from single-source query storms.',
+    operationalValue: 'Azure DNS resolvers have throughput limits per endpoint. Unplanned volume spikes cause query drops and timeouts that cascade into application failures. Capacity tracking enables proactive endpoint scaling before saturation impacts availability.',
+    changeMgmtRelevance: 'Volume spikes correlate with new application deployments, VNet peering additions that route new clients through existing resolvers, autoscaling events spinning up many new instances simultaneously, or TTL reductions forcing more frequent re-resolution.',
+    troubleshootingWorkflow: '1. Identify which virtual_network shows abnormal query volume growth\n2. Determine if growth is distributed across many client_ips or concentrated on few sources\n3. Check for new workloads deployed into the VNet during the volume increase window\n4. Verify if query_type distribution is normal (A/AAAA) or shows unusual patterns (ANY, TXT floods)\n5. Assess current resolver endpoint count against volume to calculate headroom\n6. If single-source, investigate the client_ip for misconfigured retry logic or caching failures\n7. Scale resolver endpoints proactively if organic growth trend projects saturation within 7 days',
+    dashboardDependency: 'DNS Capacity Planning Dashboard, VNet Resource Utilization, Resolver Throughput Monitor',
+    criblSearchQueries: [
+      {
+        name: 'Query Volume Trend by VNet',
+        description: 'Time-series view of DNS query volume per virtual network for capacity trending and spike detection',
+        query: `dataset="$DATASET" earliest=-4h
+| timestats span=5m count() as QueryCount, dcount(client_ip) as UniqueClients by virtual_network
+| order by QueryCount desc`
+      },
+      {
+        name: 'Top Volume Contributors',
+        description: 'Identifies the highest-volume client IPs and query names per VNet to pinpoint capacity consumers',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize QueryCount=count(), UniqueQueries=dcount(query_name) by virtual_network, client_ip
+| where QueryCount > 1000
+| order by QueryCount desc
+| limit 50`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-004',
+    name: 'Forwarding Rule Failures',
+    objective: 'Detect failures in DNS forwarding rules where queries destined for on-premises or external DNS targets are not receiving successful responses. Forwarding failures break hybrid name resolution and sever connectivity between cloud workloads and on-premises services.',
+    category: 'Availability',
+    tags: ['observability', 'dns', 'azure', 'forwarding', 'hybrid', 'availability'],
+    requiredFields: ['timestamp', 'forwarding_rule', 'response_code', 'query_name', 'dns_resolver_name', 'virtual_network', 'endpoint_name', 'linked_vnet'],
+    detectionLogic: 'Monitor response_code distribution per forwarding_rule. Alert when SERVFAIL or REFUSED responses exceed 10% of total forwarded queries for any rule over a 10-minute window. Also detect complete forwarding failure (zero successful responses for a rule that historically processes traffic). Compare current failure rate against 24-hour rolling baseline per rule.',
+    operationalValue: 'Forwarding rules are the bridge between Azure DNS and on-premises/external DNS infrastructure. Failures mean cloud workloads cannot resolve on-premises hostnames, breaking hybrid connectivity for databases, file shares, legacy applications, and identity services.',
+    changeMgmtRelevance: 'Forwarding failures commonly follow on-premises DNS server maintenance, firewall rule changes blocking DNS traffic on port 53, VPN/ExpressRoute outages severing network paths to forwarding targets, or forwarding rule configuration updates pointing to incorrect target IPs.',
+    troubleshootingWorkflow: '1. Identify which forwarding_rule is experiencing failures and its configured target DNS servers\n2. Determine the specific response_code pattern (SERVFAIL vs REFUSED vs timeout)\n3. Verify network connectivity from the outbound endpoint to the forwarding target IPs\n4. Check if the on-premises DNS servers are healthy and accepting queries\n5. Validate firewall and NSG rules allow UDP/TCP 53 from the resolver outbound endpoint subnet\n6. Test resolution manually from an Azure VM in the same VNet using nslookup/dig against the target\n7. If targets are unreachable, check ExpressRoute/VPN circuit status\n8. Failover to backup forwarding targets or update rule configuration as interim mitigation',
+    dashboardDependency: 'Hybrid DNS Connectivity Dashboard, Forwarding Rule Health Monitor, ExpressRoute Dependency View',
+    criblSearchQueries: [
+      {
+        name: 'Forwarding Rule Failure Rate',
+        description: 'Calculates success and failure rates per forwarding rule to identify broken hybrid DNS paths',
+        query: `dataset="$DATASET" earliest=-4h
+| where forwarding_rule != ""
+| summarize Total=count(), Failures=countif(response_code in ("SERVFAIL", "REFUSED")), Success=countif(response_code == "NOERROR") by forwarding_rule, dns_resolver_name
+| extend FailRate=round(Failures * 100.0 / Total, 1)
+| where FailRate > 5 and Total > 20
+| order by FailRate desc`
+      },
+      {
+        name: 'Forwarding Failure Timeline',
+        description: 'Time-series view of forwarding failures to pinpoint onset time and correlate with change events',
+        query: `dataset="$DATASET" earliest=-4h
+| where forwarding_rule != "" and response_code in ("SERVFAIL", "REFUSED")
+| timestats span=10m count() as FailureCount by forwarding_rule, response_code
+| order by FailureCount desc`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-005',
+    name: 'DNSSEC Validation Failures',
+    objective: 'Detect DNSSEC validation failures that indicate broken trust chains, expired signatures, or misconfigured signing for DNS zones. Validation failures cause legitimate queries to be rejected, creating availability impact for zones that require authenticated responses.',
+    category: 'Health',
+    tags: ['observability', 'dns', 'azure', 'dnssec', 'security', 'validation'],
+    requiredFields: ['timestamp', 'dnssec_status', 'query_name', 'zone_name', 'response_code', 'dns_resolver_name', 'virtual_network'],
+    detectionLogic: 'Monitor dnssec_status for validation failure indicators per zone_name. Alert when DNSSEC failures exceed 5 occurrences in a 10-minute window for any zone, or when a zone transitions from consistently passing validation to failing. Track the ratio of DNSSEC failures to total queries per zone to distinguish widespread signing issues from isolated record problems.',
+    operationalValue: 'DNSSEC validation failures cause SERVFAIL responses for security-enforcing resolvers, making protected zones completely unreachable. Unlike simple misconfigurations, DNSSEC failures are time-sensitive because signatures expire, meaning a working zone can suddenly break without any configuration change.',
+    changeMgmtRelevance: 'DNSSEC failures correlate with zone signing key rotations, DS record updates at the parent zone, zone transfer failures that desynchronize signed records, or clock skew causing signature expiry validation to fail. Key rollover schedules should be tracked as planned changes.',
+    troubleshootingWorkflow: '1. Identify which zone_name is experiencing DNSSEC validation failures\n2. Determine if failures affect all records in the zone or specific query_names\n3. Check DNSSEC signing status and key expiration dates for the affected zone\n4. Verify the DS record at the parent zone matches the current zone signing key\n5. Check for clock synchronization issues on resolver infrastructure\n6. Validate the DNSSEC trust chain using external tools (dnsviz.net or delv)\n7. If key rollover is in progress, verify both old and new keys are published with correct timing\n8. As emergency mitigation, consider temporarily disabling DNSSEC validation for the affected zone while the signing issue is resolved',
+    dashboardDependency: 'DNSSEC Health Dashboard, Zone Signing Status Monitor, DNS Security Posture Overview',
+    criblSearchQueries: [
+      {
+        name: 'DNSSEC Failure Summary',
+        description: 'Aggregates DNSSEC validation failures by zone and resolver to identify scope of signing issues',
+        query: `dataset="$DATASET" earliest=-4h
+| where dnssec_status != "" and dnssec_status != "secure"
+| summarize FailCount=count(), UniqueQueries=dcount(query_name) by zone_name, dnssec_status, dns_resolver_name
+| where FailCount > 3
+| order by FailCount desc`
+      },
+      {
+        name: 'DNSSEC Failure Trend',
+        description: 'Time-series view of DNSSEC validation failures to identify onset and determine if failures are expanding or resolving',
+        query: `dataset="$DATASET" earliest=-4h
+| where dnssec_status != "" and dnssec_status != "secure"
+| timestats span=10m count() as ValidationFailures by zone_name, dnssec_status
+| order by ValidationFailures desc`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-006',
+    name: 'Endpoint Saturation',
+    objective: 'Monitor DNS resolver endpoint utilization to detect when inbound or outbound endpoints approach their throughput limits. Saturated endpoints drop queries silently, causing intermittent resolution failures that are difficult to diagnose from the application layer alone.',
+    category: 'Capacity',
+    tags: ['observability', 'dns', 'azure', 'capacity', 'endpoint', 'saturation'],
+    requiredFields: ['timestamp', 'endpoint_name', 'endpoint_type', 'dns_resolver_name', 'query_name', 'client_ip', 'virtual_network', 'response_time_ms'],
+    detectionLogic: 'Calculate queries-per-second per endpoint_name in 1-minute bins. Alert when QPS exceeds 8,000 per endpoint (80% of the 10,000 QPS limit). Additionally detect latency degradation correlated with high QPS as an early saturation signal â€” when p95 latency increases >50% while QPS exceeds 6,000. Track per endpoint_type (inbound vs outbound) separately as they have different traffic patterns.',
+    operationalValue: 'Each Azure DNS resolver endpoint has a documented throughput ceiling. Unlike traditional infrastructure that returns errors at capacity, DNS endpoints may silently drop queries, manifesting as random timeouts across all applications in the VNet. Proactive saturation detection enables scaling before impact occurs.',
+    changeMgmtRelevance: 'Endpoint saturation follows workload migrations that concentrate DNS traffic through fewer resolvers, autoscaling events creating burst query demand, TTL reductions increasing query frequency, or endpoint decommissioning that redistributes load to remaining endpoints.',
+    troubleshootingWorkflow: '1. Identify which endpoint_name and endpoint_type is approaching saturation\n2. Calculate current QPS and compare against the 10,000 QPS per-endpoint limit\n3. Determine if load is evenly distributed or if specific client_ips are dominant\n4. Check if response_time_ms is degrading as a confirmation of resource pressure\n5. Identify whether the load is transient (burst) or sustained (growth)\n6. For immediate relief, add additional endpoints to the resolver to distribute load\n7. For long-term resolution, implement client-side DNS caching or increase TTLs to reduce query volume\n8. Validate subnet address space can accommodate additional endpoint IPs before scaling',
+    dashboardDependency: 'Endpoint Capacity Dashboard, Resolver Scaling Monitor, DNS Infrastructure Planning View',
+    criblSearchQueries: [
+      {
+        name: 'Endpoint QPS and Latency',
+        description: 'Calculates per-endpoint throughput and latency metrics to identify endpoints approaching capacity limits',
+        query: `dataset="$DATASET" earliest=-4h
+| timestats span=1m count() as QPS, percentile(response_time_ms, 95) as p95_latency, avg(response_time_ms) as avg_latency by endpoint_name, endpoint_type
+| where QPS > 5000
+| order by QPS desc`
+      },
+      {
+        name: 'Endpoint Client Distribution',
+        description: 'Shows how query load is distributed across clients per endpoint to identify concentration risk',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize QueryCount=count(), AvgLatency=round(avg(response_time_ms), 1) by endpoint_name, endpoint_type, client_ip, virtual_network
+| where QueryCount > 500
+| order by QueryCount desc
+| limit 50`
+      }
+    ]
+  },
+  {
+    id: 'az-obs-007',
+    name: 'Zone Resolution Availability',
+    objective: 'Monitor end-to-end resolution availability for critical DNS zones by tracking successful response rates. Detects partial or complete zone outages where queries for records within a zone consistently fail, even if the resolver itself remains operational.',
+    category: 'Availability',
+    tags: ['observability', 'dns', 'azure', 'availability', 'zone', 'resolution'],
+    requiredFields: ['timestamp', 'zone_name', 'response_code', 'query_name', 'query_type', 'dns_resolver_name', 'virtual_network', 'record_count'],
+    detectionLogic: 'Calculate the successful resolution rate (NOERROR with record_count > 0) per zone_name over 5-minute windows. Alert when availability drops below 99.5% for any zone that historically maintains >99.9% success. Distinguish between zone-wide outages (all queries failing) and partial degradation (specific record types or names failing). Exclude NXDOMAIN from failure count as those represent legitimate negative responses.',
+    operationalValue: 'Zone-level availability directly maps to service availability for applications depending on those DNS names. A zone outage is functionally equivalent to a service outage for every workload that resolves names within that zone. Sub-1% failure rates can still impact thousands of transactions per minute at scale.',
+    changeMgmtRelevance: 'Zone availability drops follow zone delegation changes, private DNS zone link removals, record set deletions, zone transfer failures for secondary zones, or policy changes that block resolution. Correlate with DNS zone management operations in the activity log.',
+    troubleshootingWorkflow: '1. Identify which zone_name has dropped below availability threshold\n2. Determine if the outage is complete (all queries failing) or partial (specific records/types)\n3. Check if the zone exists and is properly linked to the affected virtual_networks\n4. Verify zone delegation records are correct at the parent zone\n5. Test resolution of known-good records in the zone from different VNets\n6. Check Azure DNS zone health in the portal for any service-level issues\n7. Review recent zone management operations (record changes, link modifications)\n8. If zone is healthy but resolution fails, check resolver forwarding rules and conditional forwarder configuration\n9. Monitor recovery after remediation to confirm availability returns to baseline',
+    dashboardDependency: 'Zone Availability SLA Dashboard, Critical Services DNS Monitor, DNS Availability Heatmap',
+    criblSearchQueries: [
+      {
+        name: 'Zone Availability Rate',
+        description: 'Calculates per-zone resolution success rate to identify zones experiencing availability degradation',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize Total=count(), Success=countif(response_code == "NOERROR"), Failures=countif(response_code in ("SERVFAIL", "REFUSED")) by zone_name, dns_resolver_name
+| extend AvailabilityPct=round(Success * 100.0 / Total, 2)
+| where Total > 50
+| order by AvailabilityPct asc`
+      },
+      {
+        name: 'Zone Failure Timeline',
+        description: 'Time-series view of zone resolution failures to identify outage windows and recovery patterns',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_code in ("SERVFAIL", "REFUSED")
+| timestats span=5m count() as Failures, dcount(query_name) as AffectedRecords by zone_name
+| where Failures > 5
+| order by Failures desc`
+      }
+    ]
+  }
+],
+  'bluecat-dns': [
+  {
+    id: 'bc-obs-001',
+    name: 'Service Point Query Latency',
+    objective: 'Detect when DNS query response times at a service point exceed acceptable thresholds, indicating degraded resolution performance. Identifies slow service points before end-user experience is impacted. Enables proactive remediation during maintenance windows.',
+    category: 'Performance',
+    tags: ['observability', 'dns', 'bluecat', 'latency', 'service-point'],
+    requiredFields: ['timestamp', 'service_point', 'response_time_ms', 'server_name', 'query_name', 'namespace'],
+    detectionLogic: 'Calculate rolling P95 response_time_ms per service_point over 5-minute windows. Alert when P95 exceeds 150ms for 3 consecutive windows or when mean response_time_ms exceeds 2x the 24-hour baseline for that service_point. Exclude queries to known-slow external forwarders.',
+    operationalValue: 'High latency at a service point directly impacts application performance and user experience. Early detection allows DNS administrators to redistribute load or investigate upstream resolution chain issues before SLA breach.',
+    changeMgmtRelevance: 'Latency spikes frequently correlate with configuration deployments, zone file updates, or network path changes. Correlating latency increases with recent change tickets identifies root cause and informs rollback decisions.',
+    troubleshootingWorkflow: '1. Identify affected service_point and time range of latency increase\n2. Check if latency is isolated to specific query_types or zone_names\n3. Verify upstream forwarder health and network path to recursive resolvers\n4. Review recent configuration deployments to the affected service_point\n5. Check server resource utilization (CPU, memory, disk I/O) on the host\n6. Examine query volume trends to rule out capacity saturation\n7. Test resolution manually from the service point to isolate DNS vs network delay',
+    dashboardDependency: 'DNS Performance Overview, Service Point Health Matrix, SLA Compliance Dashboard',
+    criblSearchQueries: [
+      {
+        name: 'P95 Latency by Service Point',
+        description: 'Calculates P95 response time per service point in 5-minute buckets to identify degraded performers',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_time_ms > 0
+| summarize p95_latency=percentile(response_time_ms, 95), avg_latency=avg(response_time_ms), query_count=count() by service_point, bin(timestamp, 5m)
+| where p95_latency > 150
+| sort by p95_latency desc`
+      },
+      {
+        name: 'Latency Spike Detection vs Baseline',
+        description: 'Compares current hour latency against 24-hour rolling baseline to detect anomalous increases',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize current_avg=avg(response_time_ms), current_p95=percentile(response_time_ms, 95), sample_count=count() by service_point, server_name
+| join type=left (dataset="$DATASET" earliest=-24h | summarize baseline_avg=avg(response_time_ms) by service_point, server_name) on service_point, server_name
+| extend ratio=current_avg / baseline_avg
+| where ratio > 2.0 and sample_count > 100
+| sort by ratio desc`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-002',
+    name: 'SERVFAIL/NXDOMAIN Spike',
+    objective: 'Detect abnormal increases in SERVFAIL and NXDOMAIN response codes that indicate resolution chain failures or misconfigured zones. Distinguishes between legitimate NXDOMAIN (typos, decommissioned hosts) and systemic failure patterns. Provides early warning of zone delegation or forwarding breakdowns.',
+    category: 'Health',
+    tags: ['observability', 'dns', 'bluecat', 'response-code', 'error-rate', 'servfail', 'nxdomain'],
+    requiredFields: ['timestamp', 'response_code', 'query_name', 'zone_name', 'server_name', 'service_point', 'view_name'],
+    detectionLogic: 'Track SERVFAIL and NXDOMAIN rates as a percentage of total queries per zone_name and view_name over 10-minute windows. Alert when SERVFAIL rate exceeds 5% of total queries (baseline is typically <0.5%), or when NXDOMAIN rate exceeds 3x the trailing 4-hour average for the same zone. Group by zone to isolate delegation failures from broad resolver issues.',
+    operationalValue: 'SERVFAIL spikes indicate broken resolution chains â€” expired delegations, unreachable authoritative servers, or DNSSEC validation failures. NXDOMAIN spikes after changes suggest zone records were inadvertently removed or migrations left stale references.',
+    changeMgmtRelevance: 'Zone migrations, delegation changes, and DNSSEC key rollovers are common causes of SERVFAIL spikes. Monitoring error rates during and after change windows provides immediate validation that changes were successful.',
+    troubleshootingWorkflow: '1. Identify which response_code is elevated and the affected zone_name(s)\n2. Determine if the spike is isolated to one view_name or global\n3. For SERVFAIL: check authoritative server reachability and DNSSEC chain validity\n4. For NXDOMAIN: identify the top query_names returning NXDOMAIN and verify expected records exist\n5. Check if affected zones had recent deployments or delegation changes\n6. Verify zone transfer status between primary and secondary servers\n7. Test manual resolution using dig/nslookup against affected servers\n8. If DNSSEC-related, verify key signing status and DS record alignment',
+    dashboardDependency: 'DNS Error Rate Dashboard, Zone Health Overview, Resolution Chain Status',
+    criblSearchQueries: [
+      {
+        name: 'Error Response Rate by Zone',
+        description: 'Calculates SERVFAIL and NXDOMAIN percentages per zone to identify zones with resolution failures',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize total=count(), servfail_count=countif(response_code == "SERVFAIL"), nxdomain_count=countif(response_code == "NXDOMAIN") by zone_name, view_name, bin(timestamp, 10m)
+| extend servfail_pct=(servfail_count * 100.0) / total, nxdomain_pct=(nxdomain_count * 100.0) / total
+| where servfail_pct > 5 or nxdomain_pct > 15
+| sort by servfail_pct desc`
+      },
+      {
+        name: 'Top SERVFAIL Query Names',
+        description: 'Identifies the most frequently failing query names to pinpoint broken records or delegation issues',
+        query: `dataset="$DATASET" earliest=-4h
+| where response_code == "SERVFAIL"
+| summarize fail_count=count(), servers_affected=dcount(server_name), views_affected=dcount(view_name) by query_name, zone_name
+| where fail_count > 10
+| sort by fail_count desc
+| limit 50`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-003',
+    name: 'Query Volume per Namespace',
+    objective: 'Monitor query volume trends per namespace to identify capacity saturation, unexpected traffic growth, or traffic shifts between namespaces. Enables capacity planning by projecting when namespaces will exceed provisioned throughput. Detects traffic anomalies such as DNS amplification or misconfigured clients generating excessive queries.',
+    category: 'Capacity',
+    tags: ['observability', 'dns', 'bluecat', 'capacity', 'namespace', 'volume'],
+    requiredFields: ['timestamp', 'namespace', 'service_point', 'query_name', 'query_type', 'client_ip', 'server_name'],
+    detectionLogic: 'Aggregate query counts per namespace in 5-minute windows. Calculate rate of change against the same time-of-day from the previous 7-day average. Alert when current volume exceeds 150% of the time-matched baseline or when sustained growth rate projects capacity breach within 7 days. Additionally flag any single client_ip contributing >20% of namespace query volume.',
+    operationalValue: 'Namespace-level volume monitoring prevents capacity exhaustion that would cause query drops or latency degradation across all service points in that namespace. Identifies noisy neighbors and informs infrastructure scaling decisions.',
+    changeMgmtRelevance: 'Application deployments, service migrations, and DNS cutover events drive sudden query volume shifts between namespaces. Correlating volume changes with deployment schedules validates expected traffic patterns and catches unintended load redistribution.',
+    troubleshootingWorkflow: '1. Identify which namespace(s) show volume anomalies and the time of onset\n2. Determine if volume increase is distributed or concentrated on specific service_points\n3. Check top client_ips by query count to identify noisy clients or misconfigured resolvers\n4. Review query_type distribution â€” unexpected spikes in ANY or TXT may indicate reconnaissance\n5. Correlate with application deployment schedules for the affected namespace\n6. Check if volume shifted from another namespace (migration in progress)\n7. Verify service point resource headroom (connections, CPU)\n8. If capacity breach is projected, initiate scaling or load redistribution plan',
+    dashboardDependency: 'Namespace Capacity Planning, Query Volume Trends, Top Talkers Dashboard',
+    criblSearchQueries: [
+      {
+        name: 'Query Volume by Namespace (Trended)',
+        description: 'Shows query volume per namespace in 5-minute intervals for trend analysis and capacity monitoring',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize query_count=count(), unique_clients=dcount(client_ip), unique_queries=dcount(query_name) by namespace, bin(timestamp, 5m)
+| sort by namespace asc, timestamp asc`
+      },
+      {
+        name: 'Top Clients by Namespace Volume',
+        description: 'Identifies clients generating disproportionate query load within each namespace for noisy-neighbor detection',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize client_queries=count() by namespace, client_ip, client_hostname
+| join type=left (dataset="$DATASET" earliest=-4h | summarize namespace_total=count() by namespace) on namespace
+| extend pct_of_namespace=(client_queries * 100.0) / namespace_total
+| where pct_of_namespace > 10
+| sort by pct_of_namespace desc
+| limit 25`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-004',
+    name: 'Server Availability',
+    objective: 'Detect when BlueCat DNS servers stop responding to queries or exhibit intermittent availability, indicating hardware failures, process crashes, or network partitions. Provides rapid detection of server outages to minimize resolution gaps. Distinguishes between full outages and degraded availability patterns.',
+    category: 'Availability',
+    tags: ['observability', 'dns', 'bluecat', 'availability', 'server', 'uptime'],
+    requiredFields: ['timestamp', 'server_name', 'server_ip', 'deployment_role', 'service_point', 'response_code', 'query_name'],
+    detectionLogic: 'Track query activity per server_name in 1-minute windows. Alert when a previously active server (>10 queries/min baseline) drops to zero queries for 3 consecutive minutes. Additionally detect degraded availability when a server responds to <25% of its baseline volume while other servers in the same service_point maintain normal levels. Cross-reference with deployment_role to escalate primary server outages faster.',
+    operationalValue: 'Server unavailability directly impacts DNS resolution for clients configured to use that server. Even with redundancy, losing a server increases load on remaining infrastructure and reduces fault tolerance. Rapid detection enables failover validation and repair initiation.',
+    changeMgmtRelevance: 'Planned maintenance windows should account for server restarts and patching. This detection validates that servers return to service after maintenance and catches cases where post-maintenance startup failures leave servers offline beyond the planned window.',
+    troubleshootingWorkflow: '1. Confirm which server_name and server_ip are affected\n2. Verify network connectivity to the server (ping, traceroute)\n3. Check if the DNS service process is running on the affected host\n4. Review system logs for crash dumps, OOM kills, or hardware errors\n5. Verify that other servers at the same service_point are absorbing the load\n6. Check if the outage correlates with a scheduled maintenance window\n7. If process is down, attempt service restart and monitor for stability\n8. Validate client failover is functioning by checking query distribution shift\n9. Post-recovery: verify zone data consistency with peers',
+    dashboardDependency: 'Server Availability Matrix, Infrastructure Health Overview, Deployment Role Status',
+    criblSearchQueries: [
+      {
+        name: 'Server Activity Heartbeat',
+        description: 'Monitors per-server query counts in 1-minute windows to detect servers that have gone silent',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize query_count=count(), last_seen=max(timestamp) by server_name, server_ip, deployment_role, service_point, bin(timestamp, 1m)
+| summarize total_minutes=count(), active_minutes=countif(query_count > 0), max_gap_queries=min(query_count) by server_name, server_ip, deployment_role, service_point
+| extend availability_pct=(active_minutes * 100.0) / total_minutes
+| where availability_pct < 95
+| sort by availability_pct asc`
+      },
+      {
+        name: 'Server Last Seen Detection',
+        description: 'Identifies servers with no recent query activity compared to their peers at the same service point',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize last_query=max(timestamp), total_queries=count() by server_name, server_ip, service_point, deployment_role
+| extend minutes_since_last=datetime_diff("minute", now(), last_query)
+| where minutes_since_last > 3
+| sort by minutes_since_last desc`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-005',
+    name: 'Recursive Resolution Failures',
+    objective: 'Detect elevated failure rates in recursive DNS resolution, indicating upstream forwarder issues, internet connectivity problems, or DNSSEC validation failures. Separates recursive failures from authoritative zone issues to focus troubleshooting on the correct resolution path. Enables rapid identification of external dependency failures.',
+    category: 'Health',
+    tags: ['observability', 'dns', 'bluecat', 'recursive', 'resolution', 'forwarder'],
+    requiredFields: ['timestamp', 'recursive', 'response_code', 'query_name', 'server_name', 'service_point', 'response_time_ms', 'query_type'],
+    detectionLogic: 'Filter to recursive=true queries and calculate SERVFAIL + REFUSED rate per server_name over 5-minute windows. Alert when recursive failure rate exceeds 10% (baseline <2%) or when recursive response_time_ms P95 exceeds 500ms indicating timeout conditions. Cross-correlate across servers: if all servers at a service_point show elevated recursive failures simultaneously, classify as upstream/network issue rather than server-specific.',
+    operationalValue: 'Recursive resolution failures prevent clients from reaching external services â€” impacting SaaS applications, cloud APIs, and internet-facing resources. These failures are often invisible to traditional server monitoring since the DNS server itself remains healthy while upstream resolution is broken.',
+    changeMgmtRelevance: 'Firewall rule changes, network ACL updates, and forwarder configuration changes commonly break recursive resolution paths. Monitoring recursive health during network change windows provides immediate feedback on whether external resolution paths remain functional.',
+    troubleshootingWorkflow: '1. Confirm recursive failure rate and identify affected server_names\n2. Determine if failures are isolated to specific query_names/domains or global\n3. Check if failures correlate across all servers (upstream issue) or are server-specific\n4. Test upstream forwarder reachability from affected servers\n5. Verify firewall rules allow outbound DNS (port 53 TCP/UDP) from resolvers\n6. Check for DNSSEC validation failures in server logs\n7. Test direct recursive resolution bypassing forwarders\n8. If external forwarders are down, verify failover forwarder configuration\n9. Review recent network or firewall changes that may have affected the resolution path',
+    dashboardDependency: 'Recursive Resolution Health, Forwarder Performance Dashboard, External Dependency Status',
+    criblSearchQueries: [
+      {
+        name: 'Recursive Failure Rate by Server',
+        description: 'Calculates recursive query failure rates per server to identify broken resolution chains',
+        query: `dataset="$DATASET" earliest=-4h
+| where recursive == true
+| summarize total_recursive=count(), failed=countif(response_code in ("SERVFAIL", "REFUSED")), avg_latency=avg(response_time_ms), p95_latency=percentile(response_time_ms, 95) by server_name, service_point, bin(timestamp, 5m)
+| extend failure_pct=(failed * 100.0) / total_recursive
+| where failure_pct > 10 or p95_latency > 500
+| sort by failure_pct desc`
+      },
+      {
+        name: 'Recursive Failures by Domain Pattern',
+        description: 'Groups recursive failures by queried domain to distinguish targeted delegation issues from broad upstream outages',
+        query: `dataset="$DATASET" earliest=-4h
+| where recursive == true and response_code in ("SERVFAIL", "REFUSED")
+| extend top_domain=extract("([^.]+\\.[^.]+)$", 1, query_name)
+| summarize failure_count=count(), affected_servers=dcount(server_name), affected_clients=dcount(client_ip) by top_domain, response_code
+| where failure_count > 20
+| sort by failure_count desc
+| limit 30`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-006',
+    name: 'Deployment Role Imbalance',
+    objective: 'Detect uneven query distribution across deployment roles within a service point, indicating load balancer misconfiguration, failed role promotion, or asymmetric capacity utilization. Identifies when primary/secondary role distribution deviates from expected patterns. Ensures redundancy guarantees are maintained across the deployment topology.',
+    category: 'Capacity',
+    tags: ['observability', 'dns', 'bluecat', 'deployment-role', 'load-balance', 'capacity'],
+    requiredFields: ['timestamp', 'deployment_role', 'service_point', 'server_name', 'query_name', 'client_ip', 'response_time_ms'],
+    detectionLogic: 'Calculate query distribution percentage across deployment_roles within each service_point over 15-minute windows. Alert when any single server handles >70% of queries in a multi-server service_point (expected: roughly even distribution). Also detect when secondary/standby roles receive zero queries for extended periods (indicating failover path is untested). Flag service_points where response_time_ms diverges >3x between roles, suggesting one role is overloaded.',
+    operationalValue: 'Imbalanced query distribution means some servers are over-utilized while others sit idle â€” reducing effective capacity and creating single points of failure. If the overloaded server fails, the underutilized servers may not handle the sudden full load, causing cascading failures.',
+    changeMgmtRelevance: 'Role promotions, load balancer reconfigurations, and server additions/removals directly affect query distribution. Monitoring role balance after topology changes validates that the new configuration distributes load as intended.',
+    troubleshootingWorkflow: '1. Identify the service_point with role imbalance and current distribution percentages\n2. Verify intended deployment_role assignments for each server in the service_point\n3. Check load balancer or anycast configuration for correct weighting\n4. Determine if imbalance is due to a recent server addition/removal\n5. Verify that secondary/standby servers are actually accepting and resolving queries\n6. Check for client-side caching or sticky connections causing skew\n7. Review server health â€” an unhealthy server may be receiving but not resolving queries\n8. If intentional (maintenance mode), verify expected rebalance timeline\n9. Test failover by temporarily removing the overloaded server from rotation',
+    dashboardDependency: 'Deployment Topology Overview, Load Distribution Dashboard, Capacity Planning Matrix',
+    criblSearchQueries: [
+      {
+        name: 'Query Distribution by Deployment Role',
+        description: 'Shows query load distribution across deployment roles within each service point to identify imbalances',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize queries=count(), avg_response_ms=avg(response_time_ms), unique_clients=dcount(client_ip) by service_point, deployment_role, server_name, bin(timestamp, 15m)
+| join type=left (dataset="$DATASET" earliest=-4h | summarize sp_total=count() by service_point, bin(timestamp, 15m)) on service_point, timestamp
+| extend load_pct=(queries * 100.0) / sp_total
+| where load_pct > 70 or load_pct < 5
+| sort by load_pct desc`
+      },
+      {
+        name: 'Role Latency Divergence',
+        description: 'Compares response times across deployment roles to detect overloaded roles with degraded performance',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize avg_latency=avg(response_time_ms), p95_latency=percentile(response_time_ms, 95), query_vol=count() by service_point, deployment_role, server_name
+| join type=left (dataset="$DATASET" earliest=-4h | summarize sp_avg_latency=avg(response_time_ms) by service_point) on service_point
+| extend latency_ratio=avg_latency / sp_avg_latency
+| where latency_ratio > 2.0 or latency_ratio < 0.3
+| sort by latency_ratio desc`
+      }
+    ]
+  },
+  {
+    id: 'bc-obs-007',
+    name: 'View Resolution Availability',
+    objective: 'Monitor DNS view availability by tracking successful resolution rates per view_name, detecting when specific views become unable to resolve queries due to configuration errors or zone loading failures. Ensures split-horizon DNS views remain functional for their intended client populations. Catches view-specific outages that global monitoring would miss.',
+    category: 'Availability',
+    tags: ['observability', 'dns', 'bluecat', 'view', 'availability', 'split-horizon'],
+    requiredFields: ['timestamp', 'view_name', 'response_code', 'query_name', 'zone_name', 'server_name', 'client_ip', 'service_point'],
+    detectionLogic: 'Calculate successful resolution rate (NOERROR responses / total queries) per view_name over 5-minute windows. Alert when any view drops below 90% success rate (baseline typically >97%) or when a view that previously served >100 queries/min drops to zero activity. Compare view performance across servers â€” if one server shows view failures while others are healthy, indicates a zone load or configuration sync issue on that specific server.',
+    operationalValue: 'DNS views provide different resolution results to different client populations (internal vs external, regional segmentation). A broken view means an entire client segment loses DNS resolution while other segments remain unaffected â€” making the issue invisible to broad availability checks.',
+    changeMgmtRelevance: 'View configuration changes, zone assignments to views, and ACL modifications are high-risk changes that can break resolution for specific client populations. Post-change validation of view availability confirms that split-horizon policies remain correctly applied.',
+    troubleshootingWorkflow: '1. Identify which view_name has degraded availability and affected time range\n2. Determine if degradation is on all servers or specific servers for that view\n3. Check which zone_names within the view are failing to resolve\n4. Verify view configuration and zone assignments on affected servers\n5. Check zone load status â€” zones may have failed to load after a configuration push\n6. Verify client-to-view matching rules (ACLs, source IP ranges) are correct\n7. Compare view configuration between healthy and unhealthy servers\n8. Check for recent view or zone configuration deployments\n9. Validate that zone data files are present and parseable on affected servers\n10. After fix, verify resolution from client IPs that map to the affected view',
+    dashboardDependency: 'View Availability Matrix, Split-Horizon Health Dashboard, Zone-per-View Status',
+    criblSearchQueries: [
+      {
+        name: 'View Resolution Success Rate',
+        description: 'Tracks successful resolution percentage per DNS view to detect view-specific outages',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize total=count(), success=countif(response_code == "NOERROR"), servfail=countif(response_code == "SERVFAIL"), nxdomain=countif(response_code == "NXDOMAIN") by view_name, server_name, bin(timestamp, 5m)
+| extend success_pct=(success * 100.0) / total, servfail_pct=(servfail * 100.0) / total
+| where success_pct < 90 and total > 50
+| sort by success_pct asc`
+      },
+      {
+        name: 'View Activity Drop Detection',
+        description: 'Identifies views that have gone silent or show significantly reduced query volume compared to baseline',
+        query: `dataset="$DATASET" earliest=-4h
+| summarize queries_per_5m=count(), unique_zones=dcount(zone_name), unique_clients=dcount(client_ip) by view_name, bin(timestamp, 5m)
+| summarize avg_volume=avg(queries_per_5m), min_volume=min(queries_per_5m), max_volume=max(queries_per_5m), zero_intervals=countif(queries_per_5m == 0) by view_name
+| where min_volume == 0 or (min_volume * 4) < avg_volume
+| sort by zero_intervals desc`
+      }
+    ]
+  }
+],
 };
